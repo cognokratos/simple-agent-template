@@ -240,3 +240,35 @@ The UI bridge normalizes each NAT `/v1/workflow/full` `data.value` chunk and
 forwards it immediately as an AI SDK `text-delta`. Tool start/end events remain
 in the same stream, so assistant-ui displays tool cards followed by a live
 streaming final answer. The bridge no longer buffers the complete answer.
+
+## Native-tool token streaming fix
+
+This version restores a local NAT component under
+`agent/src/nat_streaming_react/register.py`.
+
+The built-in NAT 1.8 ReAct streamer waits for a textual `Final Answer:` marker.
+With `use_native_tool_calling: true`, the model returns a normal assistant
+message without that marker, so NAT emits the complete buffered answer as one
+fallback chunk. The local `_type: streaming_react_agent` keeps the same NAT
+ReAct graph, MCP tool loading, retries, and intermediate tool events, but emits
+native assistant content chunks immediately.
+
+Rebuild only the agent after applying this version:
+
+```bash
+docker compose build agent
+docker compose up -d --force-recreate agent ui
+docker compose logs -f agent
+```
+
+## Type-hint compatibility fix
+
+The local component intentionally does not enable `from __future__ import annotations`. NAT 1.8 introspects nested workflow callbacks with `typing.get_type_hints`; postponed string annotations can fail to resolve names such as `ChatResponse` after NAT wraps the callback. Keeping runtime annotations concrete matches NAT's built-in ReAct registration and avoids that startup failure.
+
+## Regex and Presidio output guardrails
+
+This build replaces the LLM-based `self check output` rail with deterministic regex blocking and Presidio masking. See `agent/guardrails/REGEX-PRESIDIO.md` for the policy, rebuild steps, and tuning details.
+
+## Text-aware streaming guardrails
+
+This build uses the local `_type: text_guardrails` middleware. It feeds only assistant `delta.content` into regex and Presidio, re-wraps sanitized output as NAT `ChatResponseChunk` objects, and patches the Guardrails 0.21 Presidio action to accept streaming dispatcher metadata. See `agent/guardrails/TEXT-AWARE.md`.
