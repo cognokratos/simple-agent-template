@@ -1,4 +1,43 @@
 services:
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-alerts}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-alerts}
+      POSTGRES_DB: ${POSTGRES_DB:-alerts}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ./db/init.sql:/docker-entrypoint-initdb.d/001-init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-alerts} -d ${POSTGRES_DB:-alerts}"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+    ports:
+      - "5432:5432"
+    restart: unless-stopped
+
+  mcp-server:
+    build:
+      context: ./mcp-server
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-alerts}:${POSTGRES_PASSWORD:-alerts}@postgres:5432/${POSTGRES_DB:-alerts}
+      MCP_BIND_ADDRESS: 0.0.0.0:8080
+      MCP_ALLOWED_HOSTS: ${MCP_ALLOWED_HOSTS:-mcp-server,mcp-server:8080,localhost,localhost:8080,127.0.0.1,127.0.0.1:8080,::1}
+      RUST_LOG: ${RUST_LOG:-alerts_mcp_server=info,rmcp=info}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "--silent", "--show-error", "http://127.0.0.1:8080/health"]
+      start_period: 10s
+      interval: 3s
+      timeout: 3s
+      retries: 20
+    ports:
+      - "8080:8080"
+    restart: unless-stopped
+
   agent:
     build:
       context: ./agent
@@ -6,6 +45,12 @@ services:
       OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://host.docker.internal:11434/v1}
       OLLAMA_API_KEY: ${OLLAMA_API_KEY:-ollama}
       OLLAMA_MODEL: ${OLLAMA_MODEL:-qwen3:8b}
+      OLLAMA_GUARD_REASONING_EFFORT: ${OLLAMA_GUARD_REASONING_EFFORT:-none}
+      OLLAMA_REASONING_EFFORT: ${OLLAMA_REASONING_EFFORT:-none}
+      ALERTS_MCP_URL: http://mcp-server:8080/mcp
+    depends_on:
+      mcp-server:
+        condition: service_healthy
     extra_hosts:
       - "host.docker.internal:host-gateway"
     ports:
@@ -16,10 +61,12 @@ services:
     build:
       context: ./ui
     environment:
-      NEMO_BASE_URL: http://agent:8000/v1
-      NEMO_MODEL: ${NEMO_MODEL:-nemo-agent}
+      NEMO_WORKFLOW_URL: http://agent:8000/v1/workflow/full
     depends_on:
       - agent
     ports:
       - "3000:3000"
     restart: unless-stopped
+
+volumes:
+  postgres-data:

@@ -1,13 +1,69 @@
 "use client";
 
+import { useState } from "react";
 import {
   AssistantRuntimeProvider,
   AuiIf,
   ComposerPrimitive,
+  MessagePartPrimitive,
   MessagePrimitive,
   ThreadPrimitive,
+  type ToolCallMessagePartComponent,
 } from "@assistant-ui/react";
 import { useChatRuntime } from "@assistant-ui/react-ai-sdk";
+
+function pretty(value: unknown): string {
+  if (typeof value === "string") {
+    try {
+      return JSON.stringify(JSON.parse(value), null, 2);
+    } catch {
+      return value;
+    }
+  }
+  return JSON.stringify(value, null, 2);
+}
+
+const ToolCallCard: ToolCallMessagePartComponent = ({
+  toolName,
+  argsText,
+  result,
+  status,
+}) => {
+  const [expanded, setExpanded] = useState(true);
+  const running = status?.type === "running" || result === undefined;
+
+  return (
+    <section className="tool-card">
+      <button
+        className="tool-card-header"
+        type="button"
+        onClick={() => setExpanded((value) => !value)}
+        aria-expanded={expanded}
+      >
+        <span className={running ? "tool-status running" : "tool-status complete"} />
+        <span className="tool-title">
+          {running ? "Calling" : "Called"} <strong>{toolName}</strong>
+        </span>
+        <span className="tool-toggle">{expanded ? "Hide" : "Show"}</span>
+      </button>
+
+      {expanded && (
+        <div className="tool-card-body">
+          <div>
+            <div className="tool-label">Input</div>
+            <pre>{argsText || "{}"}</pre>
+          </div>
+          {result !== undefined && (
+            <div>
+              <div className="tool-label">Result</div>
+              <pre>{pretty(result)}</pre>
+            </div>
+          )}
+        </div>
+      )}
+    </section>
+  );
+};
 
 function UserMessage() {
   return (
@@ -19,6 +75,14 @@ function UserMessage() {
   );
 }
 
+function AssistantText() {
+  return (
+    <p className="assistant-text">
+      <MessagePartPrimitive.Text />
+    </p>
+  );
+}
+
 function AssistantMessage() {
   return (
     <MessagePrimitive.Root className="message-row assistant-row">
@@ -26,7 +90,15 @@ function AssistantMessage() {
         AI
       </div>
       <div className="message assistant-message">
-        <MessagePrimitive.Parts />
+        <MessagePrimitive.Parts>
+          {({ part }) => {
+            if (part.type === "text") return <AssistantText />;
+            if (part.type === "tool-call") {
+              return part.toolUI ?? <ToolCallCard {...part} />;
+            }
+            return null;
+          }}
+        </MessagePrimitive.Parts>
       </div>
     </MessagePrimitive.Root>
   );
@@ -38,8 +110,13 @@ function Chat() {
       <ThreadPrimitive.Viewport className="thread-viewport">
         <AuiIf condition={(state) => state.thread.isEmpty}>
           <div className="welcome">
-            <h1>Local NeMo Agent</h1>
-            <p>assistant-ui → NeMo Agent Toolkit → Ollama</p>
+            <h1>Alert Investigation Agent</h1>
+            <p>assistant-ui → NAT ReAct → Rust MCP → Postgres</p>
+            <div className="scenario-list">
+              <code>Show me my open alerts</code>
+              <code>Tell me more about alert ALT-1001</code>
+              <code>Show all transactions for all open alerts</code>
+            </div>
           </div>
         </AuiIf>
 
@@ -53,7 +130,7 @@ function Chat() {
           <ComposerPrimitive.Root className="composer">
             <ComposerPrimitive.Input
               className="composer-input"
-              placeholder="Ask the local agent…"
+              placeholder="Ask about alerts…"
               rows={1}
             />
             <ComposerPrimitive.Send className="send-button">

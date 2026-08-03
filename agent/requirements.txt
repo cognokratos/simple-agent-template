@@ -1,10 +1,10 @@
-# NeMo Agent Toolkit runtime plus the Guardrails middleware plugin.
+# NVIDIA's built-in `_type: react_agent` is implemented by the NAT LangChain
+# plugin. Version 1.8.0 does not expose a smaller OpenAI-only ReAct extra, so
+# this supported ReAct variant necessarily installs the complete plugin.
+nvidia-nat[langchain]==1.8.0
+
+# NeMo Guardrails middleware and its compatible Guardrails release.
 nvidia-nat-security[guardrails]==1.8.0
 
-# NeMo Guardrails 0.21 uses LangChain providers internally. Install only the
-# OpenAI provider needed for Ollama's OpenAI-compatible endpoint.
-nemoguardrails==0.21.0
-langchain-openai==1.4.1
-
-# Used directly by the custom workflow.
-openai==2.52.0
+# MCP client integration used to discover the Rust server's tools.
+nvidia-nat-mcp==1.8.0

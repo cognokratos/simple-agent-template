@@ -1,5 +1,5 @@
 __pycache__
-*.py[cod]
+*.pyc
 .venv
-.pytest_cache
-.mypy_cache
+.git
+.DS_Store

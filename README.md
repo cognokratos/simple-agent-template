@@ -1,217 +1,242 @@
-# assistant-ui + lean NeMo Agent Toolkit + Guardrails + Ollama
+# assistant-ui + NAT ReAct + Rust MCP + Postgres
 
-Local guarded streaming stack:
+> **NAT ReAct prompt compatibility:** the custom `system_prompt` contains the required `{tools}` and `{tool_names}` placeholders. NAT replaces these at startup with the discovered MCP tool descriptions and names.
 
-```text
-Browser
-  -> Next.js + assistant-ui (Docker, port 3000)
-  -> NeMo Agent Toolkit Core + Security middleware (Docker, port 8000)
-  -> direct OpenAI Python client
-  -> Ollama OpenAI-compatible API (host, port 11434)
-```
 
-The application workflow does **not** install `nvidia-nat-langchain`. It calls
-Ollama directly with `AsyncOpenAI`. NeMo Guardrails creates only its own OpenAI
-LangChain provider for the self-check rails.
-
-## What was removed
-
-The previous build installed:
+This POC demonstrates a complete local agent path:
 
 ```text
-nvidia-nat[langchain,guardrails]
+assistant-ui
+    ↓ AI SDK UI message stream
+Next.js adapter
+    ↓ POST /v1/workflow/full
+NeMo Agent Toolkit ReAct workflow
+    ↓ MCP client (streamable HTTP)
+Rust MCP server
+    ↓ SQLx
+Postgres
 ```
 
-NAT's LangChain package declares integrations for AWS, OCI, Milvus, Hugging
-Face, Exa, LiteLLM, NVIDIA endpoints, LangGraph, LangSmith and telemetry as
-normal dependencies. This version instead installs:
+The agent keeps NeMo Guardrails as input/output middleware and uses Ollama
+through its OpenAI-compatible endpoint.
+
+## Demonstrated scenarios
+
+The seeded database contains two open alerts (`ALT-1001`, `ALT-1002`) and one
+closed alert (`ALT-1003`). Try these prompts in the browser:
+
+1. **Show me my open alerts**
+   - ReAct calls `search_alerts` with `status="open"`.
+2. **Tell me more about alert ALT-1001**
+   - ReAct calls `get_alert` with `alert_id="ALT-1001"`.
+3. **Show all transactions for all open alerts**
+   - ReAct first calls `search_alerts` with `status="open"`.
+   - It then calls `get_alert` once for every returned alert ID.
+
+The tool is named `get_alert` (singular), matching the MCP contract.
+
+## Tool calls in assistant-ui
+
+NAT's built-in ReAct OpenAI-compatible stream emits only the final answer. It
+intentionally hides internal reasoning and tool chunks. To show tool activity,
+the Next.js route calls:
 
 ```text
-nvidia-nat-security[guardrails]==1.8.0
-nemoguardrails==0.21.0
-langchain-openai==1.4.1
-openai==2.52.0
+POST /v1/workflow/full?filter_steps=TOOL_START,TOOL_END
 ```
 
-Some large dependencies remain because NeMo Guardrails 0.21 itself requires
-LangChain Community, Annoy, FastEmbed and ONNX Runtime, and NAT Core includes
-its own general runtime dependencies. The unrelated NAT LangChain provider
-bundle is no longer installed.
+It translates NAT intermediate events into AI SDK UI message chunks:
 
-## 1. Prepare Ollama on the host
+- `TOOL_START` → `tool-input-available`
+- `TOOL_END` → `tool-output-available`
+- workflow output → streamed text parts
+
+assistant-ui renders those parts as expandable tool cards containing the tool
+name, input, running/completed status, and result.
+
+## Rust MCP server
+
+The server uses the official Rust MCP SDK (`rmcp`) with streamable HTTP at:
+
+```text
+http://mcp-server:8080/mcp
+```
+
+It exposes:
+
+### `search_alerts`
+
+Input:
+
+```json
+{
+  "status": "open",
+  "limit": 50
+}
+```
+
+Output: JSON containing `count`, applied `filters`, and alert summaries.
+
+### `get_alert`
+
+Input:
+
+```json
+{
+  "alert_id": "ALT-1001"
+}
+```
+
+Output: JSON containing the complete alert, `transaction_count`, and all
+associated transactions.
+
+Both tools use parameterized SQL queries. The MCP server never accepts raw SQL.
+
+## Start
+
+Ensure Ollama is running on the host and the configured model exists:
 
 ```bash
 ollama pull qwen3:8b
 ```
 
-Containers must be able to reach Ollama.
-
-### macOS Ollama application
-
-```bash
-launchctl setenv OLLAMA_HOST "0.0.0.0:11434"
-```
-
-Fully quit and restart the Ollama application afterward.
-
-### Linux systemd service
-
-```bash
-sudo systemctl edit ollama.service
-```
-
-Add:
-
-```ini
-[Service]
-Environment="OLLAMA_HOST=0.0.0.0:11434"
-```
-
-Then restart:
-
-```bash
-sudo systemctl daemon-reload
-sudo systemctl restart ollama
-```
-
-Verify Ollama directly:
-
-```bash
-curl http://localhost:11434/v1/chat/completions \
-  -H 'Content-Type: application/json' \
-  -d '{
-    "model": "qwen3:8b",
-    "messages": [{"role": "user", "content": "Say hello"}]
-  }'
-```
-
-## 2. Configure and run
+Copy the environment file if you want to customize it:
 
 ```bash
 cp .env.example .env
-docker compose up --build
+```
+
+Build and start everything:
+
+```bash
+docker compose up -d --build
 ```
 
 Open:
 
-- UI: `http://localhost:3000`
-- NeMo Swagger: `http://localhost:8000/docs`
+- assistant-ui: `http://localhost:3000`
+- NAT Swagger UI: `http://localhost:8000/docs`
+- Rust MCP health: `http://localhost:8080/health`
 
-`OLLAMA_MODEL` must exactly match a model reported by `ollama list`.
-
-## 3. Test guarded streaming
+Follow logs:
 
 ```bash
-curl -N http://localhost:8000/v1/chat/completions \
-  -H 'Content-Type: application/json' \
-  -d '{
-    "model": "nemo-agent",
-    "messages": [
-      {"role": "user", "content": "Explain Docker networking briefly."}
-    ],
-    "stream": true
-  }'
+docker compose logs -f postgres mcp-server agent ui
 ```
 
-The application response is generated incrementally by Ollama. Output
-Guardrails buffer and evaluate groups of chunks before releasing them:
+## Verify the MCP connection
 
-```yaml
-stream_output_rails: true
-rails:
-  output:
-    streaming:
-      enabled: true
-      chunk_size: 40
-      context_size: 20
-      stream_first: false
+NAT 1.8 installs the MCP CLI with `nvidia-nat-mcp`:
+
+```bash
+docker compose exec agent \
+  nat mcp client tool list \
+  --url http://mcp-server:8080/mcp
 ```
 
-With `stream_first: false`, unsafe groups are blocked before reaching the UI.
-This adds some latency and makes the visible stream coarser than Ollama's raw
-stream.
+The output should include:
 
-## 4. Faster rebuilds
+```text
+search_alerts
+get_alert
+```
 
-Normal development build:
+You can also inspect the routes exposed by NAT in Swagger and invoke
+`POST /v1/workflow/full` directly.
+
+## Reset the seeded database
+
+Postgres initialization scripts run only when the data directory is empty. To
+recreate the demo database:
+
+```bash
+docker compose down -v
+docker compose up -d --build
+```
+
+This deletes the POC Postgres volume.
+
+## Rebuild efficiently
+
+Do not use `--no-cache` during normal development. BuildKit caches Python,
+Cargo, npm downloads, and Rust build artifacts.
+
+Rebuild only the Rust MCP server:
+
+```bash
+docker compose build mcp-server
+docker compose up -d --force-recreate mcp-server
+```
+
+Rebuild only the NAT agent:
 
 ```bash
 docker compose build agent
-docker compose up -d agent
+docker compose up -d --force-recreate agent
 ```
 
-Do not use `--no-cache` for ordinary builds. The Dockerfile keeps dependency
-downloads and the compiled ARM64 Annoy wheel in a BuildKit cache. Application
-source changes do not invalidate the third-party dependency layer.
+## Dependency trade-off
 
-The first ARM64 build still compiles Annoy because NeMo Guardrails 0.21 does not
-provide a suitable wheel for this environment. The C++ compiler exists only in
-the builder stage and is not copied into the runtime image.
-
-## 5. Dependency inspection
-
-After building, confirm the broad NAT LangChain plugin is absent:
-
-```bash
-docker compose run --rm agent sh -lc \
-  'python -m pip show nvidia-nat-langchain || true'
-```
-
-Inspect installed packages:
-
-```bash
-docker compose run --rm agent python -m pip list
-```
-
-## Notes
-
-- The browser never calls Ollama directly.
-- `host.docker.internal` works automatically with Docker Desktop. Compose adds
-  the Linux `host-gateway` equivalent as well.
-- The Guardrails model and application model both use the configured Ollama
-  model in this POC. A production deployment should usually use a smaller,
-  dedicated guard model.
-- The application is stateless; assistant-ui sends the full conversation on
-  every request.
-
-## NAT 1.8 annotation compatibility
-
-The workflow intentionally does **not** enable `from __future__ import annotations`. NAT 1.8 builds converter schemas from function signatures before all postponed annotations are resolved. Keeping `AsyncGenerator[str]` as a concrete runtime annotation avoids the startup error:
+The previous chat-only implementation was intentionally lean and did not
+install `nvidia-nat-langchain`. NVIDIA's built-in NAT 1.8 `_type: react_agent`
+is implemented inside that plugin and depends on LangGraph/LangChain.
+Consequently, this ReAct variant installs:
 
 ```text
-NameError: name 'AsyncGenerator' is not defined
+nvidia-nat[langchain]==1.8.0
+nvidia-nat-security[guardrails]==1.8.0
+nvidia-nat-mcp==1.8.0
 ```
 
-The following startup messages are non-fatal for this POC:
+This restores the official supported ReAct implementation but also restores the
+broad NAT LangChain dependency set. The expensive Python dependency layer is
+cached, and the compiler required by `annoy` remains confined to the builder
+stage.
 
-- `Dask is not installed`: only NAT async execution/evaluation features are unavailable. The FastAPI chat endpoint still works.
-- `langchain_community module is not installed`: NeMo Guardrails tries to auto-register optional Google-search safety tools. The configured `self check input` and `self check output` actions are still registered and usable. Installing `langchain-community` merely to remove that warning would make the image larger.
-- The final `_dask_client` error is secondary cleanup noise after workflow initialization has already failed; it disappears when the annotation error is fixed.
+## Production notes
 
-## NAT message compatibility
+This is a local demonstration. Before production use, add:
 
-NAT 1.8's base `Message` model guarantees `role` and `content`, but ordinary
-messages do not necessarily define `tool_calls` or `tool_call_id`. The OpenAI
-serializer uses `message.model_dump(mode="json", exclude_none=True)` and only
-forwards optional tool metadata when the concrete message model contains it.
-This avoids:
+- authentication and authorization between NAT and MCP;
+- tenant/user scoping in every SQL query;
+- secrets management instead of demo database credentials;
+- database migrations rather than a one-time init script;
+- pagination and response-size limits for transaction-heavy alerts;
+- request correlation, OpenTelemetry, and audit logging;
+- a dedicated low-latency guard model rather than sharing the application LLM;
+- explicit package/image digest pinning and vulnerability scanning.
 
-```text
-AttributeError: 'Message' object has no attribute 'tool_calls'
-```
+## Docker Host-header validation
 
-## Qwen3 reasoning latency
+RMCP protects streamable-HTTP servers against DNS rebinding by accepting only loopback `Host` values by default. NAT connects over the Compose network with `Host: mcp-server:8080`, so this template configures an explicit allowlist through `MCP_ALLOWED_HOSTS`. Keep the list narrow in deployed environments; do not disable host validation globally.
 
-Ollama enables thinking by default for supported models such as Qwen3. A
-Yes/No input rail can therefore consume many hidden reasoning tokens before
-returning its short answer. This project sends `reasoning_effort: none` through
-Ollama's OpenAI-compatible endpoint for both the application model and guard
-model by default. Override these values in `.env` when reasoning is desired:
+The default allows the Compose service name and local development access:
 
 ```env
-OLLAMA_REASONING_EFFORT=none
-OLLAMA_GUARD_REASONING_EFFORT=none
+MCP_ALLOWED_HOSTS=mcp-server,mcp-server:8080,localhost,localhost:8080,127.0.0.1,127.0.0.1:8080,::1
 ```
 
-Keep the guard value at `none` in most deployments because self-check rails
-only need a deterministic classification.
+## UI stream compatibility fix
+
+This variant fixes two NAT 1.8 / assistant-ui bridge issues:
+
+- NAT may serialize a `ChatResponseChunk` as a Python/Pydantic representation in
+  `data.value`; the Next.js route now extracts `choices[0].delta.content` from
+  both JSON and repr forms.
+- MCP-backed calls may be reported as either `TOOL_*` or `FUNCTION_*`
+  intermediate events. The bridge requests and maps both forms to AI SDK
+  `tool-input-available` and `tool-output-available` chunks.
+
+After replacing the project, only the UI image needs rebuilding:
+
+```bash
+docker compose build ui
+docker compose up -d --force-recreate ui
+```
+
+## Live response streaming
+
+The UI bridge normalizes each NAT `/v1/workflow/full` `data.value` chunk and
+forwards it immediately as an AI SDK `text-delta`. Tool start/end events remain
+in the same stream, so assistant-ui displays tool cards followed by a live
+streaming final answer. The bridge no longer buffers the complete answer.
