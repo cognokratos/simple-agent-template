@@ -1,0 +1,25 @@
+services:
+  agent:
+    build:
+      context: ./agent
+    environment:
+      OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://host.docker.internal:11434/v1}
+      OLLAMA_API_KEY: ${OLLAMA_API_KEY:-ollama}
+      OLLAMA_MODEL: ${OLLAMA_MODEL:-qwen3:8b}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    ports:
+      - "8000:8000"
+    restart: unless-stopped
+
+  ui:
+    build:
+      context: ./ui
+    environment:
+      NEMO_BASE_URL: http://agent:8000/v1
+      NEMO_MODEL: ${NEMO_MODEL:-nemo-agent}
+    depends_on:
+      - agent
+    ports:
+      - "3000:3000"
+    restart: unless-stopped

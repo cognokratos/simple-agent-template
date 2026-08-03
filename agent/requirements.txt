@@ -1,0 +1,10 @@
+# NeMo Agent Toolkit runtime plus the Guardrails middleware plugin.
+nvidia-nat-security[guardrails]==1.8.0
+
+# NeMo Guardrails 0.21 uses LangChain providers internally. Install only the
+# OpenAI provider needed for Ollama's OpenAI-compatible endpoint.
+nemoguardrails==0.21.0
+langchain-openai==1.4.1
+
+# Used directly by the custom workflow.
+openai==2.52.0

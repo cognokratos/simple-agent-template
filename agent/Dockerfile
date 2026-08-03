@@ -1,0 +1,50 @@
+# syntax=docker/dockerfile:1.7
+
+FROM python:3.12-slim AS builder
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    UV_LINK_MODE=copy \
+    UV_PYTHON_DOWNLOADS=never
+
+WORKDIR /app
+
+COPY --from=ghcr.io/astral-sh/uv:0.8.3 /uv /uvx /bin/
+
+# NeMo Guardrails 0.21 depends on annoy. On Linux ARM64 it is built from
+# source, so a C++ compiler is required. It stays out of the runtime image.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends g++ \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN python -m venv /opt/venv
+ENV PATH="/opt/venv/bin:$PATH"
+
+# Keep the expensive third-party dependency layer stable and cache downloads
+# and locally-built wheels between BuildKit builds.
+COPY requirements.txt /app/requirements.txt
+RUN --mount=type=cache,target=/root/.cache/uv,sharing=locked \
+    uv pip install --python /opt/venv/bin/python \
+      --requirements /app/requirements.txt
+
+# Source changes only invalidate this small local-package layer.
+COPY pyproject.toml /app/pyproject.toml
+COPY src /app/src
+RUN --mount=type=cache,target=/root/.cache/uv,sharing=locked \
+    uv pip install --python /opt/venv/bin/python --no-deps /app
+
+
+FROM python:3.12-slim AS runtime
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PATH="/opt/venv/bin:$PATH"
+
+WORKDIR /app
+
+COPY --from=builder /opt/venv /opt/venv
+COPY config.yml /app/config.yml
+
+EXPOSE 8000
+
+CMD ["nat", "serve", "--config_file", "/app/config.yml", "--host", "0.0.0.0", "--port", "8000"]
