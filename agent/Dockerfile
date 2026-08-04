@@ -28,9 +28,13 @@ RUN --mount=type=cache,target=/root/.cache/uv,sharing=locked \
 # NeMo Guardrails 0.21 has three streaming compatibility issues used by this
 # project: regex actions reject dispatcher kwargs, regex matches lack a block
 # mapping, and Presidio masking rejects dispatcher kwargs. Backport the small
-# upstream-compatible fixes while retaining NAT 1.8's Guardrails pin.
+# upstream-compatible fixes while retaining NAT 1.8's Guardrails pin. The
+# second patch makes NAT's workflow trace the shared root for Guardrails and
+# reconstructs streamed output into one readable answer.
 COPY patch_nemoguardrails_regex.py /app/patch_nemoguardrails_regex.py
-RUN python /app/patch_nemoguardrails_regex.py
+COPY patch_nat_single_trace.py /app/patch_nat_single_trace.py
+RUN python /app/patch_nemoguardrails_regex.py \
+    && python /app/patch_nat_single_trace.py
 
 # Presidio uses spaCy for entity recognition. Install the English model in the
 # builder so it is copied into the runtime virtual environment.

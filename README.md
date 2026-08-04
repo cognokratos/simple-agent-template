@@ -15,6 +15,12 @@ NeMo Agent Toolkit ReAct workflow
 Rust MCP server
     ↓ SQLx
 Postgres
+
+NAT + Guardrails traces
+    ↓ OTLP/HTTP
+OpenTelemetry Collector
+    ↓
+MLflow
 ```
 
 The agent keeps NeMo Guardrails as input/output middleware and uses Ollama
@@ -22,8 +28,9 @@ through its OpenAI-compatible endpoint.
 
 ## Demonstrated scenarios
 
-The seeded database contains two open alerts (`ALT-1001`, `ALT-1002`) and one
-closed alert (`ALT-1003`). Try these prompts in the browser:
+The seeded database contains two open alerts (`ALT-1001`, `ALT-1002`), one
+ordinary closed alert (`ALT-1003`), and two synthetic closed guardrail fixtures.
+Try these prompts in the browser:
 
 1. **Show me my open alerts**
    - ReAct calls `search_alerts` with `status="open"`.
@@ -34,6 +41,10 @@ closed alert (`ALT-1003`). Try these prompts in the browser:
    - It then calls `get_alert` once for every returned alert ID.
 
 The tool is named `get_alert` (singular), matching the MCP contract.
+
+A complete prompt matrix covering MCP fan-out, tool errors, input blocking,
+Presidio masking, regex blocking, streaming, and the one-trace acceptance test
+is available in [`docs/TEST-SCENARIOS.md`](docs/TEST-SCENARIOS.md).
 
 ## Tool calls in assistant-ui
 
@@ -117,6 +128,7 @@ Open:
 - assistant-ui: `http://localhost:3000`
 - NAT Swagger UI: `http://localhost:8000/docs`
 - Rust MCP health: `http://localhost:8080/health`
+- MLflow traces: `http://localhost:5000`
 
 Follow logs:
 
@@ -202,7 +214,7 @@ This is a local demonstration. Before production use, add:
 - secrets management instead of demo database credentials;
 - database migrations rather than a one-time init script;
 - pagination and response-size limits for transaction-heavy alerts;
-- request correlation, OpenTelemetry, and audit logging;
+- access controls, retention, and redaction for OpenTelemetry/MLflow data;
 - a dedicated low-latency guard model rather than sharing the application LLM;
 - explicit package/image digest pinning and vulnerability scanning.
 
@@ -267,8 +279,24 @@ The local component intentionally does not enable `from __future__ import annota
 
 ## Regex and Presidio output guardrails
 
-This build replaces the LLM-based `self check output` rail with deterministic regex blocking and Presidio masking. See `agent/guardrails/REGEX-PRESIDIO.md` for the policy, rebuild steps, and tuning details.
+This build replaces the LLM-based `self check output` rail with deterministic regex blocking and Presidio masking. See `docs/REGEX-PRESIDIO.md` for the policy, rebuild steps, and tuning details.
 
 ## Text-aware streaming guardrails
 
-This build uses the local `_type: text_guardrails` middleware. It feeds only assistant `delta.content` into regex and Presidio, re-wraps sanitized output as NAT `ChatResponseChunk` objects, and patches the Guardrails 0.21 Presidio action to accept streaming dispatcher metadata. See `agent/guardrails/TEXT-AWARE.md`.
+This build uses the local `_type: text_guardrails` middleware. It feeds only assistant `delta.content` into regex and Presidio, re-wraps sanitized output as NAT `ChatResponseChunk` objects, and patches the Guardrails 0.21 Presidio action to accept streaming dispatcher metadata. See `docs/TEXT-AWARE-GUARDRAILS.md`.
+
+## Unified MLflow observability
+
+This build produces one canonical NAT trace per request. The root span contains
+the readable question and reconstructed final answer; NAT keeps the MCP/tool
+hierarchy, and NeMo Guardrails OpenTelemetry spans inherit the same trace ID and
+root span ID. The previous custom `alerts-agent.invoke` OpenTelemetry root span
+has been removed, so one call no longer creates two MLflow rows.
+
+The pinned NAT 1.8 runner is patched at image-build time by
+`agent/patch_nat_single_trace.py`. Existing MLflow rows are not rewritten; only
+new calls use the unified shape.
+
+See [`docs/MLFLOW-OBSERVABILITY.md`](docs/MLFLOW-OBSERVABILITY.md) for the
+architecture, rebuild steps, verification, privacy notes, and trace acceptance
+criteria.

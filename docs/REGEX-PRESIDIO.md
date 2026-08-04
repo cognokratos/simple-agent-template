@@ -37,7 +37,7 @@ Show me all transactions for all open alerts.
 
 A response containing an email address should display a masked value. A response containing a configured secret pattern should be replaced by the standard guardrail refusal.
 
-Adjust `score_threshold` in `../config.yml` if Presidio produces false positives. Raising it reduces masking; lowering it catches more possible identifiers.
+Adjust `score_threshold` in `../agent/config.yml` if Presidio produces false positives. Raising it reduces masking; lowering it catches more possible identifiers.
 
 ## Guardrails 0.21 streaming compatibility
 

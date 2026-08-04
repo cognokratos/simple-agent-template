@@ -1,7 +1,7 @@
 # NVIDIA's built-in `_type: react_agent` is implemented by the NAT LangChain
 # plugin. Version 1.8.0 does not expose a smaller OpenAI-only ReAct extra, so
 # this supported ReAct variant necessarily installs the complete plugin.
-nvidia-nat[langchain]==1.8.0
+nvidia-nat[langchain,opentelemetry]==1.8.0
 
 # NeMo Guardrails middleware and its compatible Guardrails release.
 nvidia-nat-security[guardrails]==1.8.0
@@ -10,5 +10,5 @@ nvidia-nat-security[guardrails]==1.8.0
 nvidia-nat-mcp==1.8.0
 # Local Presidio analyzer/anonymizer dependencies used by the deterministic
 # output masking rail. The sdd extra matches NeMo Guardrails 0.21.0.
-nemoguardrails[sdd]==0.21.0
+nemoguardrails[sdd,tracing]==0.21.0
 

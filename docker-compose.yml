@@ -8,6 +8,7 @@ services:
     volumes:
       - postgres-data:/var/lib/postgresql/data
       - ./db/init.sql:/docker-entrypoint-initdb.d/001-init.sql:ro
+      - ./db/guardrail_test_fixtures.sql:/docker-entrypoint-initdb.d/002-guardrail-test-fixtures.sql:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-alerts} -d ${POSTGRES_DB:-alerts}"]
       interval: 3s
@@ -38,6 +39,56 @@ services:
       - "8080:8080"
     restart: unless-stopped
 
+  mlflow:
+    image: ghcr.io/mlflow/mlflow:v3.14.0
+    command:
+      - mlflow
+      - server
+      - --backend-store-uri
+      - sqlite:////mlflow/mlflow.db
+      - --artifacts-destination
+      - /mlflow/artifacts
+      - --serve-artifacts
+      - --host
+      - 0.0.0.0
+      - --port
+      - "5000"
+      - --allowed-hosts
+      - "*"
+    volumes:
+      - mlflow-data:/mlflow
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - >-
+          python -c "import urllib.request;
+          urllib.request.urlopen('http://127.0.0.1:5000/health', timeout=2)"
+      start_period: 15s
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    ports:
+      - "5000:5000"
+    restart: unless-stopped
+
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:0.123.0
+    command: ["--config=/etc/otelcol-contrib/config.yml"]
+    volumes:
+      - ./observability/otel-collector.yml:/etc/otelcol-contrib/config.yml:ro
+    depends_on:
+      mlflow:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "/otelcol-contrib", "components"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    ports:
+      - "4318:4318"
+      - "13133:13133"
+    restart: unless-stopped
+
   agent:
     build:
       context: ./agent
@@ -48,8 +99,19 @@ services:
       OLLAMA_GUARD_REASONING_EFFORT: ${OLLAMA_GUARD_REASONING_EFFORT:-none}
       OLLAMA_REASONING_EFFORT: ${OLLAMA_REASONING_EFFORT:-none}
       ALERTS_MCP_URL: http://mcp-server:8080/mcp
+      OTEL_COLLECTOR_TRACES_ENDPOINT: ${OTEL_COLLECTOR_TRACES_ENDPOINT:-http://otel-collector:4318/v1/traces}
+      OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: ${OTEL_EXPORTER_OTLP_TRACES_ENDPOINT:-http://otel-collector:4318/v1/traces}
+      OTEL_EXPORTER_OTLP_TRACES_PROTOCOL: http/protobuf
+      OTEL_SERVICE_NAME: ${OTEL_SERVICE_NAME:-alerts-agent}
+      DEPLOYMENT_ENVIRONMENT: ${DEPLOYMENT_ENVIRONMENT:-local}
+      NAT_TRACE_CONTENT_MAX_CHARS: ${NAT_TRACE_CONTENT_MAX_CHARS:-65536}
+      # Explicitly opt in to prompt/response content capture. This can contain
+      # customer data and should be disabled or redacted in stricter deployments.
+      OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT: ${OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT:-true}
     depends_on:
       mcp-server:
+        condition: service_healthy
+      otel-collector:
         condition: service_healthy
     extra_hosts:
       - "host.docker.internal:host-gateway"
@@ -70,3 +132,4 @@ services:
 
 volumes:
   postgres-data:
+  mlflow-data:

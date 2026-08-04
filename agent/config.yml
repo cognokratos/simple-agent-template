@@ -11,6 +11,18 @@ general:
       legacy_openai_api_path: null
     disable_legacy_routes: true
 
+  # Export NAT runtime spans to the local OpenTelemetry Collector. The
+  # collector forwards them to MLflow and injects the experiment header.
+  telemetry:
+    tracing:
+      mlflow_otlp:
+        _type: otelcollector
+        endpoint: ${OTEL_COLLECTOR_TRACES_ENDPOINT:-http://otel-collector:4318/v1/traces}
+        project: ${OTEL_SERVICE_NAME:-alerts-agent}
+        resource_attributes:
+          service.namespace: nemo-agent-toolkit
+          deployment.environment: ${DEPLOYMENT_ENVIRONMENT:-local}
+
 llms:
   ollama:
     _type: openai
@@ -69,6 +81,14 @@ middleware:
             timeout: 300.0
             extra_body:
               reasoning_effort: ${OLLAMA_GUARD_REASONING_EFFORT:-none}
+
+      # Guardrails emits its rail/flow/action spans through the process-wide
+      # OpenTelemetry provider. The NAT 1.8 runner patch installs NAT's root
+      # trace context before the rails run, so these spans join the same trace.
+      tracing:
+        enabled: true
+        adapters:
+          - name: OpenTelemetry
 
       colang_version: "1.0"
       rails:
@@ -137,6 +157,7 @@ middleware:
 
 workflow:
   _type: streaming_react_agent
+  name: alerts-agent.invoke
   llm_name: ollama
   tool_names:
     - alerts_mcp
@@ -167,5 +188,8 @@ workflow:
       status="open". Then call get_alert once for every returned alert ID.
       Do not skip alerts, and do not invent transactions.
     - Present concise, readable summaries and preserve alert and transaction IDs.
+    - When the user explicitly asks for an alert description verbatim, reproduce
+      the complete description returned by get_alert. Output rails are responsible
+      for blocking credential-shaped values and masking configured PII entities.
     - Never expose internal chain-of-thought. Tool names, inputs, and results are
       displayed separately by the UI from NAT intermediate-step events.

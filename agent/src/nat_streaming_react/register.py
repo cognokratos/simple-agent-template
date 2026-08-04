@@ -6,7 +6,8 @@ NAT 1.8's built-in ReAct stream buffers output until it sees the textual
 ``Final Answer:`` marker. Native tool calling returns a normal assistant
 message instead, so the built-in fallback emits the complete answer as one
 chunk. This local component keeps NAT's ReAct graph and MCP tooling but streams
-content chunks immediately when native tool calling is enabled.
+content chunks immediately when native tool calling is enabled. NAT owns the
+canonical request trace; Guardrails joins it through the runner context bridge.
 """
 
 import logging
@@ -28,8 +29,10 @@ from nat.utils.io.model_processing import remove_r1_think_tags
 from nat.utils.type_converter import GlobalTypeConverter
 
 # Import the middleware registration for its NAT component side effect.
+from nat_streaming_react.otel_setup import configure_opentelemetry
 from nat_streaming_react.text_guardrails import text_guardrails_middleware as _text_guardrails_middleware
 
+configure_opentelemetry()
 logger = logging.getLogger(__name__)
 
 
@@ -167,7 +170,7 @@ async def streaming_react_agent_workflow(
     ) -> AsyncGenerator[ChatResponseChunk]:
         chunk_id = str(uuid.uuid4())
         try:
-            _, messages = _messages(chat_request_or_message)
+            request, messages = _messages(chat_request_or_message)
             state = ReActGraphState(messages=messages)
 
             # Native tool calling already separates tool calls from assistant
@@ -238,10 +241,12 @@ async def streaming_react_agent_workflow(
                     buffer = ""
 
             if not found_final_answer and buffer:
+                fallback_answer = remove_r1_think_tags(buffer)
                 yield ChatResponseChunk.create_streaming_chunk(
-                    remove_r1_think_tags(buffer),
+                    fallback_answer,
                     id_=chunk_id,
                 )
+
 
         except GraphRecursionError:
             logger.warning(
@@ -249,9 +254,12 @@ async def streaming_react_agent_workflow(
                 AGENT_LOG_PREFIX,
                 config.max_tool_calls,
             )
-            yield ChatResponseChunk.create_streaming_chunk(
+            recursion_message = (
                 "The agent could not produce a final answer within "
-                f"{config.max_tool_calls} tool calls.",
+                f"{config.max_tool_calls} tool calls."
+            )
+            yield ChatResponseChunk.create_streaming_chunk(
+                recursion_message,
                 id_=chunk_id,
             )
         except Exception as error:
