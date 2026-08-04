@@ -136,6 +136,35 @@ services:
       - "3000:3000"
     restart: unless-stopped
 
+  # On-demand live evaluation runner. It is profile-gated so a normal
+  # `docker compose up -d` does not launch evaluations automatically.
+  evaluator:
+    image: ghcr.io/mlflow/mlflow:v3.14.0
+    profiles: ["evaluation"]
+    entrypoint: []
+    working_dir: /app
+    command: ["python", "-m", "evaluation", "run", "--suite", "all"]
+    volumes:
+      - ./evaluation:/app/evaluation:ro
+    environment:
+      PYTHONPATH: /app
+      MLFLOW_TRACKING_URI: ${MLFLOW_TRACKING_URI:-http://mlflow:5000}
+      AGENT_WORKFLOW_URL: ${AGENT_WORKFLOW_URL:-http://agent:8000/v1/workflow/full}
+      MLFLOW_GENAI_EVAL_SKIP_TRACE_VALIDATION: ${MLFLOW_GENAI_EVAL_SKIP_TRACE_VALIDATION:-true}
+      MLFLOW_GENAI_EVAL_MAX_WORKERS: ${MLFLOW_GENAI_EVAL_MAX_WORKERS:-1}
+      MLFLOW_ENABLE_ASYNC_TRACE_LOGGING: ${MLFLOW_ENABLE_ASYNC_TRACE_LOGGING:-false}
+      EVALUATION_HTTP_TIMEOUT_SECONDS: ${EVALUATION_HTTP_TIMEOUT_SECONDS:-360}
+      EVALUATION_HTTP_MAX_ATTEMPTS: ${EVALUATION_HTTP_MAX_ATTEMPTS:-4}
+      GUARDRAILS_EVALUATION_EXPERIMENT: ${GUARDRAILS_EVALUATION_EXPERIMENT:-alerts-agent-guardrails-evaluation}
+      GUARDRAILS_EVALUATION_DATASET: ${GUARDRAILS_EVALUATION_DATASET:-alerts-agent-guardrails-dataset}
+      TOOL_CALLING_EVALUATION_EXPERIMENT: ${TOOL_CALLING_EVALUATION_EXPERIMENT:-alerts-agent-tool-calling-evaluation}
+      TOOL_CALLING_EVALUATION_DATASET: ${TOOL_CALLING_EVALUATION_DATASET:-alerts-agent-tool-calling-dataset}
+    depends_on:
+      mlflow:
+        condition: service_healthy
+      agent:
+        condition: service_started
+
 volumes:
   postgres-data:
   mlflow-data:

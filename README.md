@@ -103,6 +103,41 @@ associated transactions.
 
 Both tools use parameterized SQL queries. The MCP server never accepts raw SQL.
 
+## Makefile shortcuts
+
+The root `Makefile` wraps the common Docker, observability, Guardrails, and
+MLflow evaluation commands. Start with:
+
+```bash
+make help
+```
+
+For normal development, rebuild and restart the complete cluster with:
+
+```bash
+make dev
+```
+
+Useful targets include:
+
+```text
+make logs-app                 Application logs
+make logs-observability       Agent, Collector, and MLflow logs
+make health                   Check all public endpoints
+make verify-mcp               List the MCP tools through NAT
+make verify-guardrails        Run the input-guardrail smoke test
+make eval-bootstrap-replace   Recreate both MLflow datasets
+make eval-guardrails          Run the Guardrails evaluation
+make eval-tools               Run the tool-calling evaluation
+make eval-all                 Run both evaluation suites
+```
+
+The generic evaluation target also accepts variables:
+
+```bash
+make eval SUITE=guardrails RUN_NAME=guardrails-v2 FAIL_THRESHOLD=0.95
+```
+
 ## Start
 
 Ensure Ollama is running on the host and the configured model exists:
@@ -331,3 +366,17 @@ GUARDRAILS_TRACE_MAX_CHARS=16384
 `GUARDRAILS_TRACE_CAPTURE_RAW_OUTPUT` is deliberately false. Enabling it would
 store text before regex blocking and Presidio masking, potentially defeating the
 privacy purpose of those output rails.
+
+## Live MLflow evaluation
+
+The project now includes persistent MLflow datasets and on-demand evaluation
+runs for Guardrails and tool calling. Every case calls the running NAT agent;
+no responses or trajectories are precomputed.
+
+```bash
+docker compose --profile evaluation run --rm evaluator \
+  python -m evaluation run --suite all
+```
+
+See [README-EVALUATION.md](docs/README-EVALUATION.md) for dataset management, scorer
+definitions, CI behavior, and individual suite commands.

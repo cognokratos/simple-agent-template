@@ -28,6 +28,8 @@ from opentelemetry.trace import Status
 from opentelemetry.trace import StatusCode
 
 from nat.builder.builder import Builder
+from nat.builder.context import Context
+from nat.builder.context import ContextState
 from nat.cli.register_workflow import register_middleware
 from nat.data_models.api_server import ChatResponseChunk
 from nat.middleware.function_middleware import CallNextStream
@@ -35,7 +37,7 @@ from nat.middleware.middleware import InvocationContext
 from nat.plugins.security.middleware.guardrails.nemo_guardrails_middleware import GuardrailsMiddleware
 from nat.plugins.security.middleware.guardrails.nemo_guardrails_middleware_config import GuardrailsMiddlewareConfig
 
-tracer = trace.get_tracer("nat_streaming_react.guardrails", "0.1.8")
+tracer = trace.get_tracer("nat_streaming_react.guardrails", "0.1.9")
 
 
 class TextGuardrailsMiddlewareConfig(
@@ -413,6 +415,27 @@ def _set_common_guardrail_attributes(span: Any, *, stage: str, name: str) -> Non
     span.set_attribute("guardrail.framework.version", "0.21.0")
 
 
+def _emit_nat_evaluation_event(name: str, input_data: Any, output_data: Any) -> None:
+    """Expose a compact machine-readable decision through NAT intermediate events.
+
+    MLflow evaluation calls the live ``/v1/workflow/full`` stream. NAT already
+    exposes tool calls there as FUNCTION/TOOL intermediate events. Emitting a
+    small function event for each guardrail decision lets the evaluator score
+    the exact decision from the same response without querying MLflow traces
+    asynchronously or inferring a block from refusal wording. The assistant-ui
+    bridge ignores these function names, so they remain evaluation metadata.
+    """
+
+    try:
+        nat_context = Context(ContextState.get())
+        with nat_context.push_active_function(name, input_data) as step:
+            step.set_output(output_data)
+    except Exception:
+        # Observability metadata must never change the safety decision or break
+        # a user request. The OpenTelemetry guardrail span remains authoritative.
+        return
+
+
 class TextGuardrailsMiddleware(GuardrailsMiddleware):
     """Apply NeMo rails to text while preserving NAT chat chunk types."""
 
@@ -442,6 +465,16 @@ class TextGuardrailsMiddleware(GuardrailsMiddleware):
                 span.set_attribute("guardrail.skipped", True)
                 span.set_attribute("guardrail.skip_reason", "no_user_text_extracted")
                 span.set_status(Status(StatusCode.OK))
+            _emit_nat_evaluation_event(
+                "guardrail_input_self_check_decision",
+                {"user_message_present": False},
+                {
+                    "stage": "input",
+                    "outcome": "skipped",
+                    "blocked": False,
+                    "skip_reason": "no_user_text_extracted",
+                },
+            )
             return None
 
         rendered_prompt = _rendered_self_check_prompt(self._llm_rails, text)
@@ -633,6 +666,29 @@ class TextGuardrailsMiddleware(GuardrailsMiddleware):
                         ),
                     )
                     span.set_attribute("output.mime_type", "application/json")
+
+                evaluation_decision = {
+                    "stage": "input",
+                    "name": "self check input",
+                    "outcome": outcome,
+                    "blocked": blocked,
+                    "modified": modified,
+                    "llm_blocked": llm_blocked,
+                    "deterministic_blocked": bool(deterministic_matches),
+                    "deterministic_block_matches": deterministic_matches,
+                    "deterministic_allow_matches": deterministic_allow_matches,
+                    "allow_override_applied": allow_override_applied,
+                    "decision_source": decision_source,
+                    "llm_call_count": len(llm_calls),
+                }
+                _emit_nat_evaluation_event(
+                    "guardrail_input_self_check_decision",
+                    {
+                        "user_message_sha256": _sha256(text),
+                        "user_message_length": len(text),
+                    },
+                    evaluation_decision,
+                )
 
                 span.add_event(
                     "guardrail.decision",
@@ -837,6 +893,24 @@ class TextGuardrailsMiddleware(GuardrailsMiddleware):
                 span.set_attribute("input.mime_type", "application/json")
                 span.set_attribute("output.value", _json(output_payload))
                 span.set_attribute("output.mime_type", "application/json")
+
+                _emit_nat_evaluation_event(
+                    "guardrail_output_regex_presidio_decision",
+                    {
+                        "raw_output_sha256": _sha256(raw_text),
+                        "raw_output_length": len(raw_text),
+                    },
+                    {
+                        "stage": "output",
+                        "name": "regex + Presidio output",
+                        "outcome": overall_outcome,
+                        "blocked": blocked,
+                        "modified": modified,
+                        "regex_outcome": regex_outcome,
+                        "presidio_outcome": presidio_outcome,
+                        "sanitized_output_length": len(guarded_text_full),
+                    },
+                )
 
                 span.add_event(
                     "guardrail.rail_result",
