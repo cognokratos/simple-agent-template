@@ -57,6 +57,7 @@ WORKDIR /app
 
 COPY --from=builder /opt/venv /opt/venv
 COPY config.yml /app/config.yml
+COPY verify_input_guardrails.py /app/verify_input_guardrails.py
 
 EXPOSE 8000
 

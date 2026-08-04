@@ -14,8 +14,6 @@ services:
       interval: 3s
       timeout: 3s
       retries: 20
-    ports:
-      - "5432:5432"
     restart: unless-stopped
 
   mcp-server:
@@ -96,6 +94,7 @@ services:
       OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://host.docker.internal:11434/v1}
       OLLAMA_API_KEY: ${OLLAMA_API_KEY:-ollama}
       OLLAMA_MODEL: ${OLLAMA_MODEL:-qwen3:8b}
+      OLLAMA_GUARD_MODEL: ${OLLAMA_GUARD_MODEL:-qwen3:8b}
       OLLAMA_GUARD_REASONING_EFFORT: ${OLLAMA_GUARD_REASONING_EFFORT:-none}
       OLLAMA_REASONING_EFFORT: ${OLLAMA_REASONING_EFFORT:-none}
       ALERTS_MCP_URL: http://mcp-server:8080/mcp
@@ -105,8 +104,15 @@ services:
       OTEL_SERVICE_NAME: ${OTEL_SERVICE_NAME:-alerts-agent}
       DEPLOYMENT_ENVIRONMENT: ${DEPLOYMENT_ENVIRONMENT:-local}
       NAT_TRACE_CONTENT_MAX_CHARS: ${NAT_TRACE_CONTENT_MAX_CHARS:-65536}
-      # Explicitly opt in to prompt/response content capture. This can contain
-      # customer data and should be disabled or redacted in stricter deployments.
+      # Explicit Guardrails decision spans. Prompt capture is enabled for the
+      # self-check LLM; raw pre-mask output capture stays disabled by default.
+      GUARDRAILS_TRACE_CAPTURE_CONTENT: ${GUARDRAILS_TRACE_CAPTURE_CONTENT:-true}
+      GUARDRAILS_TRACE_CAPTURE_RAW_OUTPUT: ${GUARDRAILS_TRACE_CAPTURE_RAW_OUTPUT:-false}
+      GUARDRAILS_TRACE_MAX_CHARS: ${GUARDRAILS_TRACE_MAX_CHARS:-16384}
+      GUARDRAILS_INPUT_DETERMINISTIC_FALLBACK: ${GUARDRAILS_INPUT_DETERMINISTIC_FALLBACK:-true}
+      GUARDRAILS_INPUT_READ_ONLY_ALLOW_OVERRIDE: ${GUARDRAILS_INPUT_READ_ONLY_ALLOW_OVERRIDE:-true}
+      GUARDRAILS_INPUT_BLOCK_MESSAGE: "${GUARDRAILS_INPUT_BLOCK_MESSAGE:-I'm sorry, I can't help with that request.}"
+      # Explicitly opt in to general GenAI prompt/response content capture.
       OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT: ${OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT:-true}
     depends_on:
       mcp-server:

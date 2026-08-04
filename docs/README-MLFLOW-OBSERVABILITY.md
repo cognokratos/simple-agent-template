@@ -151,3 +151,27 @@ docker compose up -d
 
 Do not remove `postgres-data` unless the demo alert database should also be
 reset.
+
+## Guardrails verdict and self-check prompt capture
+
+In addition to NeMo Guardrails' generic OpenTelemetry adapter spans, the local
+middleware emits explicit summary spans that MLflow can render cleanly:
+
+```text
+guardrail.input.self_check
+guardrail.output.regex_presidio
+```
+
+For the input self-check span, inspect:
+
+- `guardrail.outcome`: `passed`, `modified`, or `blocked`;
+- `guardrail.blocked` and `guardrail.modified`;
+- `guardrail.prompt.rendered`: the rendered configured prompt;
+- `guardrail.llm.prompt`: the prompt/messages captured from Guardrails' actual
+  `llm_calls` generation log;
+- `guardrail.llm.response`: the raw short model verdict when present;
+- `guardrail.activated_rails` and `guardrail.log`.
+
+The output span records `guardrail.regex.outcome` and
+`guardrail.presidio.outcome`. Raw output before filtering is represented only by
+its SHA-256 and length unless `GUARDRAILS_TRACE_CAPTURE_RAW_OUTPUT=true` is set.

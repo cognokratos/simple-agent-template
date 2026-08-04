@@ -279,11 +279,11 @@ The local component intentionally does not enable `from __future__ import annota
 
 ## Regex and Presidio output guardrails
 
-This build replaces the LLM-based `self check output` rail with deterministic regex blocking and Presidio masking. See `docs/REGEX-PRESIDIO.md` for the policy, rebuild steps, and tuning details.
+This build replaces the LLM-based `self check output` rail with deterministic regex blocking and Presidio masking. See `docs/README-REGEX-PRESIDIO.md` for the policy, rebuild steps, and tuning details.
 
 ## Text-aware streaming guardrails
 
-This build uses the local `_type: text_guardrails` middleware. It feeds only assistant `delta.content` into regex and Presidio, re-wraps sanitized output as NAT `ChatResponseChunk` objects, and patches the Guardrails 0.21 Presidio action to accept streaming dispatcher metadata. See `docs/TEXT-AWARE-GUARDRAILS.md`.
+This build uses the local `_type: text_guardrails` middleware. It feeds only assistant `delta.content` into regex and Presidio, re-wraps sanitized output as NAT `ChatResponseChunk` objects, and patches the Guardrails 0.21 Presidio action to accept streaming dispatcher metadata. See `docs/README-TEXT-AWARE-GUARDRAILS.md`.
 
 ## Unified MLflow observability
 
@@ -297,6 +297,37 @@ The pinned NAT 1.8 runner is patched at image-build time by
 `agent/patch_nat_single_trace.py`. Existing MLflow rows are not rewritten; only
 new calls use the unified shape.
 
-See [`docs/MLFLOW-OBSERVABILITY.md`](docs/MLFLOW-OBSERVABILITY.md) for the
+See [`docs/README-MLFLOW-OBSERVABILITY.md`](docs/README-MLFLOW-OBSERVABILITY.md) for the
 architecture, rebuild steps, verification, privacy notes, and trace acceptance
 criteria.
+
+See [`docs/README-GUARDRAILS-TRACING.md`](docs/README-GUARDRAILS-TRACING.md) for the
+explicit verdict attributes, self-check prompt capture, and privacy controls.
+
+## Explicit Guardrails decision traces
+
+The custom `text_guardrails` middleware now emits two readable child spans in
+NAT's canonical trace:
+
+- `guardrail.input.self_check` records the rendered `self_check_input` prompt,
+  the actual LLM call log, activated rails, and a `passed`, `modified`, or
+  `blocked` verdict.
+- `guardrail.output.regex_presidio` records the overall output verdict plus
+  separate `guardrail.regex.outcome` and `guardrail.presidio.outcome` values.
+
+Open a trace in MLflow and select these spans under **Details & Timeline**. The
+self-check span's Inputs/Outputs show the rendered guard prompt, raw guard-model
+answer when available, activated rail log, and final decision. The output span
+shows deterministic rail outcomes and the sanitized output.
+
+Content settings:
+
+```env
+GUARDRAILS_TRACE_CAPTURE_CONTENT=true
+GUARDRAILS_TRACE_CAPTURE_RAW_OUTPUT=false
+GUARDRAILS_TRACE_MAX_CHARS=16384
+```
+
+`GUARDRAILS_TRACE_CAPTURE_RAW_OUTPUT` is deliberately false. Enabling it would
+store text before regex blocking and Presidio masking, potentially defeating the
+privacy purpose of those output rails.
