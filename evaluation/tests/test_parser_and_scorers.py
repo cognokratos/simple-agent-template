@@ -109,19 +109,25 @@ class ParserTests(unittest.TestCase):
         server = ThreadingHTTPServer(("127.0.0.1", 0), _SSEHandler)
         thread = threading.Thread(target=server.serve_forever, daemon=True)
         thread.start()
-        previous = os.environ.get("AGENT_WORKFLOW_URL")
+        previous_url = os.environ.get("AGENT_WORKFLOW_URL")
+        previous_key = os.environ.get("AGENT_API_KEY")
         os.environ["AGENT_WORKFLOW_URL"] = (
             f"http://127.0.0.1:{server.server_address[1]}/v1/workflow/full"
         )
+        os.environ["AGENT_API_KEY"] = "test-agent-api-key"
         try:
             output = invoke_live_agent("Hello", "CASE-1")
         finally:
             server.shutdown()
             server.server_close()
-            if previous is None:
+            if previous_url is None:
                 os.environ.pop("AGENT_WORKFLOW_URL", None)
             else:
-                os.environ["AGENT_WORKFLOW_URL"] = previous
+                os.environ["AGENT_WORKFLOW_URL"] = previous_url
+            if previous_key is None:
+                os.environ.pop("AGENT_API_KEY", None)
+            else:
+                os.environ["AGENT_API_KEY"] = previous_key
         self.assertEqual(output["answer"], "Live response")
         self.assertEqual(output["agent_trace_id"], "feedface")
         self.assertEqual(output["agent_run_id"], "run-1")

@@ -339,12 +339,16 @@ def _max_attempts() -> int:
 
 
 def invoke_live_agent(question: str, case_id: str | None = None) -> dict[str, Any]:
+    agent_api_key = os.environ.get("AGENT_API_KEY", "").strip()
+    if not agent_api_key:
+        raise RuntimeError("AGENT_API_KEY must be configured for live evaluation")
     request = urllib.request.Request(
         _workflow_url(),
         data=_request_payload(question, case_id),
         headers={
             "Content-Type": "application/json",
             "Accept": "text/event-stream",
+            "Authorization": f"Bearer {agent_api_key}",
             "X-Evaluation-Case-Id": case_id or "",
         },
         method="POST",

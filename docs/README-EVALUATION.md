@@ -22,8 +22,11 @@ Deterministic MLflow scorers
 Dedicated MLflow evaluation experiment
 ```
 
-The evaluator does not call the MCP server or database directly. It only calls
-the public NAT workflow endpoint and observes the same behavior as assistant-ui.
+The evaluator does not call the MCP server or database directly. It calls NAT
+inside the Compose network using `AGENT_API_KEY`. This intentionally bypasses
+the browser/Keycloak login layer so Guardrails and tool-calling evaluation stay
+focused on agent behavior. `make auth-test` separately checks the external
+authentication boundaries.
 
 ## Suites
 
@@ -105,7 +108,9 @@ make up
 
 The equivalent raw command is `docker compose up -d`.
 
-Wait for the agent, MLflow, Collector, MCP server, and PostgreSQL to be ready.
+Wait for Keycloak, the gateway, agent, MLflow, Collector, MCP server, and
+PostgreSQL to be ready. The evaluator authenticates directly to the internal NAT
+endpoint with the configured `AGENT_API_KEY`.
 MLflow is available at:
 
 ```text

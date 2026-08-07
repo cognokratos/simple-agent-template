@@ -1,7 +1,14 @@
-use std::{net::SocketAddr, time::Duration};
+use std::{net::SocketAddr, sync::Arc, time::Duration};
 
 use anyhow::Context;
-use axum::{routing::get, Router};
+use axum::{
+    extract::{Request, State},
+    http::{header, StatusCode},
+    middleware::{self, Next},
+    response::{IntoResponse, Response},
+    routing::get,
+    Router,
+};
 use chrono::{DateTime, Utc};
 use rmcp::{
     handler::server::{router::tool::ToolRouter, wrapper::Parameters},
@@ -226,6 +233,42 @@ async fn health() -> &'static str {
     "ok"
 }
 
+fn constant_time_eq(left: &[u8], right: &[u8]) -> bool {
+    if left.len() != right.len() {
+        return false;
+    }
+    left.iter()
+        .zip(right.iter())
+        .fold(0_u8, |difference, (a, b)| difference | (a ^ b))
+        == 0
+}
+
+async fn require_api_key(
+    State(expected): State<Arc<String>>,
+    mut request: Request,
+    next: Next,
+) -> Response {
+    let provided = request
+        .headers()
+        .get(header::AUTHORIZATION)
+        .map(|value| value.as_bytes())
+        .unwrap_or_default();
+
+    if !constant_time_eq(provided, expected.as_bytes()) {
+        return (
+            StatusCode::UNAUTHORIZED,
+            [(header::WWW_AUTHENTICATE, "Bearer")],
+            "invalid or missing internal API key",
+        )
+            .into_response();
+    }
+
+    // Prevent the validated service credential from reaching RMCP logging or
+    // any downstream request instrumentation.
+    request.headers_mut().remove(header::AUTHORIZATION);
+    next.run(request).await
+}
+
 #[tokio::main]
 async fn main() {
     if let Err(error) = run().await {
@@ -247,6 +290,12 @@ async fn run() -> anyhow::Result<()> {
 
     let database_url = std::env::var("DATABASE_URL")
         .context("DATABASE_URL must be configured")?;
+    let api_key = std::env::var("MCP_API_KEY")
+        .context("MCP_API_KEY must be configured")?;
+    if api_key.trim().is_empty() {
+        anyhow::bail!("MCP_API_KEY must not be empty");
+    }
+    let expected_authorization = Arc::new(format!("Bearer {api_key}"));
     let bind_address = std::env::var("MCP_BIND_ADDRESS")
         .unwrap_or_else(|_| "0.0.0.0:8080".to_string());
     let allowed_hosts = std::env::var("MCP_ALLOWED_HOSTS")
@@ -290,9 +339,15 @@ async fn run() -> anyhow::Result<()> {
             .with_cancellation_token(cancellation.child_token()),
     );
 
+    let protected_mcp = Router::new()
+        .nest_service("/mcp", service)
+        .route_layer(middleware::from_fn_with_state(
+            expected_authorization,
+            require_api_key,
+        ));
     let app = Router::new()
         .route("/health", get(health))
-        .nest_service("/mcp", service);
+        .merge(protected_mcp);
     let address: SocketAddr = bind_address.parse().context("invalid MCP_BIND_ADDRESS")?;
     let listener = tokio::net::TcpListener::bind(address)
         .await

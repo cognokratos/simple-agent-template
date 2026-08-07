@@ -1,19 +1,19 @@
-# assistant-ui + NAT ReAct + Rust MCP + Postgres
+# Secured assistant-ui + Rust Gateway + NAT ReAct + Rust MCP
 
 > **NAT ReAct prompt compatibility:** the custom `system_prompt` contains the required `{tools}` and `{tool_names}` placeholders. NAT replaces these at startup with the discovered MCP tool descriptions and names.
 
 
-This POC demonstrates a complete local agent path:
+This POC demonstrates a secured local agent path:
 
 ```text
-assistant-ui
-    ↓ AI SDK UI message stream
-Next.js adapter
-    ↓ POST /v1/workflow/full
+Browser / assistant-ui
+    ↓ Keycloak login; opaque HttpOnly BFF session
+Rust authentication gateway
+    ↓ static AGENT_API_KEY; fixed SSE workflow proxy
 NeMo Agent Toolkit ReAct workflow
-    ↓ MCP client (streamable HTTP)
+    ↓ static MCP_API_KEY through streamable HTTP
 Rust MCP server
-    ↓ SQLx
+    ↓ parameterized SQLx queries
 Postgres
 
 NAT + Guardrails traces
@@ -22,6 +22,12 @@ OpenTelemetry Collector
     ↓
 MLflow
 ```
+
+assistant-ui is the only application service reachable from the browser. Its
+server routes proxy a narrow allowlist to the internal Rust gateway; the
+gateway, NAT, and MCP are internal-only in normal Compose. See
+[`docs/README-SECURITY.md`](docs/README-SECURITY.md) for the complete authentication and
+network-boundary design.
 
 The agent keeps NeMo Guardrails as input/output middleware and uses Ollama
 through its OpenAI-compatible endpoint.
@@ -49,14 +55,16 @@ is available in [`docs/TEST-SCENARIOS.md`](docs/TEST-SCENARIOS.md).
 ## Tool calls in assistant-ui
 
 NAT's built-in ReAct OpenAI-compatible stream emits only the final answer. It
-intentionally hides internal reasoning and tool chunks. To show tool activity,
-the Next.js route calls:
+intentionally hides internal reasoning and tool chunks. To show tool activity, the browser calls `/api/gateway/chat`. The Next.js route
+forwards the authenticated session and CSRF token to the internal Rust gateway,
+which alone calls the fixed NAT endpoint:
 
 ```text
-POST /v1/workflow/full?filter_steps=TOOL_START,TOOL_END
+POST /v1/workflow/full?filter_steps=TOOL_START,TOOL_END,FUNCTION_START,FUNCTION_END
 ```
 
-It translates NAT intermediate events into AI SDK UI message chunks:
+The Next.js bridge translates the returned NAT intermediate events into AI SDK
+UI message chunks:
 
 - `TOOL_START` → `tool-input-available`
 - `TOOL_END` → `tool-output-available`
@@ -122,9 +130,13 @@ Useful targets include:
 
 ```text
 make logs-app                 Application logs
+make logs-gateway             Rust gateway logs
+make logs-keycloak            Keycloak and realm-import logs
 make logs-observability       Agent, Collector, and MLflow logs
-make health                   Check all public endpoints
-make verify-mcp               List the MCP tools through NAT
+make health                   Check public and internal service health
+make auth-test                Verify every unauthenticated boundary rejects
+make security-test            Run all static authentication checks
+make verify-mcp               Verify MCP rejects/accepts its static key
 make verify-guardrails        Run the input-guardrail smoke test
 make eval-bootstrap-replace   Recreate both MLflow datasets
 make eval-guardrails          Run the Guardrails evaluation
@@ -161,47 +173,65 @@ docker compose up -d --build
 Open:
 
 - assistant-ui: `http://localhost:3000`
-- NAT Swagger UI: `http://localhost:8000/docs`
-- Rust MCP health: `http://localhost:8080/health`
-- MLflow traces: `http://localhost:5000`
+- Keycloak administration: `http://localhost:8082/admin/`
+- MLflow traces and evaluations: `http://localhost:5000`
+
+The default development login is `analyst` / `analyst`. The Keycloak admin
+default is `admin` / `admin`. Change both and every secret in `.env` outside a
+local disposable environment.
+
+The Rust gateway, NAT, and MCP do not publish host ports in normal Compose. Use
+`make debug-up` for loopback-only diagnostics on ports 8081, 8000, and 8080.
 
 Follow logs:
 
 ```bash
-docker compose logs -f postgres mcp-server agent ui
+make logs-app
 ```
 
-## Verify the MCP connection
+## Verify the authentication boundaries and MCP connection
 
-NAT 1.8 installs the MCP CLI with `nvidia-nat-mcp`:
+Run the security smoke tests:
 
 ```bash
-docker compose exec agent \
-  nat mcp client tool list \
-  --url http://mcp-server:8080/mcp
+make auth-test
+make verify-mcp
 ```
 
-The output should include:
+The first command verifies Keycloak discovery and confirms that unauthenticated
+requests are rejected by the gateway, NAT, and MCP. The second verifies from the
+agent container that MCP rejects a missing key and accepts the configured
+`MCP_API_KEY`.
 
-```text
-search_alerts
-get_alert
-```
-
-You can also inspect the routes exposed by NAT in Swagger and invoke
-`POST /v1/workflow/full` directly.
-
-## Reset the seeded database
-
-Postgres initialization scripts run only when the data directory is empty. To
-recreate the demo database:
+To inspect the gateway, NAT, or MCP directly during development:
 
 ```bash
-docker compose down -v
-docker compose up -d --build
+make debug-up
 ```
 
-This deletes the POC Postgres volume.
+The gateway health endpoint is then available at `http://localhost:8081/health`
+and NAT Swagger at `http://localhost:8000/docs`. Direct NAT calls must include
+`Authorization: Bearer ${AGENT_API_KEY}`; MCP remains protected by
+`MCP_API_KEY`.
+
+## Reset persistent development data
+
+Postgres and Keycloak initialization scripts run only when their data volumes
+are empty. To delete PostgreSQL, MLflow, and Keycloak development data and
+rebuild the complete stack:
+
+```bash
+make reset-data
+```
+
+To recreate only the Keycloak realm and gateway sessions while preserving
+PostgreSQL and MLflow data:
+
+```bash
+make reset-auth
+```
+
+Both commands request confirmation before deleting persistent data.
 
 ## Rebuild efficiently
 
@@ -240,12 +270,27 @@ broad NAT LangChain dependency set. The expensive Python dependency layer is
 cached, and the compiler required by `annoy` remains confined to the builder
 stage.
 
+## Authentication and internal service security
+
+This build includes:
+
+- Keycloak Authorization Code flow with PKCE S256;
+- a Rust BFF gateway that keeps retained OIDC tokens server-side;
+- opaque `HttpOnly` sessions and CSRF protection;
+- a strict `/api/gateway/chat` browser route and fixed internal gateway allowlist;
+- static API keys on gateway → NAT, evaluator → NAT, and NAT → MCP;
+- internal-only gateway, NAT, and MCP service ports by default;
+- trusted user identity headers from the gateway to NAT;
+- `make auth-test`, `make security-test`, and `make reset-auth`.
+
+Detailed configuration, threat boundaries, and production hardening guidance are
+in [`docs/README-SECURITY.md`](docs/README-SECURITY.md).
+
 ## Production notes
 
 This is a local demonstration. Before production use, add:
 
-- authentication and authorization between NAT and MCP;
-- tenant/user scoping in every SQL query;
+- authorization and tenant/user scoping in every SQL query;
 - secrets management instead of demo database credentials;
 - database migrations rather than a one-time init script;
 - pagination and response-size limits for transaction-heavy alerts;

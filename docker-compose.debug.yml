@@ -1,0 +1,11 @@
+services:
+  agent:
+    ports:
+      - "127.0.0.1:8000:8000"
+  mcp-server:
+    ports:
+      - "127.0.0.1:8080:8080"
+
+  gateway:
+    ports:
+      - "${PUBLIC_BIND_ADDRESS:-127.0.0.1}:8081:8081"

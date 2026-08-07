@@ -295,3 +295,91 @@ MLflow to inspect every prediction and scorer rationale:
 alerts-agent-guardrails-evaluation
 alerts-agent-tool-calling-evaluation
 ```
+
+---
+
+# Authentication and service-boundary scenarios
+
+## Start the secured stack
+
+```bash
+make dev
+```
+
+Open `http://localhost:3000`. The application must display the Keycloak sign-in
+screen before rendering the chat interface.
+
+Development user:
+
+```text
+analyst / analyst
+```
+
+## Automated authentication smoke test
+
+```bash
+make auth-test
+```
+
+Expected:
+
+- Keycloak discovery responds successfully;
+- `/auth/login` redirects to the configured Keycloak realm;
+- unauthenticated internal `POST /api/chat` returns `401`;
+- a direct NAT request without `AGENT_API_KEY` returns `401`;
+- a direct MCP request without `MCP_API_KEY` returns `401`.
+
+Then run:
+
+```bash
+make verify-mcp
+```
+
+Expected: the agent container confirms that the MCP key is accepted after first
+confirming that an unauthenticated request is rejected.
+
+## Browser login and logout
+
+1. Click **Sign in with Keycloak**.
+2. Sign in as the development analyst.
+3. Verify the chat interface loads and the three normal tool scenarios work.
+4. Sign out.
+5. Verify the browser returns to Keycloak logout and then to the unauthenticated
+   UI.
+6. Refresh the UI and verify the chat remains inaccessible.
+
+## Gateway request allowlist
+
+After signing in, the UI must continue to stream answers and tool events. The
+gateway must not expose NAT Swagger, evaluation, MCP listing, or arbitrary proxy
+paths. Unknown gateway routes should return `404`.
+
+The gateway rejects malformed chat payloads, unknown top-level properties,
+`system` role messages, empty histories, histories whose final role is not
+`user`, and configured size-limit violations.
+
+## Debug-only direct ports
+
+Normal startup must not expose ports 8000 or 8080:
+
+```bash
+make dev
+```
+
+For loopback-only diagnostics:
+
+```bash
+make debug-up
+```
+
+Direct NAT requests then require:
+
+```http
+Authorization: Bearer ${AGENT_API_KEY}
+```
+
+Direct MCP requests require:
+
+```http
+Authorization: Bearer ${MCP_API_KEY}
+```

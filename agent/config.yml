@@ -41,6 +41,8 @@ function_groups:
     server:
       transport: streamable-http
       url: ${ALERTS_MCP_URL:-http://mcp-server:8080/mcp}
+      custom_headers:
+        Authorization: Bearer ${MCP_API_KEY}
     include:
       - search_alerts
       - get_alert

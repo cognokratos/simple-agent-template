@@ -16,6 +16,58 @@ services:
       retries: 20
     restart: unless-stopped
 
+  keycloak-realm-init:
+    image: python:3.12-alpine
+    command: ["python", "/config/generate_realm.py"]
+    environment:
+      KEYCLOAK_REALM_OUTPUT: /import/alerts-realm.json
+      KEYCLOAK_REALM: ${KEYCLOAK_REALM:-alerts}
+      KEYCLOAK_GATEWAY_CLIENT_ID: ${KEYCLOAK_GATEWAY_CLIENT_ID:-alerts-gateway}
+      KEYCLOAK_GATEWAY_CLIENT_SECRET: ${KEYCLOAK_GATEWAY_CLIENT_SECRET:-dev-gateway-client-secret-change-me}
+      KEYCLOAK_ANALYST_USERNAME: ${KEYCLOAK_ANALYST_USERNAME:-analyst}
+      KEYCLOAK_ANALYST_PASSWORD: ${KEYCLOAK_ANALYST_PASSWORD:-analyst}
+      KEYCLOAK_ANALYST_EMAIL: ${KEYCLOAK_ANALYST_EMAIL:-analyst@example.test}
+      OIDC_CALLBACK_URL: ${OIDC_CALLBACK_URL:-http://localhost:3000/api/gateway/auth/callback}
+      UI_PUBLIC_URL: ${UI_PUBLIC_URL:-http://localhost:3000}
+    volumes:
+      - ./keycloak/generate_realm.py:/config/generate_realm.py:ro
+      - keycloak-import:/import
+    restart: "no"
+
+  keycloak:
+    image: quay.io/keycloak/keycloak:26.7.0
+    command:
+      - start-dev
+      - --import-realm
+      - --hostname=${KEYCLOAK_PUBLIC_URL:-http://localhost:8082}
+      - --hostname-backchannel-dynamic=true
+      - --health-enabled=true
+    environment:
+      KC_BOOTSTRAP_ADMIN_USERNAME: ${KEYCLOAK_ADMIN_USERNAME:-admin}
+      KC_BOOTSTRAP_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD:-admin}
+    volumes:
+      - keycloak-data:/opt/keycloak/data
+      - keycloak-import:/opt/keycloak/data/import:ro
+    depends_on:
+      keycloak-realm-init:
+        condition: service_completed_successfully
+    healthcheck:
+      test:
+        - CMD
+        - bash
+        - -ec
+        - >-
+          exec 3<>/dev/tcp/127.0.0.1/9000;
+          printf 'GET /health/ready HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n' >&3;
+          grep -q '200 OK' <&3
+      start_period: 30s
+      interval: 5s
+      timeout: 5s
+      retries: 30
+    ports:
+      - "${PUBLIC_BIND_ADDRESS:-127.0.0.1}:8082:8080"
+    restart: unless-stopped
+
   mcp-server:
     build:
       context: ./mcp-server
@@ -23,6 +75,7 @@ services:
       DATABASE_URL: postgresql://${POSTGRES_USER:-alerts}:${POSTGRES_PASSWORD:-alerts}@postgres:5432/${POSTGRES_DB:-alerts}
       MCP_BIND_ADDRESS: 0.0.0.0:8080
       MCP_ALLOWED_HOSTS: ${MCP_ALLOWED_HOSTS:-mcp-server,mcp-server:8080,localhost,localhost:8080,127.0.0.1,127.0.0.1:8080,::1}
+      MCP_API_KEY: ${MCP_API_KEY:-dev-mcp-api-key-change-me}
       RUST_LOG: ${RUST_LOG:-alerts_mcp_server=info,rmcp=info}
     depends_on:
       postgres:
@@ -33,8 +86,6 @@ services:
       interval: 3s
       timeout: 3s
       retries: 20
-    ports:
-      - "8080:8080"
     restart: unless-stopped
 
   mlflow:
@@ -66,7 +117,7 @@ services:
       timeout: 3s
       retries: 20
     ports:
-      - "5000:5000"
+      - "${PUBLIC_BIND_ADDRESS:-127.0.0.1}:5000:5000"
     restart: unless-stopped
 
   otel-collector:
@@ -83,8 +134,8 @@ services:
       timeout: 5s
       retries: 5
     ports:
-      - "4318:4318"
-      - "13133:13133"
+      - "${PUBLIC_BIND_ADDRESS:-127.0.0.1}:4318:4318"
+      - "${PUBLIC_BIND_ADDRESS:-127.0.0.1}:13133:13133"
     restart: unless-stopped
 
   agent:
@@ -98,21 +149,20 @@ services:
       OLLAMA_GUARD_REASONING_EFFORT: ${OLLAMA_GUARD_REASONING_EFFORT:-none}
       OLLAMA_REASONING_EFFORT: ${OLLAMA_REASONING_EFFORT:-none}
       ALERTS_MCP_URL: http://mcp-server:8080/mcp
+      MCP_API_KEY: ${MCP_API_KEY:-dev-mcp-api-key-change-me}
+      NAT_GATEWAY_API_KEY: ${AGENT_API_KEY:-dev-agent-api-key-change-me}
       OTEL_COLLECTOR_TRACES_ENDPOINT: ${OTEL_COLLECTOR_TRACES_ENDPOINT:-http://otel-collector:4318/v1/traces}
       OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: ${OTEL_EXPORTER_OTLP_TRACES_ENDPOINT:-http://otel-collector:4318/v1/traces}
       OTEL_EXPORTER_OTLP_TRACES_PROTOCOL: http/protobuf
       OTEL_SERVICE_NAME: ${OTEL_SERVICE_NAME:-alerts-agent}
       DEPLOYMENT_ENVIRONMENT: ${DEPLOYMENT_ENVIRONMENT:-local}
       NAT_TRACE_CONTENT_MAX_CHARS: ${NAT_TRACE_CONTENT_MAX_CHARS:-65536}
-      # Explicit Guardrails decision spans. Prompt capture is enabled for the
-      # self-check LLM; raw pre-mask output capture stays disabled by default.
       GUARDRAILS_TRACE_CAPTURE_CONTENT: ${GUARDRAILS_TRACE_CAPTURE_CONTENT:-true}
       GUARDRAILS_TRACE_CAPTURE_RAW_OUTPUT: ${GUARDRAILS_TRACE_CAPTURE_RAW_OUTPUT:-false}
       GUARDRAILS_TRACE_MAX_CHARS: ${GUARDRAILS_TRACE_MAX_CHARS:-16384}
       GUARDRAILS_INPUT_DETERMINISTIC_FALLBACK: ${GUARDRAILS_INPUT_DETERMINISTIC_FALLBACK:-true}
       GUARDRAILS_INPUT_READ_ONLY_ALLOW_OVERRIDE: ${GUARDRAILS_INPUT_READ_ONLY_ALLOW_OVERRIDE:-true}
       GUARDRAILS_INPUT_BLOCK_MESSAGE: "${GUARDRAILS_INPUT_BLOCK_MESSAGE:-I'm sorry, I can't help with that request.}"
-      # Explicitly opt in to general GenAI prompt/response content capture.
       OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT: ${OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT:-true}
     depends_on:
       mcp-server:
@@ -121,23 +171,71 @@ services:
         condition: service_healthy
     extra_hosts:
       - "host.docker.internal:host-gateway"
-    ports:
-      - "8000:8000"
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - >-
+          python -c "import urllib.request;
+          urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=2)"
+      start_period: 20s
+      interval: 5s
+      timeout: 3s
+      retries: 30
+    restart: unless-stopped
+
+  gateway:
+    build:
+      context: ./gateway
+    environment:
+      GATEWAY_BIND_ADDRESS: 0.0.0.0:8081
+      UI_PUBLIC_URL: ${UI_PUBLIC_URL:-http://localhost:3000}
+      OIDC_CALLBACK_URL: ${OIDC_CALLBACK_URL:-http://localhost:3000/api/gateway/auth/callback}
+      KEYCLOAK_PUBLIC_URL: ${KEYCLOAK_PUBLIC_URL:-http://localhost:8082}
+      KEYCLOAK_INTERNAL_URL: http://keycloak:8080
+      KEYCLOAK_REALM: ${KEYCLOAK_REALM:-alerts}
+      KEYCLOAK_GATEWAY_CLIENT_ID: ${KEYCLOAK_GATEWAY_CLIENT_ID:-alerts-gateway}
+      KEYCLOAK_GATEWAY_CLIENT_SECRET: ${KEYCLOAK_GATEWAY_CLIENT_SECRET:-dev-gateway-client-secret-change-me}
+      AGENT_WORKFLOW_URL: http://agent:8000/v1/workflow/full
+      AGENT_API_KEY: ${AGENT_API_KEY:-dev-agent-api-key-change-me}
+      AGENT_FILTER_STEPS: TOOL_START,TOOL_END,FUNCTION_START,FUNCTION_END
+      GATEWAY_COOKIE_SECURE: ${GATEWAY_COOKIE_SECURE:-false}
+      GATEWAY_SESSION_TTL_SECONDS: ${GATEWAY_SESSION_TTL_SECONDS:-28800}
+      GATEWAY_MAX_SESSIONS: ${GATEWAY_MAX_SESSIONS:-1000}
+      GATEWAY_MAX_PENDING_LOGINS: ${GATEWAY_MAX_PENDING_LOGINS:-1000}
+      GATEWAY_MAX_MESSAGES: ${GATEWAY_MAX_MESSAGES:-100}
+      GATEWAY_MAX_MESSAGE_CHARS: ${GATEWAY_MAX_MESSAGE_CHARS:-32768}
+      GATEWAY_MAX_TOTAL_MESSAGE_CHARS: ${GATEWAY_MAX_TOTAL_MESSAGE_CHARS:-262144}
+      GATEWAY_SESSION_COOKIE: ${GATEWAY_SESSION_COOKIE:-alerts_gateway_session}
+      GATEWAY_CSRF_COOKIE: ${GATEWAY_CSRF_COOKIE:-alerts_gateway_csrf}
+      GATEWAY_LOGIN_COOKIE: ${GATEWAY_LOGIN_COOKIE:-alerts_gateway_login}
+      RUST_LOG: ${GATEWAY_RUST_LOG:-alerts_auth_gateway=info}
+    depends_on:
+      keycloak:
+        condition: service_healthy
+      agent:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "--silent", "--show-error", "http://127.0.0.1:8081/ready"]
+      start_period: 10s
+      interval: 5s
+      timeout: 5s
+      retries: 30
     restart: unless-stopped
 
   ui:
     build:
       context: ./ui
     environment:
-      NEMO_WORKFLOW_URL: http://agent:8000/v1/workflow/full
+      GATEWAY_INTERNAL_URL: http://gateway:8081
+      UI_PUBLIC_URL: ${UI_PUBLIC_URL:-http://localhost:3000}
+      GATEWAY_CSRF_COOKIE: ${GATEWAY_CSRF_COOKIE:-alerts_gateway_csrf}
     depends_on:
-      - agent
+      gateway:
+        condition: service_healthy
     ports:
-      - "3000:3000"
+      - "${PUBLIC_BIND_ADDRESS:-127.0.0.1}:3000:3000"
     restart: unless-stopped
 
-  # On-demand live evaluation runner. It is profile-gated so a normal
-  # `docker compose up -d` does not launch evaluations automatically.
   evaluator:
     image: ghcr.io/mlflow/mlflow:v3.14.0
     profiles: ["evaluation"]
@@ -150,6 +248,7 @@ services:
       PYTHONPATH: /app
       MLFLOW_TRACKING_URI: ${MLFLOW_TRACKING_URI:-http://mlflow:5000}
       AGENT_WORKFLOW_URL: ${AGENT_WORKFLOW_URL:-http://agent:8000/v1/workflow/full}
+      AGENT_API_KEY: ${AGENT_API_KEY:-dev-agent-api-key-change-me}
       MLFLOW_GENAI_EVAL_SKIP_TRACE_VALIDATION: ${MLFLOW_GENAI_EVAL_SKIP_TRACE_VALIDATION:-true}
       MLFLOW_GENAI_EVAL_MAX_WORKERS: ${MLFLOW_GENAI_EVAL_MAX_WORKERS:-1}
       MLFLOW_ENABLE_ASYNC_TRACE_LOGGING: ${MLFLOW_ENABLE_ASYNC_TRACE_LOGGING:-false}
@@ -163,8 +262,12 @@ services:
       mlflow:
         condition: service_healthy
       agent:
-        condition: service_started
+        condition: service_healthy
 
 volumes:
   postgres-data:
   mlflow-data:
+  keycloak-data:
+    name: ${KEYCLOAK_DATA_VOLUME:-alerts-agent-keycloak-data}
+  keycloak-import:
+    name: ${KEYCLOAK_IMPORT_VOLUME:-alerts-agent-keycloak-import}

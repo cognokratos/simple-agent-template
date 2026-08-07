@@ -33,8 +33,10 @@ RUN --mount=type=cache,target=/root/.cache/uv,sharing=locked \
 # reconstructs streamed output into one readable answer.
 COPY patch_nemoguardrails_regex.py /app/patch_nemoguardrails_regex.py
 COPY patch_nat_single_trace.py /app/patch_nat_single_trace.py
+COPY patch_nat_api_key.py /app/patch_nat_api_key.py
 RUN python /app/patch_nemoguardrails_regex.py \
-    && python /app/patch_nat_single_trace.py
+    && python /app/patch_nat_single_trace.py \
+    && python /app/patch_nat_api_key.py
 
 # Presidio uses spaCy for entity recognition. Install the English model in the
 # builder so it is copied into the runtime virtual environment.
@@ -58,6 +60,7 @@ WORKDIR /app
 COPY --from=builder /opt/venv /opt/venv
 COPY config.yml /app/config.yml
 COPY verify_input_guardrails.py /app/verify_input_guardrails.py
+COPY verify_mcp_auth.py /app/verify_mcp_auth.py
 
 EXPOSE 8000
 

@@ -1,3 +1,4 @@
+import { gatewayInternalUrl } from "../_proxy";
 import {
   createUIMessageStream,
   createUIMessageStreamResponse,
@@ -17,6 +18,14 @@ type NatIntermediateEnvelope = {
   payload?: unknown;
 };
 
+
+function cookieValue(cookieHeader: string, name: string): string | undefined {
+  return cookieHeader
+    .split(";")
+    .map((part) => part.trim())
+    .map((part) => part.split("=", 2))
+    .find(([key]) => key === name)?.[1];
+}
 type ToolState = {
   name: string;
   input: unknown;
@@ -352,16 +361,11 @@ export async function POST(request: Request) {
     );
   }
 
-  const workflowUrl = new URL(
-    process.env.NEMO_WORKFLOW_URL ?? "http://agent:8000/v1/workflow/full",
-  );
-
-  // MCP-backed functions can appear as TOOL_* or FUNCTION_* depending on the
-  // NAT/LangChain callback path. Request both instead of silently hiding one.
-  workflowUrl.searchParams.set(
-    "filter_steps",
-    "TOOL_START,TOOL_END,FUNCTION_START,FUNCTION_END",
-  );
+  const workflowUrl = gatewayInternalUrl("/api/chat");
+  const cookieHeader = request.headers.get("cookie") ?? "";
+  const csrfCookieName =
+    process.env.GATEWAY_CSRF_COOKIE ?? "alerts_gateway_csrf";
+  const csrfToken = cookieValue(cookieHeader, csrfCookieName);
 
   const stream = createUIMessageStream({
     execute: async ({ writer }) => {
@@ -455,6 +459,8 @@ export async function POST(request: Request) {
           headers: {
             "content-type": "application/json",
             accept: "text/event-stream",
+            cookie: cookieHeader,
+            ...(csrfToken ? { "x-csrf-token": csrfToken } : {}),
           },
           body: JSON.stringify({ messages }),
           signal: request.signal,
