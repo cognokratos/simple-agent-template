@@ -6,8 +6,13 @@ NAT 1.8's built-in ReAct stream buffers output until it sees the textual
 ``Final Answer:`` marker. Native tool calling returns a normal assistant
 message instead, so the built-in fallback emits the complete answer as one
 chunk. This local component keeps NAT's ReAct graph and MCP tooling but streams
-content chunks immediately when native tool calling is enabled. NAT owns the
-canonical request trace; Guardrails joins it through the runner context bridge.
+content chunks immediately when native tool calling is enabled.
+
+This function is also the boundary that owns the request's readable content: it
+is the only place that sees both the incoming ``ChatRequest`` and every outgoing
+chunk. It records the question and the reconstructed answer for the telemetry
+pipeline (see ``nat_streaming_react.observability.trace_content``) *after*
+yielding each chunk, so observability never delays the stream.
 """
 
 import logging
@@ -28,8 +33,15 @@ from nat.plugins.langchain.agent.react_agent.register import ReActAgentWorkflowC
 from nat.utils.io.model_processing import remove_r1_think_tags
 from nat.utils.type_converter import GlobalTypeConverter
 
-# Import the middleware registration for its NAT component side effect.
+# Import the middleware and exporter registrations for their NAT component side effects.
 from nat_streaming_react.otel_setup import configure_opentelemetry
+from nat_streaming_react.observability import trace_content
+from nat_streaming_react.observability.mlflow_exporter import (
+    etf_research_otlp_exporter as _etf_research_otlp_exporter,
+)
+from nat_streaming_react.approval import etf_assign_etf as _etf_assign_etf
+from nat_streaming_react.approval import etf_commit_evaluation as _etf_commit_evaluation
+from nat_streaming_react.approval import etf_shortlist_etf as _etf_shortlist_etf
 from nat_streaming_react.text_guardrails import text_guardrails_middleware as _text_guardrails_middleware
 
 configure_opentelemetry()
@@ -130,11 +142,20 @@ async def streaming_react_agent_workflow(
         )
         return request, messages
 
+    def _latest_question(request: ChatRequest) -> str:
+        for message in reversed(request.messages):
+            role = getattr(message.role, "value", message.role)
+            if role == "user":
+                return _content_to_text(message.content)
+        return ""
+
     async def _response_fn(
         chat_request_or_message: ChatRequestOrMessage,
     ) -> ChatResponse | str:
+        run_id = trace_content.current_run_id()
         try:
             request, messages = _messages(chat_request_or_message)
+            trace_content.record(run_id, question=_latest_question(request))
             state = ReActGraphState(messages=messages)
             result = await graph.ainvoke(
                 state,
@@ -142,7 +163,11 @@ async def streaming_react_agent_workflow(
             )
             final_state = ReActGraphState(**result)
             content = _content_to_text(final_state.messages[-1].content)
+            trace_content.record(run_id, answer=content)
 
+            # Word counts, not tokens: NAT requires a Usage object and this
+            # workflow has no tokeniser for the configured model. Good enough for
+            # a rough size signal, never accurate enough to bill or budget on.
             prompt_tokens = sum(
                 len(_content_to_text(message.content).split())
                 for message in request.messages
@@ -163,14 +188,20 @@ async def streaming_react_agent_workflow(
                 AGENT_LOG_PREFIX,
                 error,
             )
+            trace_content.record(run_id, error=f"{type(error).__name__}: {error}")
             raise
 
     async def _stream_fn(
         chat_request_or_message: ChatRequestOrMessage,
     ) -> AsyncGenerator[ChatResponseChunk]:
         chunk_id = str(uuid.uuid4())
+        run_id = trace_content.current_run_id()
+        # Text is appended after each chunk has already been yielded, so the
+        # client never waits on observability. See trace_content.
+        answer = trace_content.StreamTextAccumulator()
         try:
             request, messages = _messages(chat_request_or_message)
+            trace_content.record(run_id, question=_latest_question(request))
             state = ReActGraphState(messages=messages)
 
             # Native tool calling already separates tool calls from assistant
@@ -199,6 +230,7 @@ async def streaming_react_agent_workflow(
                             text,
                             id_=chunk_id,
                         )
+                        answer.add(text)
                 return
 
             # Preserve NAT's textual-ReAct behavior for models that do not use
@@ -225,6 +257,7 @@ async def streaming_react_agent_workflow(
 
                 if found_final_answer:
                     yield ChatResponseChunk.create_streaming_chunk(text, id_=chunk_id)
+                    answer.add(text)
                     continue
 
                 buffer += text
@@ -238,6 +271,7 @@ async def streaming_react_agent_workflow(
                             after_marker,
                             id_=chunk_id,
                         )
+                        answer.add(after_marker)
                     buffer = ""
 
             if not found_final_answer and buffer:
@@ -246,7 +280,7 @@ async def streaming_react_agent_workflow(
                     fallback_answer,
                     id_=chunk_id,
                 )
-
+                answer.add(fallback_answer)
 
         except GraphRecursionError:
             logger.warning(
@@ -262,13 +296,23 @@ async def streaming_react_agent_workflow(
                 recursion_message,
                 id_=chunk_id,
             )
+            answer.add(recursion_message)
         except Exception as error:
             logger.error(
                 "%s Streaming ReAct Agent streaming failed: %s",
                 AGENT_LOG_PREFIX,
                 error,
             )
+            trace_content.record(run_id, error=f"{type(error).__name__}: {error}")
             raise
+        finally:
+            # Runs on success, on failure and on client disconnect, so the root
+            # span always carries whatever the client actually received.
+            trace_content.record(
+                run_id,
+                answer=answer.text,
+                answer_truncated=answer.truncated,
+            )
 
     yield FunctionInfo.create(
         single_fn=_response_fn,

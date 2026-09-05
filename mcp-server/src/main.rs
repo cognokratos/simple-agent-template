@@ -1,279 +1,102 @@
-use std::{net::SocketAddr, sync::Arc, time::Duration};
+//! ETF research MCP server: a deterministic ETF evaluation engine behind an MCP
+//! surface, where every state change requires a signed human approval and lands
+//! in an append-only history.
+//!
+//! Module map:
+//!
+//! * [`rules`] — the deterministic engine, the specification it interprets, and
+//!   the decision vocabulary. No I/O.
+//! * [`domain`] — stored records and the read models handed back to clients.
+//! * [`approval`] — human approval tokens and their verification. No I/O.
+//! * [`store`] — every SQL statement this service issues.
+//! * [`server`] — the MCP tools and resources, and the mutation invariants.
+//! * [`http`] — transport, the internal approval endpoint, and the auth gate.
+//! * [`seed`] — loading the shipped ETF snapshot.
 
-use anyhow::Context;
-use axum::{
-    extract::{Request, State},
-    http::{header, StatusCode},
-    middleware::{self, Next},
-    response::{IntoResponse, Response},
-    routing::get,
-    Router,
-};
-use chrono::{DateTime, Utc};
-use rmcp::{
-    handler::server::{router::tool::ToolRouter, wrapper::Parameters},
-    model::*,
-    tool, tool_handler, tool_router,
-    transport::streamable_http_server::{
-        session::local::LocalSessionManager, StreamableHttpServerConfig, StreamableHttpService,
-    },
-    ErrorData as McpError, ServerHandler,
-};
-use schemars::JsonSchema;
-use serde::{Deserialize, Serialize};
-use serde_json::json;
-use sqlx::{postgres::PgPoolOptions, FromRow, PgPool};
+use std::{sync::Arc, time::Duration};
+
+use anyhow::Context as _;
+use sqlx::postgres::PgPoolOptions;
 use tokio_util::sync::CancellationToken;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
-#[derive(Debug, Deserialize, JsonSchema)]
-struct SearchAlertsArgs {
-    /// Optional alert status, for example "open" or "closed".
-    status: Option<String>,
-    /// Maximum number of alerts to return. Defaults to 50 and is capped at 100.
-    limit: Option<i64>,
-}
+mod approval;
+mod domain;
+mod http;
+mod rules;
+mod seed;
+mod server;
+mod store;
 
-#[derive(Debug, Deserialize, JsonSchema)]
-struct GetAlertArgs {
-    /// Exact alert identifier, for example "ALT-1001".
-    alert_id: String,
-}
+#[cfg(test)]
+mod fixtures;
 
-#[derive(Debug, Clone, Serialize, FromRow)]
-struct AlertSummary {
-    id: String,
-    title: String,
-    status: String,
-    severity: String,
-    customer_name: String,
-    created_at: DateTime<Utc>,
-}
-
-#[derive(Debug, Clone, Serialize, FromRow)]
-struct AlertDetail {
-    id: String,
-    title: String,
-    status: String,
-    severity: String,
-    description: String,
-    customer_name: String,
-    assigned_to: Option<String>,
-    created_at: DateTime<Utc>,
-}
-
-#[derive(Debug, Clone, Serialize, FromRow)]
-struct Transaction {
-    id: String,
-    alert_id: String,
-    occurred_at: DateTime<Utc>,
-    amount: f64,
-    currency: String,
-    direction: String,
-    counterparty: String,
-    country: String,
-    risk_score: i32,
-    description: String,
-}
-
-#[derive(Clone)]
-struct AlertsMcpServer {
-    pool: PgPool,
-    tool_router: ToolRouter<Self>,
-}
-
-impl AlertsMcpServer {
-    fn new(pool: PgPool) -> Self {
-        Self {
-            pool,
-            tool_router: Self::tool_router(),
-        }
-    }
-
-    fn database_error(error: sqlx::Error) -> McpError {
-        tracing::error!(%error, "database operation failed");
-        McpError::internal_error(
-            "The alerts database operation failed".to_string(),
-            Some(json!({ "cause": error.to_string() })),
-        )
-    }
-}
-
-#[tool_router]
-impl AlertsMcpServer {
-    #[tool(
-        description = "Search alerts using optional status and limit filters. Use status='open' when the user asks for open alerts. Returns alert IDs and summary fields; call get_alert for complete alert details and transactions."
-    )]
-    async fn search_alerts(
-        &self,
-        Parameters(args): Parameters<SearchAlertsArgs>,
-    ) -> Result<CallToolResult, McpError> {
-        let limit = args.limit.unwrap_or(50).clamp(1, 100);
-        let status = args.status.as_deref().map(str::trim).filter(|value| !value.is_empty());
-
-        let alerts = if let Some(status) = status {
-            sqlx::query_as::<_, AlertSummary>(
-                r#"
-                SELECT id, title, status, severity, customer_name, created_at
-                FROM alerts
-                WHERE LOWER(status) = LOWER($1)
-                ORDER BY created_at DESC
-                LIMIT $2
-                "#,
-            )
-            .bind(status)
-            .bind(limit)
-            .fetch_all(&self.pool)
-            .await
-            .map_err(Self::database_error)?
-        } else {
-            sqlx::query_as::<_, AlertSummary>(
-                r#"
-                SELECT id, title, status, severity, customer_name, created_at
-                FROM alerts
-                ORDER BY created_at DESC
-                LIMIT $1
-                "#,
-            )
-            .bind(limit)
-            .fetch_all(&self.pool)
-            .await
-            .map_err(Self::database_error)?
-        };
-
-        let response = json!({
-            "count": alerts.len(),
-            "filters": {
-                "status": status,
-                "limit": limit,
-            },
-            "alerts": alerts,
-        });
-
-        Ok(CallToolResult::success(vec![ContentBlock::text(
-            response.to_string(),
-        )]))
-    }
-
-    #[tool(
-        description = "Get one alert by exact alert_id, including its complete metadata and every associated transaction. Use this after search_alerts when transaction details are required."
-    )]
-    async fn get_alert(
-        &self,
-        Parameters(args): Parameters<GetAlertArgs>,
-    ) -> Result<CallToolResult, McpError> {
-        let alert_id = args.alert_id.trim();
-        if alert_id.is_empty() {
-            return Err(McpError::invalid_params(
-                "alert_id must not be empty".to_string(),
-                None,
-            ));
-        }
-
-        let alert = sqlx::query_as::<_, AlertDetail>(
-            r#"
-            SELECT id, title, status, severity, description, customer_name,
-                   assigned_to, created_at
-            FROM alerts
-            WHERE id = $1
-            "#,
-        )
-        .bind(alert_id)
-        .fetch_optional(&self.pool)
-        .await
-        .map_err(Self::database_error)?;
-
-        let Some(alert) = alert else {
-            return Err(McpError::invalid_params(
-                format!("Alert '{alert_id}' was not found"),
-                Some(json!({ "alert_id": alert_id })),
-            ));
-        };
-
-        let transactions = sqlx::query_as::<_, Transaction>(
-            r#"
-            SELECT id, alert_id, occurred_at, amount, currency, direction,
-                   counterparty, country, risk_score, description
-            FROM transactions
-            WHERE alert_id = $1
-            ORDER BY occurred_at DESC
-            "#,
-        )
-        .bind(alert_id)
-        .fetch_all(&self.pool)
-        .await
-        .map_err(Self::database_error)?;
-
-        let response = json!({
-            "alert": alert,
-            "transaction_count": transactions.len(),
-            "transactions": transactions,
-        });
-
-        Ok(CallToolResult::success(vec![ContentBlock::text(
-            response.to_string(),
-        )]))
-    }
-}
-
-#[tool_handler]
-impl ServerHandler for AlertsMcpServer {
-    fn get_info(&self) -> ServerInfo {
-        ServerInfo::new(ServerCapabilities::builder().enable_tools().build())
-            .with_protocol_version(ProtocolVersion::V_2024_11_05)
-            .with_server_info(Implementation::from_build_env())
-            .with_instructions(
-                "Use search_alerts to find alert IDs. Use get_alert for one alert and its transactions. For all transactions belonging to open alerts, first call search_alerts with status='open', then call get_alert once for every returned alert ID. Never invent alert data."
-                    .to_string(),
-            )
-    }
-}
-
-async fn health() -> &'static str {
-    "ok"
-}
-
-fn constant_time_eq(left: &[u8], right: &[u8]) -> bool {
-    if left.len() != right.len() {
-        return false;
-    }
-    left.iter()
-        .zip(right.iter())
-        .fold(0_u8, |difference, (a, b)| difference | (a ^ b))
-        == 0
-}
-
-async fn require_api_key(
-    State(expected): State<Arc<String>>,
-    mut request: Request,
-    next: Next,
-) -> Response {
-    let provided = request
-        .headers()
-        .get(header::AUTHORIZATION)
-        .map(|value| value.as_bytes())
-        .unwrap_or_default();
-
-    if !constant_time_eq(provided, expected.as_bytes()) {
-        return (
-            StatusCode::UNAUTHORIZED,
-            [(header::WWW_AUTHENTICATE, "Bearer")],
-            "invalid or missing internal API key",
-        )
-            .into_response();
-    }
-
-    // Prevent the validated service credential from reaching RMCP logging or
-    // any downstream request instrumentation.
-    request.headers_mut().remove(header::AUTHORIZATION);
-    next.run(request).await
-}
+const DEFAULT_BIND_ADDRESS: &str = "0.0.0.0:8080";
+const DEFAULT_ALLOWED_HOSTS: &str =
+    "localhost,localhost:8080,127.0.0.1,127.0.0.1:8080,::1,mcp-server,mcp-server:8080";
+const MIN_APPROVAL_SECRET_LENGTH: usize = 24;
 
 #[tokio::main]
 async fn main() {
     if let Err(error) = run().await {
-        eprintln!("alerts MCP server failed: {error:#}");
+        eprintln!("ETF research MCP server failed: {error:#}");
         std::process::exit(1);
+    }
+}
+
+/// Everything this service reads from its environment, validated once at startup
+/// so a misconfiguration fails at boot rather than on the first request.
+struct Config {
+    database_url: String,
+    api_key: String,
+    approval_secret: Vec<u8>,
+    rules_path: String,
+    profile_path: String,
+    etfs_path: String,
+    bind_address: String,
+    allowed_hosts: Vec<String>,
+}
+
+impl Config {
+    fn from_env() -> anyhow::Result<Self> {
+        let database_url =
+            std::env::var("DATABASE_URL").context("DATABASE_URL must be configured")?;
+        let api_key = std::env::var("MCP_API_KEY").context("MCP_API_KEY must be configured")?;
+        let approval_secret = std::env::var("HITL_APPROVAL_SECRET")
+            .context("HITL_APPROVAL_SECRET must be configured")?;
+
+        anyhow::ensure!(!api_key.trim().is_empty(), "MCP_API_KEY must not be empty");
+        anyhow::ensure!(
+            approval_secret.len() >= MIN_APPROVAL_SECRET_LENGTH,
+            "HITL_APPROVAL_SECRET must be at least {MIN_APPROVAL_SECRET_LENGTH} characters"
+        );
+
+        let allowed_hosts = std::env::var("MCP_ALLOWED_HOSTS")
+            .unwrap_or_else(|_| DEFAULT_ALLOWED_HOSTS.to_string())
+            .split(',')
+            .map(str::trim)
+            .filter(|host| !host.is_empty())
+            .map(ToOwned::to_owned)
+            .collect::<Vec<_>>();
+        anyhow::ensure!(
+            !allowed_hosts.is_empty(),
+            "MCP_ALLOWED_HOSTS must list at least one host"
+        );
+
+        Ok(Self {
+            database_url,
+            api_key,
+            approval_secret: approval_secret.into_bytes(),
+            rules_path: std::env::var("RULES_SPEC_PATH")
+                .unwrap_or_else(|_| "/app/data/rules_spec.json".to_string()),
+            profile_path: std::env::var("INVESTOR_PROFILE_PATH")
+                .unwrap_or_else(|_| "/app/data/investor_profile.json".to_string()),
+            etfs_path: std::env::var("ETFS_DATA_PATH")
+                .unwrap_or_else(|_| "/app/data/etfs.json".to_string()),
+            bind_address: std::env::var("MCP_BIND_ADDRESS")
+                .unwrap_or_else(|_| DEFAULT_BIND_ADDRESS.to_string()),
+            allowed_hosts,
+        })
     }
 }
 
@@ -281,79 +104,62 @@ async fn run() -> anyhow::Result<()> {
     tracing_subscriber::registry()
         .with(
             tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| "alerts_mcp_server=info,rmcp=info".into()),
+                .unwrap_or_else(|_| "etf_mcp_server=info,rmcp=info".into()),
         )
         .with(tracing_subscriber::fmt::layer())
         .init();
 
-    tracing::info!("starting alerts MCP server");
-
-    let database_url = std::env::var("DATABASE_URL")
-        .context("DATABASE_URL must be configured")?;
-    let api_key = std::env::var("MCP_API_KEY")
-        .context("MCP_API_KEY must be configured")?;
-    if api_key.trim().is_empty() {
-        anyhow::bail!("MCP_API_KEY must not be empty");
-    }
-    let expected_authorization = Arc::new(format!("Bearer {api_key}"));
-    let bind_address = std::env::var("MCP_BIND_ADDRESS")
-        .unwrap_or_else(|_| "0.0.0.0:8080".to_string());
-    let allowed_hosts = std::env::var("MCP_ALLOWED_HOSTS")
-        .unwrap_or_else(|_| {
-            "localhost,localhost:8080,127.0.0.1,127.0.0.1:8080,::1,mcp-server,mcp-server:8080"
-                .to_string()
-        })
-        .split(',')
-        .map(str::trim)
-        .filter(|host| !host.is_empty())
-        .map(ToOwned::to_owned)
-        .collect::<Vec<_>>();
-
-    if allowed_hosts.is_empty() {
-        anyhow::bail!("MCP_ALLOWED_HOSTS must contain at least one host");
-    }
+    let config = Config::from_env()?;
+    // Validation happens at boot: an inconsistent specification — weights that do
+    // not sum to 100, decision bands with a gap, a metric naming a field that does
+    // not exist — must stop the service rather than silently change every score.
+    let rules = rules::RulesSpec::parse(
+        &std::fs::read_to_string(&config.rules_path)
+            .with_context(|| format!("failed to read {}", config.rules_path))?,
+    )
+    .map_err(anyhow::Error::msg)?;
+    let profile: rules::InvestorProfile = serde_json::from_str(
+        &std::fs::read_to_string(&config.profile_path)
+            .with_context(|| format!("failed to read {}", config.profile_path))?,
+    )
+    .context("investor_profile.json is invalid")?;
+    let rules = Arc::new(rules);
+    let profile = Arc::new(profile);
 
     let pool = PgPoolOptions::new()
         .max_connections(10)
         .acquire_timeout(Duration::from_secs(10))
-        .connect(&database_url)
+        .connect(&config.database_url)
         .await
         .context("failed to connect to Postgres")?;
-
     sqlx::query("SELECT 1")
         .execute(&pool)
         .await
         .context("Postgres health check failed")?;
+    seed::seed_etfs(&pool, &rules, &profile, &config.etfs_path).await?;
 
     let cancellation = CancellationToken::new();
-    let service_pool = pool.clone();
-    let service = StreamableHttpService::new(
-        move || Ok(AlertsMcpServer::new(service_pool.clone())),
-        LocalSessionManager::default().into(),
-        StreamableHttpServerConfig::default()
-            // RMCP rejects non-loopback Host headers by default to protect
-            // local servers from DNS rebinding. NAT connects through Docker
-            // using Host: mcp-server:8080, so allow only the expected Docker
-            // service names and local development hosts.
-            .with_allowed_hosts(allowed_hosts.clone())
-            .with_cancellation_token(cancellation.child_token()),
-    );
+    let mcp = Arc::new(server::EtfMcpServer::new(
+        pool,
+        rules,
+        profile,
+        Arc::new(config.approval_secret),
+    ));
+    let app = http::router(mcp, &config.api_key, config.allowed_hosts.clone(), &cancellation);
 
-    let protected_mcp = Router::new()
-        .nest_service("/mcp", service)
-        .route_layer(middleware::from_fn_with_state(
-            expected_authorization,
-            require_api_key,
-        ));
-    let app = Router::new()
-        .route("/health", get(health))
-        .merge(protected_mcp);
-    let address: SocketAddr = bind_address.parse().context("invalid MCP_BIND_ADDRESS")?;
+    let address = config
+        .bind_address
+        .parse::<std::net::SocketAddr>()
+        .context("invalid MCP_BIND_ADDRESS")?;
     let listener = tokio::net::TcpListener::bind(address)
         .await
         .context("failed to bind MCP server")?;
+    tracing::info!(
+        %address,
+        allowed_hosts = ?config.allowed_hosts,
+        "ETF research MCP server listening"
+    );
 
-    tracing::info!(%address, ?allowed_hosts, "alerts MCP server listening");
     axum::serve(listener, app)
         .with_graceful_shutdown(async move {
             let _ = tokio::signal::ctrl_c().await;
@@ -361,6 +167,5 @@ async fn run() -> anyhow::Result<()> {
         })
         .await
         .context("MCP HTTP server failed")?;
-
     Ok(())
 }

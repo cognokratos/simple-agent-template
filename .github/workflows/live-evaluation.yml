@@ -1,0 +1,97 @@
+name: Live evaluation (manual)
+
+# The model-dependent half of the test suite: five MLflow suites driven against a
+# running cluster and a real LLM.
+#
+# Manual only, and required by nothing. It exists so the command is recorded and
+# runnable rather than folded into the pull-request gate, for three reasons:
+#
+#   * it needs a model endpoint, which means a credential this repository does not
+#     have and a public fork must never be asked for;
+#   * it is non-deterministic — the figures move between runs of the same model;
+#   * a gate is red on purpose. See docs/EVALUATION_ANALYSIS.md: the deterministic
+#     control plane holds while `qwen3:8b` uses tools inconsistently, and that is
+#     the finding, not a bug to tune away.
+#
+# Without an LLM_BASE_URL input this workflow does nothing but say so. It never
+# reads a secret implicitly: the endpoint and key are supplied per run.
+
+on:
+  workflow_dispatch:
+    inputs:
+      llm_base_url:
+        description: "OpenAI-compatible base URL, e.g. https://api.openai.com/v1"
+        required: true
+        type: string
+      llm_model:
+        description: "Chat model to evaluate"
+        required: true
+        default: "qwen3:8b"
+        type: string
+      suite:
+        description: "Suite to run"
+        required: true
+        default: "all"
+        type: choice
+        options: [all, evaluation, policy, grounding, injection, guardrails]
+
+permissions:
+  contents: read
+
+jobs:
+  live:
+    name: ${{ inputs.suite }} against ${{ inputs.llm_model }}
+    runs-on: ubuntu-latest
+    # 30+ minutes for five suites on a small model, and a hung endpoint must not
+    # burn a whole runner day.
+    timeout-minutes: 120
+    environment: live-evaluation
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Create .env
+        env:
+          # Supplied by the `live-evaluation` environment. Absent on a fork, and
+          # absent by default, which is the intended state.
+          LLM_API_KEY: ${{ secrets.LLM_API_KEY }}
+        run: |
+          cp .env.example .env
+          {
+            echo "LLM_BASE_URL=${{ inputs.llm_base_url }}"
+            echo "LLM_MODEL=${{ inputs.llm_model }}"
+            echo "LLM_GUARD_MODEL=${{ inputs.llm_model }}"
+            echo "LLM_API_KEY=${LLM_API_KEY:-not-set}"
+            echo "LLM_REASONING_EFFORT="
+            echo "LLM_GUARD_REASONING_EFFORT="
+          } >> .env
+
+      - name: Start the cluster
+        run: make up-build
+
+      - name: Wait for health
+        run: make wait
+
+      - name: Bootstrap the MLflow datasets
+        run: make eval-bootstrap SUITE=${{ inputs.suite }}
+
+      # ALLOW_FAILURES=1: a red metric gate is a published finding here, not a
+      # broken build. The artifacts below carry the numbers either way.
+      - name: Run the suites
+        run: make eval-suite-all ALLOW_FAILURES=1 SUITE=${{ inputs.suite }}
+
+      - name: Upload the results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: evaluation-results-${{ inputs.suite }}
+          path: evaluation/results/*.json
+          if-no-files-found: error
+
+      # Not `make logs-app`: that follows the stream and would never return.
+      - name: Cluster logs on failure
+        if: failure()
+        run: docker compose logs --no-color --tail=300 postgres mcp-server agent gateway ui
+
+      - name: Tear down
+        if: always()
+        run: make down

@@ -1,0 +1,18 @@
+{
+  "profile_id": "default",
+  "version": "1.0.0",
+  "description": "The investor policy the deterministic engine evaluates every ETF against. Hard constraints can reject a fund outright; preferences only move the score. Nothing here is encoded in Rust — change this file and every evaluation changes with it.",
+  "base_currency": "CHF",
+  "investment_horizon_years": 20,
+  "strategy": "buy_and_hold",
+  "risk_tolerance": "high",
+  "hard_constraints": {
+    "require_ucits": true
+  },
+  "preferences": {
+    "accumulating": true,
+    "physical_replication": true,
+    "low_cost": true,
+    "broad_diversification": true
+  }
+}

@@ -16,13 +16,13 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
     --mount=type=cache,target=/app/target,sharing=locked \
     touch src/main.rs \
     && cargo build --release \
-    && cp /app/target/release/alerts-auth-gateway /tmp/alerts-auth-gateway
+    && cp /app/target/release/etf-auth-gateway /tmp/etf-auth-gateway
 
 FROM debian:bookworm-slim AS runtime
 RUN apt-get update \
     && apt-get install -y --no-install-recommends ca-certificates curl \
     && rm -rf /var/lib/apt/lists/*
-COPY --from=builder /tmp/alerts-auth-gateway /usr/local/bin/alerts-auth-gateway
+COPY --from=builder /tmp/etf-auth-gateway /usr/local/bin/etf-auth-gateway
 USER 65532:65532
 EXPOSE 8081
-ENTRYPOINT ["/usr/local/bin/alerts-auth-gateway"]
+ENTRYPOINT ["/usr/local/bin/etf-auth-gateway"]

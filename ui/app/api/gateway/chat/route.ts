@@ -5,6 +5,7 @@ import {
   type UIMessage,
   type UIMessageChunk,
 } from "ai";
+import { parseNatOutputString } from "../../../../lib/nat-wire";
 
 export const maxDuration = 300;
 
@@ -198,7 +199,11 @@ function extractWorkflowText(value: unknown): string {
   if (value === null || value === undefined) return "";
 
   if (typeof value === "string") {
-    const parsed = parseJsonIfPossible(value);
+    // `value` from NAT's {"value": ...} SSE envelope is already assistant text.
+    // Only recurse when that text is a serialized JSON container. Parsing
+    // scalar-looking deltas such as "100" would turn them into numbers and
+    // caused the UI adapter to silently discard every numeric token.
+    const parsed = parseNatOutputString(value);
     if (parsed !== value) return extractWorkflowText(parsed);
 
     if (
@@ -213,6 +218,10 @@ function extractWorkflowText(value: unknown): string {
     }
 
     return value;
+  }
+
+  if (typeof value === "number" || typeof value === "boolean" || typeof value === "bigint") {
+    return String(value);
   }
 
   const record = asRecord(value);
@@ -333,11 +342,28 @@ function inferToolName(envelope: NatIntermediateEnvelope, payload: JsonRecord): 
 }
 
 function isKnownToolName(name: string): boolean {
-  const configured = (process.env.UI_TOOL_NAMES ?? "search_alerts,get_alert")
+  const configured = (process.env.UI_TOOL_NAMES ?? "search_etfs,get_etf,evaluate_etf,get_research_summary,get_research_context,commit_evaluation,shortlist_etf,assign_etf,get_etf_history")
     .split(",")
     .map((value) => value.trim())
     .filter(Boolean);
   return configured.includes(normalizeToolName(name));
+}
+
+type InteractionPrompt = {
+  input_type?: string;
+  text?: string;
+  placeholder?: string | null;
+  required?: boolean;
+  options?: Array<{ id?: string; label?: string; value?: unknown }>;
+};
+
+function parseSseField(block: string, field: string): string | undefined {
+  const prefix = `${field}:`;
+  const values = block
+    .split("\n")
+    .filter((line) => line.startsWith(prefix))
+    .map((line) => line.slice(prefix.length).trim());
+  return values.length > 0 ? values.join("\n") : undefined;
 }
 
 export async function POST(request: Request) {
@@ -364,7 +390,7 @@ export async function POST(request: Request) {
   const workflowUrl = gatewayInternalUrl("/api/chat");
   const cookieHeader = request.headers.get("cookie") ?? "";
   const csrfCookieName =
-    process.env.GATEWAY_CSRF_COOKIE ?? "alerts_gateway_csrf";
+    process.env.GATEWAY_CSRF_COOKIE ?? "etf_research_gateway_csrf";
   const csrfToken = cookieValue(cookieHeader, csrfCookieName);
 
   const stream = createUIMessageStream({
@@ -481,6 +507,25 @@ export async function POST(request: Request) {
           const block = eventBlock.trim();
           if (!block) return;
 
+          const sseEvent = parseSseField(block, "event");
+          if (sseEvent === "interaction_required") {
+            const rawData = parseSseField(block, "data");
+            const event = asRecord(parseJsonIfPossible(rawData ?? ""));
+            const executionId = String(event?.execution_id ?? "");
+            const interactionId = String(event?.interaction_id ?? "");
+            const prompt = (asRecord(event?.prompt) ?? {}) as InteractionPrompt;
+            if (!executionId || !interactionId) {
+              throw new Error("NAT returned an invalid interaction_required event");
+            }
+            emitToolStart(interactionId, "human_confirmation", {
+              executionId,
+              interactionId,
+              prompt,
+              responseUrl: event?.response_url,
+            });
+            return;
+          }
+
           if (block.startsWith("intermediate_data:")) {
             const envelope = parseIntermediateEnvelope(block);
             if (!envelope) return;
@@ -558,6 +603,11 @@ export async function POST(request: Request) {
         }
 
         if (buffer.trim()) processEvent(buffer);
+        for (const [toolCallId, tool] of tools.entries()) {
+          if (tool.name === "human_confirmation" && !tool.finished) {
+            emitToolEnd(toolCallId, tool.name, tool.input, { resolved: true });
+          }
+        }
         finishAnswer();
         writer.write({ type: "finish-step" });
         writer.write({ type: "finish", finishReason: "stop" });

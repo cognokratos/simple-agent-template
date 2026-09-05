@@ -25,24 +25,6 @@ RUN --mount=type=cache,target=/root/.cache/uv,sharing=locked \
     uv pip install --python /opt/venv/bin/python \
       --requirements /app/requirements.txt
 
-# NeMo Guardrails 0.21 has three streaming compatibility issues used by this
-# project: regex actions reject dispatcher kwargs, regex matches lack a block
-# mapping, and Presidio masking rejects dispatcher kwargs. Backport the small
-# upstream-compatible fixes while retaining NAT 1.8's Guardrails pin. The
-# second patch makes NAT's workflow trace the shared root for Guardrails and
-# reconstructs streamed output into one readable answer.
-COPY patch_nemoguardrails_regex.py /app/patch_nemoguardrails_regex.py
-COPY patch_nat_single_trace.py /app/patch_nat_single_trace.py
-COPY patch_nat_api_key.py /app/patch_nat_api_key.py
-RUN python /app/patch_nemoguardrails_regex.py \
-    && python /app/patch_nat_single_trace.py \
-    && python /app/patch_nat_api_key.py
-
-# Presidio uses spaCy for entity recognition. Install the English model in the
-# builder so it is copied into the runtime virtual environment.
-RUN --mount=type=cache,target=/root/.cache/pip,sharing=locked \
-    python -m spacy download en_core_web_lg
-
 COPY pyproject.toml /app/pyproject.toml
 COPY src /app/src
 RUN --mount=type=cache,target=/root/.cache/uv,sharing=locked \
@@ -60,7 +42,17 @@ WORKDIR /app
 COPY --from=builder /opt/venv /opt/venv
 COPY config.yml /app/config.yml
 COPY verify_input_guardrails.py /app/verify_input_guardrails.py
+COPY verify_output_guardrails.py /app/verify_output_guardrails.py
+COPY verify_guardrails_rails.py /app/verify_guardrails_rails.py
+COPY verify_trace_pipeline.py /app/verify_trace_pipeline.py
 COPY verify_mcp_auth.py /app/verify_mcp_auth.py
+COPY verify_approval_tokens.py /app/verify_approval_tokens.py
+COPY verify_hitl_override.py /app/verify_hitl_override.py
+
+# Stamped last on purpose. A new commit must not invalidate the dependency and
+# source layers above it, so a provenance-only rebuild stays cheap.
+ARG AGENT_BUILD_COMMIT=unknown
+ENV AGENT_BUILD_COMMIT=${AGENT_BUILD_COMMIT}
 
 EXPOSE 8000
 

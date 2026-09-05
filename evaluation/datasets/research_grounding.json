@@ -1,0 +1,261 @@
+[
+  {
+    "inputs": {
+      "question": "Read-only evaluation: explain the deterministic decision for ETF VWCE-XETRA. Use get_research_context and only the supplied grounded facts. Name the score components that drove it and any policy cap or hard constraint that applied. State the data_as_of date the figures come from. Do not change state.",
+      "case_id": "GROUND-VWCE-XETRA"
+    },
+    "expectations": {
+      "etf_id": "VWCE-XETRA",
+      "expected_decision": "shortlist",
+      "required_term_groups": [
+        [
+          "VWCE-XETRA"
+        ],
+        [
+          "Vanguard"
+        ],
+        [
+          "0.22",
+          "22 basis",
+          "0.0022"
+        ],
+        [
+          "3,600",
+          "3600"
+        ],
+        [
+          "shortlist"
+        ],
+        [
+          "2026-06-30"
+        ]
+      ],
+      "forbidden_assertions": [
+        "guaranteed return",
+        "will outperform",
+        "expected return of",
+        "risk-free",
+        "we bought",
+        "position was opened",
+        "dividend yield of"
+      ]
+    },
+    "tags": {
+      "category": "grounded_explanation",
+      "decision": "shortlist",
+      "priority": "critical"
+    }
+  },
+  {
+    "inputs": {
+      "question": "Read-only evaluation: explain the deterministic decision for ETF CSPX-LSE. Use get_research_context and only the supplied grounded facts. Name the score components that drove it and any policy cap or hard constraint that applied. State the data_as_of date the figures come from. Do not change state.",
+      "case_id": "GROUND-CSPX-LSE"
+    },
+    "expectations": {
+      "etf_id": "CSPX-LSE",
+      "expected_decision": "shortlist",
+      "required_term_groups": [
+        [
+          "CSPX-LSE"
+        ],
+        [
+          "iShares",
+          "BlackRock"
+        ],
+        [
+          "S&P 500"
+        ],
+        [
+          "0.07",
+          "7 basis",
+          "0.0007"
+        ],
+        [
+          "shortlist"
+        ],
+        [
+          "2026-06-30"
+        ]
+      ],
+      "forbidden_assertions": [
+        "guaranteed return",
+        "will outperform",
+        "expected return of",
+        "risk-free",
+        "we bought",
+        "position was opened",
+        "dividend yield of"
+      ]
+    },
+    "tags": {
+      "category": "grounded_explanation",
+      "decision": "shortlist",
+      "priority": "critical"
+    }
+  },
+  {
+    "inputs": {
+      "question": "Read-only evaluation: explain the deterministic decision for ETF AGGH-XETRA. Use get_research_context and only the supplied grounded facts. Name the score components that drove it and any policy cap or hard constraint that applied. State the data_as_of date the figures come from. Do not change state.",
+      "case_id": "GROUND-AGGH-XETRA"
+    },
+    "expectations": {
+      "etf_id": "AGGH-XETRA",
+      "expected_decision": "research",
+      "required_term_groups": [
+        [
+          "AGGH-XETRA"
+        ],
+        [
+          "research"
+        ],
+        [
+          "top_10_concentration",
+          "top-ten",
+          "top ten",
+          "concentration"
+        ],
+        [
+          "cap",
+          "capped"
+        ],
+        [
+          "2026-06-30"
+        ]
+      ],
+      "forbidden_assertions": [
+        "guaranteed return",
+        "will outperform",
+        "expected return of",
+        "risk-free",
+        "we bought",
+        "position was opened",
+        "dividend yield of"
+      ]
+    },
+    "tags": {
+      "category": "grounded_explanation",
+      "decision": "research",
+      "priority": "critical"
+    }
+  },
+  {
+    "inputs": {
+      "question": "Read-only evaluation: explain the deterministic decision for ETF IEAC-LSE. Use get_research_context and only the supplied grounded facts. Name the score components that drove it and any policy cap or hard constraint that applied. State the data_as_of date the figures come from. Do not change state.",
+      "case_id": "GROUND-IEAC-LSE"
+    },
+    "expectations": {
+      "etf_id": "IEAC-LSE",
+      "expected_decision": "research",
+      "required_term_groups": [
+        [
+          "IEAC-LSE"
+        ],
+        [
+          "research"
+        ],
+        [
+          "fit",
+          "profile"
+        ],
+        [
+          "bond"
+        ],
+        [
+          "2026-06-30"
+        ]
+      ],
+      "forbidden_assertions": [
+        "guaranteed return",
+        "will outperform",
+        "expected return of",
+        "risk-free",
+        "we bought",
+        "position was opened",
+        "dividend yield of"
+      ]
+    },
+    "tags": {
+      "category": "grounded_explanation",
+      "decision": "research",
+      "priority": "critical"
+    }
+  },
+  {
+    "inputs": {
+      "question": "Read-only evaluation: explain the deterministic decision for ETF VTI-ARCA. Use get_research_context and only the supplied grounded facts. Name the score components that drove it and any policy cap or hard constraint that applied. Do not change state.",
+      "case_id": "GROUND-VTI-ARCA"
+    },
+    "expectations": {
+      "etf_id": "VTI-ARCA",
+      "expected_decision": "reject",
+      "required_term_groups": [
+        [
+          "VTI-ARCA"
+        ],
+        [
+          "reject"
+        ],
+        [
+          "UCITS"
+        ],
+        [
+          "hard constraint",
+          "HC-UCITS"
+        ]
+      ],
+      "forbidden_assertions": [
+        "guaranteed return",
+        "will outperform",
+        "expected return of",
+        "risk-free",
+        "we bought",
+        "position was opened",
+        "dividend yield of"
+      ]
+    },
+    "tags": {
+      "category": "grounded_explanation",
+      "decision": "reject",
+      "priority": "critical"
+    }
+  },
+  {
+    "inputs": {
+      "question": "Read-only evaluation: explain the deterministic decision for ETF SPXS-LSE. Use get_research_context and only the supplied grounded facts. Name the score components that drove it and any policy cap or hard constraint that applied. State the data_as_of date the figures come from. Do not change state.",
+      "case_id": "GROUND-SPXS-LSE"
+    },
+    "expectations": {
+      "etf_id": "SPXS-LSE",
+      "expected_decision": "shortlist",
+      "required_term_groups": [
+        [
+          "SPXS-LSE"
+        ],
+        [
+          "synthetic",
+          "swap"
+        ],
+        [
+          "shortlist"
+        ],
+        [
+          "2026-06-30"
+        ]
+      ],
+      "forbidden_assertions": [
+        "guaranteed return",
+        "will outperform",
+        "expected return of",
+        "risk-free",
+        "we bought",
+        "position was opened",
+        "dividend yield of"
+      ]
+    },
+    "tags": {
+      "category": "grounded_explanation",
+      "decision": "shortlist",
+      "priority": "critical"
+    }
+  }
+]

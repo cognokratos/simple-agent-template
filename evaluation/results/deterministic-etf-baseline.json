@@ -1,0 +1,1220 @@
+{
+  "accuracy": 1.0,
+  "decision_distribution": {
+    "reject": 6,
+    "research": 12,
+    "shortlist": 13
+  },
+  "engine": "mcp-server/src/rules.rs evaluate (the shipped Rust implementation)",
+  "etf_count": 31,
+  "evaluations": [
+    {
+      "applied_caps": [],
+      "available_weight": 94,
+      "components": {
+        "cost_efficiency": 14,
+        "diversification": 20,
+        "fund_maturity": 6,
+        "fund_scale": 16,
+        "fund_structure": 9,
+        "investor_fit": 11,
+        "risk_fit": 11,
+        "tracking_quality": 0
+      },
+      "data_completeness": 0.9,
+      "decision": "shortlist",
+      "etf_id": "VWCE-XETRA",
+      "hard_constraints": [],
+      "investment_score": 87,
+      "missing_data": [
+        "tracking_difference_3y"
+      ],
+      "name": "Vanguard FTSE All-World UCITS ETF (USD) Accumulating",
+      "profile_fit_fraction": 1.0,
+      "score_decision": "shortlist",
+      "ticker": "VWCE",
+      "unavailable_components": [
+        "tracking_quality"
+      ]
+    },
+    {
+      "applied_caps": [],
+      "available_weight": 94,
+      "components": {
+        "cost_efficiency": 14,
+        "diversification": 20,
+        "fund_maturity": 9,
+        "fund_scale": 13,
+        "fund_structure": 9,
+        "investor_fit": 6,
+        "risk_fit": 11,
+        "tracking_quality": 0
+      },
+      "data_completeness": 0.9,
+      "decision": "shortlist",
+      "etf_id": "VWRL-LSE",
+      "hard_constraints": [],
+      "investment_score": 82,
+      "missing_data": [
+        "tracking_difference_3y"
+      ],
+      "name": "Vanguard FTSE All-World UCITS ETF (USD) Distributing",
+      "profile_fit_fraction": 0.8,
+      "score_decision": "shortlist",
+      "ticker": "VWRL",
+      "unavailable_components": [
+        "tracking_quality"
+      ]
+    },
+    {
+      "applied_caps": [],
+      "available_weight": 94,
+      "components": {
+        "cost_efficiency": 18,
+        "diversification": 16,
+        "fund_maturity": 11,
+        "fund_scale": 16,
+        "fund_structure": 10,
+        "investor_fit": 11,
+        "risk_fit": 10,
+        "tracking_quality": 0
+      },
+      "data_completeness": 0.9,
+      "decision": "shortlist",
+      "etf_id": "IWDA-AMS",
+      "hard_constraints": [],
+      "investment_score": 92,
+      "missing_data": [
+        "tracking_difference_3y"
+      ],
+      "name": "iShares Core MSCI World UCITS ETF USD (Acc)",
+      "profile_fit_fraction": 0.99,
+      "score_decision": "shortlist",
+      "ticker": "IWDA",
+      "unavailable_components": [
+        "tracking_quality"
+      ]
+    },
+    {
+      "applied_caps": [],
+      "available_weight": 94,
+      "components": {
+        "cost_efficiency": 18,
+        "diversification": 16,
+        "fund_maturity": 6,
+        "fund_scale": 13,
+        "fund_structure": 10,
+        "investor_fit": 11,
+        "risk_fit": 10,
+        "tracking_quality": 0
+      },
+      "data_completeness": 0.9,
+      "decision": "shortlist",
+      "etf_id": "SWRD-XETRA",
+      "hard_constraints": [],
+      "investment_score": 84,
+      "missing_data": [
+        "tracking_difference_3y"
+      ],
+      "name": "SPDR MSCI World UCITS ETF",
+      "profile_fit_fraction": 0.99,
+      "score_decision": "shortlist",
+      "ticker": "SWRD",
+      "unavailable_components": [
+        "tracking_quality"
+      ]
+    },
+    {
+      "applied_caps": [],
+      "available_weight": 94,
+      "components": {
+        "cost_efficiency": 18,
+        "diversification": 16,
+        "fund_maturity": 9,
+        "fund_scale": 13,
+        "fund_structure": 10,
+        "investor_fit": 11,
+        "risk_fit": 10,
+        "tracking_quality": 0
+      },
+      "data_completeness": 0.9,
+      "decision": "shortlist",
+      "etf_id": "XDWD-XETRA",
+      "hard_constraints": [],
+      "investment_score": 87,
+      "missing_data": [
+        "tracking_difference_3y"
+      ],
+      "name": "Xtrackers MSCI World UCITS ETF 1C",
+      "profile_fit_fraction": 0.99,
+      "score_decision": "shortlist",
+      "ticker": "XDWD",
+      "unavailable_components": [
+        "tracking_quality"
+      ]
+    },
+    {
+      "applied_caps": [],
+      "available_weight": 94,
+      "components": {
+        "cost_efficiency": 9,
+        "diversification": 16,
+        "fund_maturity": 6,
+        "fund_scale": 13,
+        "fund_structure": 4,
+        "investor_fit": 8,
+        "risk_fit": 10,
+        "tracking_quality": 0
+      },
+      "data_completeness": 0.9,
+      "decision": "research",
+      "etf_id": "CW8-EPA",
+      "hard_constraints": [],
+      "investment_score": 66,
+      "missing_data": [
+        "tracking_difference_3y"
+      ],
+      "name": "Amundi MSCI World UCITS ETF Acc",
+      "profile_fit_fraction": 0.84,
+      "score_decision": "research",
+      "ticker": "CW8",
+      "unavailable_components": [
+        "tracking_quality"
+      ]
+    },
+    {
+      "applied_caps": [],
+      "available_weight": 94,
+      "components": {
+        "cost_efficiency": 21,
+        "diversification": 12,
+        "fund_maturity": 9,
+        "fund_scale": 16,
+        "fund_structure": 10,
+        "investor_fit": 3,
+        "risk_fit": 9,
+        "tracking_quality": 0
+      },
+      "data_completeness": 0.9,
+      "decision": "shortlist",
+      "etf_id": "VUSA-LSE",
+      "hard_constraints": [],
+      "investment_score": 80,
+      "missing_data": [
+        "tracking_difference_3y"
+      ],
+      "name": "Vanguard S&P 500 UCITS ETF (Distributing)",
+      "profile_fit_fraction": 0.58,
+      "score_decision": "shortlist",
+      "ticker": "VUSA",
+      "unavailable_components": [
+        "tracking_quality"
+      ]
+    },
+    {
+      "applied_caps": [],
+      "available_weight": 94,
+      "components": {
+        "cost_efficiency": 21,
+        "diversification": 12,
+        "fund_maturity": 9,
+        "fund_scale": 16,
+        "fund_structure": 10,
+        "investor_fit": 3,
+        "risk_fit": 9,
+        "tracking_quality": 0
+      },
+      "data_completeness": 0.9,
+      "decision": "shortlist",
+      "etf_id": "VUSA-XETRA",
+      "hard_constraints": [],
+      "investment_score": 80,
+      "missing_data": [
+        "tracking_difference_3y"
+      ],
+      "name": "Vanguard S&P 500 UCITS ETF (Distributing)",
+      "profile_fit_fraction": 0.58,
+      "score_decision": "shortlist",
+      "ticker": "VUSA",
+      "unavailable_components": [
+        "tracking_quality"
+      ]
+    },
+    {
+      "applied_caps": [],
+      "available_weight": 94,
+      "components": {
+        "cost_efficiency": 21,
+        "diversification": 12,
+        "fund_maturity": 11,
+        "fund_scale": 16,
+        "fund_structure": 10,
+        "investor_fit": 7,
+        "risk_fit": 9,
+        "tracking_quality": 0
+      },
+      "data_completeness": 0.9,
+      "decision": "shortlist",
+      "etf_id": "CSPX-LSE",
+      "hard_constraints": [],
+      "investment_score": 86,
+      "missing_data": [
+        "tracking_difference_3y"
+      ],
+      "name": "iShares Core S&P 500 UCITS ETF USD (Acc)",
+      "profile_fit_fraction": 0.78,
+      "score_decision": "shortlist",
+      "ticker": "CSPX",
+      "unavailable_components": [
+        "tracking_quality"
+      ]
+    },
+    {
+      "applied_caps": [],
+      "available_weight": 94,
+      "components": {
+        "cost_efficiency": 21,
+        "diversification": 12,
+        "fund_maturity": 11,
+        "fund_scale": 16,
+        "fund_structure": 4,
+        "investor_fit": 4,
+        "risk_fit": 9,
+        "tracking_quality": 0
+      },
+      "data_completeness": 0.9,
+      "decision": "shortlist",
+      "etf_id": "SPXS-LSE",
+      "hard_constraints": [],
+      "investment_score": 77,
+      "missing_data": [
+        "tracking_difference_3y"
+      ],
+      "name": "Invesco S&P 500 UCITS ETF Acc",
+      "profile_fit_fraction": 0.63,
+      "score_decision": "shortlist",
+      "ticker": "SPXS",
+      "unavailable_components": [
+        "tracking_quality"
+      ]
+    },
+    {
+      "applied_caps": [],
+      "available_weight": 94,
+      "components": {
+        "cost_efficiency": 14,
+        "diversification": 3,
+        "fund_maturity": 11,
+        "fund_scale": 13,
+        "fund_structure": 9,
+        "investor_fit": 3,
+        "risk_fit": 9,
+        "tracking_quality": 0
+      },
+      "data_completeness": 0.9,
+      "decision": "research",
+      "etf_id": "EQQQ-LSE",
+      "hard_constraints": [],
+      "investment_score": 62,
+      "missing_data": [
+        "tracking_difference_3y"
+      ],
+      "name": "Invesco EQQQ Nasdaq-100 UCITS ETF Dist",
+      "profile_fit_fraction": 0.58,
+      "score_decision": "research",
+      "ticker": "EQQQ",
+      "unavailable_components": [
+        "tracking_quality"
+      ]
+    },
+    {
+      "applied_caps": [],
+      "available_weight": 94,
+      "components": {
+        "cost_efficiency": 21,
+        "diversification": 15,
+        "fund_maturity": 9,
+        "fund_scale": 10,
+        "fund_structure": 10,
+        "investor_fit": 3,
+        "risk_fit": 10,
+        "tracking_quality": 0
+      },
+      "data_completeness": 0.9,
+      "decision": "shortlist",
+      "etf_id": "VEUR-LSE",
+      "hard_constraints": [],
+      "investment_score": 78,
+      "missing_data": [
+        "tracking_difference_3y"
+      ],
+      "name": "Vanguard FTSE Developed Europe UCITS ETF (Distributing)",
+      "profile_fit_fraction": 0.61,
+      "score_decision": "shortlist",
+      "ticker": "VEUR",
+      "unavailable_components": [
+        "tracking_quality"
+      ]
+    },
+    {
+      "applied_caps": [],
+      "available_weight": 94,
+      "components": {
+        "cost_efficiency": 18,
+        "diversification": 18,
+        "fund_maturity": 9,
+        "fund_scale": 16,
+        "fund_structure": 8,
+        "investor_fit": 8,
+        "risk_fit": 9,
+        "tracking_quality": 0
+      },
+      "data_completeness": 0.9,
+      "decision": "shortlist",
+      "etf_id": "EIMI-LSE",
+      "hard_constraints": [],
+      "investment_score": 86,
+      "missing_data": [
+        "tracking_difference_3y"
+      ],
+      "name": "iShares Core MSCI EM IMI UCITS ETF (Acc)",
+      "profile_fit_fraction": 0.76,
+      "score_decision": "shortlist",
+      "ticker": "EIMI",
+      "unavailable_components": [
+        "tracking_quality"
+      ]
+    },
+    {
+      "applied_caps": [],
+      "available_weight": 94,
+      "components": {
+        "cost_efficiency": 14,
+        "diversification": 18,
+        "fund_maturity": 9,
+        "fund_scale": 10,
+        "fund_structure": 9,
+        "investor_fit": 3,
+        "risk_fit": 9,
+        "tracking_quality": 0
+      },
+      "data_completeness": 0.9,
+      "decision": "research",
+      "etf_id": "VFEM-LSE",
+      "hard_constraints": [],
+      "investment_score": 72,
+      "missing_data": [
+        "tracking_difference_3y"
+      ],
+      "name": "Vanguard FTSE Emerging Markets UCITS ETF (Distributing)",
+      "profile_fit_fraction": 0.56,
+      "score_decision": "research",
+      "ticker": "VFEM",
+      "unavailable_components": [
+        "tracking_quality"
+      ]
+    },
+    {
+      "applied_caps": [],
+      "available_weight": 94,
+      "components": {
+        "cost_efficiency": 18,
+        "diversification": 14,
+        "fund_maturity": 9,
+        "fund_scale": 10,
+        "fund_structure": 9,
+        "investor_fit": 3,
+        "risk_fit": 9,
+        "tracking_quality": 0
+      },
+      "data_completeness": 0.9,
+      "decision": "research",
+      "etf_id": "VJPN-LSE",
+      "hard_constraints": [],
+      "investment_score": 72,
+      "missing_data": [
+        "tracking_difference_3y"
+      ],
+      "name": "Vanguard FTSE Japan UCITS ETF (Distributing)",
+      "profile_fit_fraction": 0.58,
+      "score_decision": "research",
+      "ticker": "VJPN",
+      "unavailable_components": [
+        "tracking_quality"
+      ]
+    },
+    {
+      "applied_caps": [],
+      "available_weight": 94,
+      "components": {
+        "cost_efficiency": 9,
+        "diversification": 21,
+        "fund_maturity": 6,
+        "fund_scale": 10,
+        "fund_structure": 8,
+        "investor_fit": 11,
+        "risk_fit": 10,
+        "tracking_quality": 0
+      },
+      "data_completeness": 0.9,
+      "decision": "shortlist",
+      "etf_id": "IUSN-XETRA",
+      "hard_constraints": [],
+      "investment_score": 75,
+      "missing_data": [
+        "tracking_difference_3y"
+      ],
+      "name": "iShares MSCI World Small Cap UCITS ETF",
+      "profile_fit_fraction": 0.99,
+      "score_decision": "shortlist",
+      "ticker": "IUSN",
+      "unavailable_components": [
+        "tracking_quality"
+      ]
+    },
+    {
+      "applied_caps": [],
+      "available_weight": 94,
+      "components": {
+        "cost_efficiency": 14,
+        "diversification": 18,
+        "fund_maturity": 9,
+        "fund_scale": 10,
+        "fund_structure": 9,
+        "investor_fit": 6,
+        "risk_fit": 11,
+        "tracking_quality": 0
+      },
+      "data_completeness": 0.9,
+      "decision": "shortlist",
+      "etf_id": "VHYL-LSE",
+      "hard_constraints": [],
+      "investment_score": 77,
+      "missing_data": [
+        "tracking_difference_3y"
+      ],
+      "name": "Vanguard FTSE All-World High Dividend Yield UCITS ETF (Distributing)",
+      "profile_fit_fraction": 0.8,
+      "score_decision": "shortlist",
+      "ticker": "VHYL",
+      "unavailable_components": [
+        "tracking_quality"
+      ]
+    },
+    {
+      "applied_caps": [
+        "CAP-CRITICAL-DATA"
+      ],
+      "available_weight": 86,
+      "components": {
+        "cost_efficiency": 23,
+        "diversification": 14,
+        "fund_maturity": 7,
+        "fund_scale": 14,
+        "fund_structure": 9,
+        "investor_fit": 12,
+        "risk_fit": 5,
+        "tracking_quality": 0
+      },
+      "data_completeness": 0.8,
+      "decision": "research",
+      "etf_id": "AGGH-XETRA",
+      "hard_constraints": [],
+      "investment_score": 84,
+      "missing_data": [
+        "top_10_concentration",
+        "tracking_difference_3y"
+      ],
+      "name": "iShares Core Global Aggregate Bond UCITS ETF EUR Hedged (Acc)",
+      "profile_fit_fraction": 0.73,
+      "score_decision": "shortlist",
+      "ticker": "AGGH",
+      "unavailable_components": [
+        "tracking_quality"
+      ]
+    },
+    {
+      "applied_caps": [
+        "CAP-CRITICAL-DATA",
+        "CAP-PROFILE-FIT"
+      ],
+      "available_weight": 86,
+      "components": {
+        "cost_efficiency": 20,
+        "diversification": 14,
+        "fund_maturity": 12,
+        "fund_scale": 14,
+        "fund_structure": 9,
+        "investor_fit": 3,
+        "risk_fit": 4,
+        "tracking_quality": 0
+      },
+      "data_completeness": 0.8,
+      "decision": "research",
+      "etf_id": "IEAC-LSE",
+      "hard_constraints": [],
+      "investment_score": 76,
+      "missing_data": [
+        "top_10_concentration",
+        "tracking_difference_3y"
+      ],
+      "name": "iShares Core € Corp Bond UCITS ETF (Distributing)",
+      "profile_fit_fraction": 0.34,
+      "score_decision": "shortlist",
+      "ticker": "IEAC",
+      "unavailable_components": [
+        "tracking_quality"
+      ]
+    },
+    {
+      "applied_caps": [
+        "CAP-CRITICAL-DATA"
+      ],
+      "available_weight": 86,
+      "components": {
+        "cost_efficiency": 23,
+        "diversification": 0,
+        "fund_maturity": 7,
+        "fund_scale": 14,
+        "fund_structure": 11,
+        "investor_fit": 8,
+        "risk_fit": 4,
+        "tracking_quality": 0
+      },
+      "data_completeness": 0.8,
+      "decision": "research",
+      "etf_id": "IB01-LSE",
+      "hard_constraints": [],
+      "investment_score": 67,
+      "missing_data": [
+        "top_10_concentration",
+        "tracking_difference_3y"
+      ],
+      "name": "iShares $ Treasury Bond 0-1yr UCITS ETF (Acc)",
+      "profile_fit_fraction": 0.51,
+      "score_decision": "research",
+      "ticker": "IB01",
+      "unavailable_components": [
+        "tracking_quality"
+      ]
+    },
+    {
+      "applied_caps": [],
+      "available_weight": 94,
+      "components": {
+        "cost_efficiency": 8,
+        "diversification": 5,
+        "fund_maturity": 6,
+        "fund_scale": 10,
+        "fund_structure": 10,
+        "investor_fit": 11,
+        "risk_fit": 11,
+        "tracking_quality": 0
+      },
+      "data_completeness": 0.9,
+      "decision": "research",
+      "etf_id": "XAIX-XETRA",
+      "hard_constraints": [],
+      "investment_score": 61,
+      "missing_data": [
+        "tracking_difference_3y"
+      ],
+      "name": "Xtrackers Artificial Intelligence & Big Data UCITS ETF 1C",
+      "profile_fit_fraction": 1.0,
+      "score_decision": "research",
+      "ticker": "XAIX",
+      "unavailable_components": [
+        "tracking_quality"
+      ]
+    },
+    {
+      "applied_caps": [
+        "CAP-CRITICAL-DATA"
+      ],
+      "available_weight": 71,
+      "components": {
+        "cost_efficiency": 4,
+        "diversification": 0,
+        "fund_maturity": 9,
+        "fund_scale": 0,
+        "fund_structure": 13,
+        "investor_fit": 14,
+        "risk_fit": 14,
+        "tracking_quality": 0
+      },
+      "data_completeness": 0.7,
+      "decision": "research",
+      "etf_id": "ESPO-XETRA",
+      "hard_constraints": [],
+      "investment_score": 54,
+      "missing_data": [
+        "top_10_concentration",
+        "aum_usd",
+        "tracking_difference_3y"
+      ],
+      "name": "VanEck Video Gaming and eSports UCITS ETF",
+      "profile_fit_fraction": 1.0,
+      "score_decision": "research",
+      "ticker": "ESPO",
+      "unavailable_components": [
+        "fund_scale",
+        "tracking_quality"
+      ]
+    },
+    {
+      "applied_caps": [
+        "CAP-CRITICAL-DATA"
+      ],
+      "available_weight": 86,
+      "components": {
+        "cost_efficiency": 9,
+        "diversification": 2,
+        "fund_maturity": 7,
+        "fund_scale": 7,
+        "fund_structure": 10,
+        "investor_fit": 12,
+        "risk_fit": 12,
+        "tracking_quality": 0
+      },
+      "data_completeness": 0.8,
+      "decision": "research",
+      "etf_id": "WCLD-LSE",
+      "hard_constraints": [],
+      "investment_score": 59,
+      "missing_data": [
+        "top_10_concentration",
+        "tracking_difference_3y"
+      ],
+      "name": "WisdomTree Cloud Computing UCITS ETF",
+      "profile_fit_fraction": 1.0,
+      "score_decision": "research",
+      "ticker": "WCLD",
+      "unavailable_components": [
+        "tracking_quality"
+      ]
+    },
+    {
+      "applied_caps": [],
+      "available_weight": 94,
+      "components": {
+        "cost_efficiency": 3,
+        "diversification": 3,
+        "fund_maturity": 11,
+        "fund_scale": 10,
+        "fund_structure": 9,
+        "investor_fit": 6,
+        "risk_fit": 11,
+        "tracking_quality": 0
+      },
+      "data_completeness": 0.9,
+      "decision": "research",
+      "etf_id": "INRG-LSE",
+      "hard_constraints": [],
+      "investment_score": 53,
+      "missing_data": [
+        "tracking_difference_3y"
+      ],
+      "name": "iShares Global Clean Energy UCITS ETF (Distributing)",
+      "profile_fit_fraction": 0.8,
+      "score_decision": "research",
+      "ticker": "INRG",
+      "unavailable_components": [
+        "tracking_quality"
+      ]
+    },
+    {
+      "applied_caps": [],
+      "available_weight": 94,
+      "components": {
+        "cost_efficiency": 3,
+        "diversification": 3,
+        "fund_maturity": 11,
+        "fund_scale": 10,
+        "fund_structure": 9,
+        "investor_fit": 6,
+        "risk_fit": 11,
+        "tracking_quality": 0
+      },
+      "data_completeness": 0.9,
+      "decision": "research",
+      "etf_id": "IH2O-LSE",
+      "hard_constraints": [],
+      "investment_score": 53,
+      "missing_data": [
+        "tracking_difference_3y"
+      ],
+      "name": "iShares Global Water UCITS ETF (Distributing)",
+      "profile_fit_fraction": 0.8,
+      "score_decision": "research",
+      "ticker": "IH2O",
+      "unavailable_components": [
+        "tracking_quality"
+      ]
+    },
+    {
+      "applied_caps": [],
+      "available_weight": 94,
+      "components": {
+        "cost_efficiency": 0,
+        "diversification": 2,
+        "fund_maturity": 11,
+        "fund_scale": 9,
+        "fund_structure": 4,
+        "investor_fit": 4,
+        "risk_fit": 8,
+        "tracking_quality": 0
+      },
+      "data_completeness": 0.9,
+      "decision": "reject",
+      "etf_id": "XNIF-XETRA",
+      "hard_constraints": [],
+      "investment_score": 38,
+      "missing_data": [
+        "tracking_difference_3y"
+      ],
+      "name": "Xtrackers Nifty 50 Swap UCITS ETF 1C",
+      "profile_fit_fraction": 0.56,
+      "score_decision": "reject",
+      "ticker": "XNIF",
+      "unavailable_components": [
+        "tracking_quality"
+      ]
+    },
+    {
+      "applied_caps": [],
+      "available_weight": 94,
+      "components": {
+        "cost_efficiency": 21,
+        "diversification": 12,
+        "fund_maturity": 11,
+        "fund_scale": 16,
+        "fund_structure": 9,
+        "investor_fit": 3,
+        "risk_fit": 9,
+        "tracking_quality": 0
+      },
+      "data_completeness": 0.9,
+      "decision": "reject",
+      "etf_id": "SPY-ARCA",
+      "hard_constraints": [
+        "HC-UCITS"
+      ],
+      "investment_score": 81,
+      "missing_data": [
+        "tracking_difference_3y"
+      ],
+      "name": "SPDR S&P 500 ETF Trust",
+      "profile_fit_fraction": 0.58,
+      "score_decision": "shortlist",
+      "ticker": "SPY",
+      "unavailable_components": [
+        "tracking_quality"
+      ]
+    },
+    {
+      "applied_caps": [],
+      "available_weight": 94,
+      "components": {
+        "cost_efficiency": 21,
+        "diversification": 18,
+        "fund_maturity": 11,
+        "fund_scale": 16,
+        "fund_structure": 10,
+        "investor_fit": 3,
+        "risk_fit": 9,
+        "tracking_quality": 0
+      },
+      "data_completeness": 0.9,
+      "decision": "reject",
+      "etf_id": "VTI-ARCA",
+      "hard_constraints": [
+        "HC-UCITS"
+      ],
+      "investment_score": 88,
+      "missing_data": [
+        "tracking_difference_3y"
+      ],
+      "name": "Vanguard Total Stock Market ETF",
+      "profile_fit_fraction": 0.58,
+      "score_decision": "shortlist",
+      "ticker": "VTI",
+      "unavailable_components": [
+        "tracking_quality"
+      ]
+    },
+    {
+      "applied_caps": [],
+      "available_weight": 94,
+      "components": {
+        "cost_efficiency": 18,
+        "diversification": 3,
+        "fund_maturity": 11,
+        "fund_scale": 16,
+        "fund_structure": 10,
+        "investor_fit": 3,
+        "risk_fit": 9,
+        "tracking_quality": 0
+      },
+      "data_completeness": 0.9,
+      "decision": "reject",
+      "etf_id": "QQQ-NASDAQ",
+      "hard_constraints": [
+        "HC-UCITS"
+      ],
+      "investment_score": 70,
+      "missing_data": [
+        "tracking_difference_3y"
+      ],
+      "name": "Invesco QQQ Trust Series 1",
+      "profile_fit_fraction": 0.58,
+      "score_decision": "research",
+      "ticker": "QQQ",
+      "unavailable_components": [
+        "tracking_quality"
+      ]
+    },
+    {
+      "applied_caps": [
+        "CAP-CRITICAL-DATA",
+        "CAP-PROFILE-FIT"
+      ],
+      "available_weight": 86,
+      "components": {
+        "cost_efficiency": 23,
+        "diversification": 14,
+        "fund_maturity": 12,
+        "fund_scale": 17,
+        "fund_structure": 9,
+        "investor_fit": 3,
+        "risk_fit": 4,
+        "tracking_quality": 0
+      },
+      "data_completeness": 0.8,
+      "decision": "reject",
+      "etf_id": "AGG-ARCA",
+      "hard_constraints": [
+        "HC-UCITS"
+      ],
+      "investment_score": 82,
+      "missing_data": [
+        "top_10_concentration",
+        "tracking_difference_3y"
+      ],
+      "name": "iShares Core U.S. Aggregate Bond ETF",
+      "profile_fit_fraction": 0.31,
+      "score_decision": "shortlist",
+      "ticker": "AGG",
+      "unavailable_components": [
+        "tracking_quality"
+      ]
+    },
+    {
+      "applied_caps": [],
+      "available_weight": 94,
+      "components": {
+        "cost_efficiency": 8,
+        "diversification": 0,
+        "fund_maturity": 11,
+        "fund_scale": 16,
+        "fund_structure": 10,
+        "investor_fit": 6,
+        "risk_fit": 6,
+        "tracking_quality": 0
+      },
+      "data_completeness": 0.9,
+      "decision": "reject",
+      "etf_id": "GLD-ARCA",
+      "hard_constraints": [
+        "HC-UCITS"
+      ],
+      "investment_score": 57,
+      "missing_data": [
+        "tracking_difference_3y"
+      ],
+      "name": "SPDR Gold Shares",
+      "profile_fit_fraction": 0.56,
+      "score_decision": "research",
+      "ticker": "GLD",
+      "unavailable_components": [
+        "tracking_quality"
+      ]
+    }
+  ],
+  "fixture_sha256": {
+    "etfs.json": "99740e77745fc3a7ed894a0d98d5d459eebdf4b754d207c44e5f7ada02ec29f8",
+    "investor_profile.json": "d783daffe2a4d3ceb6f591354be2f04ed154a999c7656f662b6f3e92229d914c",
+    "rules_spec.json": "9db2e0f3dd6cb53630cb49e024076645f5e7c73f612ea8df0ec18f9dcfe1e72f",
+    "test_cases.json": "cbb4415a9caaa5bf7d9ab3d8cafe18be1f0e82999200f010494392327108cbdc"
+  },
+  "generated_by": "cargo test -p etf-mcp-server (rules::tests::emit_deterministic_baseline)",
+  "hard_constraint_failures": [],
+  "investor_profile_id": "default",
+  "investor_profile_version": "1.0.0",
+  "rules_version": "1.1.0",
+  "score_meaning": "investment_score measures deterministic ETF quality and fit against the configured investor profile for the dated data snapshot in data/etfs.json. It is not an expected-return forecast, not financial advice, and not a trade instruction.",
+  "test_case_count": 20,
+  "test_cases": [
+    {
+      "actual_decision": "shortlist",
+      "actual_score": 87,
+      "case_id": "TC-BROAD-GLOBAL-SHORTLIST",
+      "etf_id": "VWCE-XETRA",
+      "expected_decision": "shortlist",
+      "expected_score_range": [
+        83,
+        92
+      ],
+      "passed": true,
+      "rationale": "Global equity, accumulating, physical, very large and cheap. Every preference in the profile is met and the only gap is the realised tracking difference, which is not a critical field. This is the shape the policy is meant to reward."
+    },
+    {
+      "actual_decision": "shortlist",
+      "actual_score": 84,
+      "case_id": "TC-LOWEST-COST-CORE-SHORTLIST",
+      "etf_id": "SWRD-XETRA",
+      "expected_decision": "shortlist",
+      "expected_score_range": [
+        80,
+        90
+      ],
+      "passed": true,
+      "rationale": "Developed-world core holding at twelve basis points. Slightly narrower than a full all-world fund but cheaper, so it should land in the same band."
+    },
+    {
+      "actual_decision": "shortlist",
+      "actual_score": 82,
+      "case_id": "TC-DISTRIBUTING-COSTS-A-PREFERENCE",
+      "etf_id": "VWRL-LSE",
+      "expected_decision": "shortlist",
+      "expected_score_range": [
+        78,
+        88
+      ],
+      "passed": true,
+      "rationale": "The same strategy as VWCE in a distributing share class. The accumulating preference is unmet, which must cost points without disqualifying an otherwise excellent fund."
+    },
+    {
+      "actual_decision": "shortlist",
+      "actual_score": 86,
+      "case_id": "TC-SINGLE-MARKET-CONCENTRATION",
+      "etf_id": "CSPX-LSE",
+      "expected_decision": "shortlist",
+      "expected_score_range": [
+        80,
+        92
+      ],
+      "passed": true,
+      "rationale": "Cheapest band and enormous scale, held back by a 36% top-ten weight and a single-market mandate. Should still clear the shortlist threshold but by a smaller margin than a global fund."
+    },
+    {
+      "actual_decision": "shortlist",
+      "actual_score": 77,
+      "case_id": "TC-SYNTHETIC-REPLICATION-PENALTY",
+      "etf_id": "SPXS-LSE",
+      "expected_decision": "shortlist",
+      "expected_score_range": [
+        75,
+        84
+      ],
+      "passed": true,
+      "rationale": "The cheapest S&P 500 exposure in the snapshot, penalised twice for being swap-based: once on fund structure, once on the stated physical-replication preference. The gap to CSPX is the price of the structure."
+    },
+    {
+      "actual_decision": "shortlist",
+      "actual_score": 75,
+      "case_id": "TC-SMALL-CAP-BOUNDARY",
+      "etf_id": "IUSN-XETRA",
+      "expected_decision": "shortlist",
+      "expected_score_range": [
+        75,
+        80
+      ],
+      "passed": true,
+      "rationale": "Near-perfect diversification at a higher cost and a shorter record. Deliberately included as a boundary case near the research/shortlist threshold."
+    },
+    {
+      "actual_decision": "shortlist",
+      "actual_score": 86,
+      "case_id": "TC-EMERGING-MARKETS",
+      "etf_id": "EIMI-LSE",
+      "expected_decision": "shortlist",
+      "expected_score_range": [
+        80,
+        92
+      ],
+      "passed": true,
+      "rationale": "Broad emerging-market exposure is a legitimate candidate for a high risk tolerance over twenty years. The region penalty and the unmet breadth preference cost it, but neither disqualifies it."
+    },
+    {
+      "actual_decision": "research",
+      "actual_score": 62,
+      "case_id": "TC-CONCENTRATED-INDEX",
+      "etf_id": "EQQQ-LSE",
+      "expected_decision": "research",
+      "expected_score_range": [
+        55,
+        70
+      ],
+      "passed": true,
+      "rationale": "A long-established, liquid fund whose index holds 101 names with half the weight in ten of them. Concentration and the distributing share class pull it out of shortlist territory."
+    },
+    {
+      "actual_decision": "research",
+      "actual_score": 72,
+      "case_id": "TC-SINGLE-DEVELOPED-MARKET",
+      "etf_id": "VJPN-LSE",
+      "expected_decision": "research",
+      "expected_score_range": [
+        65,
+        74
+      ],
+      "passed": true,
+      "rationale": "A sound single-market fund that fits the profile poorly: distributing, regionally narrow, and modest in size. Research rather than shortlist."
+    },
+    {
+      "actual_decision": "research",
+      "actual_score": 76,
+      "case_id": "TC-QUALITY-WITHOUT-FIT",
+      "etf_id": "IEAC-LSE",
+      "expected_decision": "research",
+      "expected_score_range": [
+        70,
+        82
+      ],
+      "passed": true,
+      "rationale": "A large, cheap, well-diversified euro corporate bond fund. Its standalone quality is high and its fit with a twenty-year, high-risk-tolerance mandate is not, so the profile-fit cap must stop it shortlisting on quality alone. This is the distinction the whole project exists to draw."
+    },
+    {
+      "actual_decision": "research",
+      "actual_score": 84,
+      "case_id": "TC-MISSING-CRITICAL-DATA-CAP",
+      "etf_id": "AGGH-XETRA",
+      "expected_decision": "research",
+      "expected_score_range": [
+        78,
+        90
+      ],
+      "passed": true,
+      "rationale": "The issuer does not publish a top-ten concentration figure for a ten-thousand-holding index. Renormalising over the remaining weight flatters the fund, which is exactly why an incomplete record cannot reach shortlist."
+    },
+    {
+      "actual_decision": "research",
+      "actual_score": 67,
+      "case_id": "TC-CASH-SUBSTITUTE",
+      "etf_id": "IB01-LSE",
+      "expected_decision": "research",
+      "expected_score_range": [
+        60,
+        74
+      ],
+      "passed": true,
+      "rationale": "Very short-dated Treasury bills: cheap and liquid, but twenty holdings and a cash-substitute role for a growth mandate. Low diversification and poor asset-class fit, with a missing concentration figure on top."
+    },
+    {
+      "actual_decision": "research",
+      "actual_score": 54,
+      "case_id": "TC-THEMATIC-INCOMPLETE-RECORD",
+      "etf_id": "ESPO-XETRA",
+      "expected_decision": "research",
+      "expected_score_range": [
+        50,
+        62
+      ],
+      "passed": true,
+      "rationale": "A narrow theme whose size and concentration were not verified for this snapshot. Two critical metrics are absent, so the record cannot support a shortlist however the remaining weight scores."
+    },
+    {
+      "actual_decision": "research",
+      "actual_score": 53,
+      "case_id": "TC-EXPENSIVE-THEME",
+      "etf_id": "INRG-LSE",
+      "expected_decision": "research",
+      "expected_score_range": [
+        48,
+        60
+      ],
+      "passed": true,
+      "rationale": "A long-established theme fund at 65 basis points with a hundred holdings and a 45% top-ten weight. Expensive and concentrated, but broad enough geographically and old enough not to reject."
+    },
+    {
+      "actual_decision": "reject",
+      "actual_score": 38,
+      "case_id": "TC-SCORE-REJECT",
+      "etf_id": "XNIF-XETRA",
+      "expected_decision": "reject",
+      "expected_score_range": [
+        30,
+        45
+      ],
+      "passed": true,
+      "rationale": "The most expensive, most concentrated and most narrowly focused fund in the snapshot, and swap-based on top. It fails on cost, diversification and fit simultaneously, which is what the reject band is for. No hard constraint is involved: the score alone rejects it."
+    },
+    {
+      "actual_decision": "reject",
+      "actual_score": 88,
+      "case_id": "TC-HARD-CONSTRAINT-BEATS-QUALITY",
+      "etf_id": "VTI-ARCA",
+      "expected_decision": "reject",
+      "expected_score_range": [
+        80,
+        95
+      ],
+      "passed": true,
+      "rationale": "Whole-of-market United States equity at three basis points: the highest score of any rejected fund in the snapshot, and second only to IWDA-AMS overall. The profile requires UCITS eligibility and this fund is United States domiciled, so it is rejected outright. The score is published anyway, because a rejection nobody can explain is not auditable."
+    },
+    {
+      "actual_decision": "reject",
+      "actual_score": 81,
+      "case_id": "TC-HARD-CONSTRAINT-OLDEST-FUND",
+      "etf_id": "SPY-ARCA",
+      "expected_decision": "reject",
+      "expected_score_range": [
+        75,
+        90
+      ],
+      "passed": true,
+      "rationale": "The oldest and largest exchange-traded fund in the world is still not investable under a profile that requires UCITS. Age and scale cannot lift a hard constraint."
+    },
+    {
+      "actual_decision": "reject",
+      "actual_score": 57,
+      "case_id": "TC-HARD-CONSTRAINT-SINGLE-ASSET",
+      "etf_id": "GLD-ARCA",
+      "expected_decision": "reject",
+      "expected_score_range": [
+        50,
+        65
+      ],
+      "passed": true,
+      "rationale": "A single-asset commodity trust: no diversification, poor asset-class fit for a growth mandate, and non-UCITS. Two independent reasons to reject, and the hard constraint is the one that decides."
+    },
+    {
+      "actual_decision": "shortlist",
+      "actual_score": 80,
+      "case_id": "TC-CROSS-LISTED-IDENTITY",
+      "etf_id": "VUSA-XETRA",
+      "expected_decision": "shortlist",
+      "expected_score_range": [
+        75,
+        86
+      ],
+      "passed": true,
+      "rationale": "The Xetra listing of the same Irish fund as VUSA-LSE, sharing its ticker and ISIN. Both listings must evaluate identically, and only etf_id may distinguish them; anything keyed on ticker alone is a defect."
+    },
+    {
+      "actual_decision": "shortlist",
+      "actual_score": 80,
+      "case_id": "TC-CROSS-LISTED-IDENTITY-PEER",
+      "etf_id": "VUSA-LSE",
+      "expected_decision": "shortlist",
+      "expected_score_range": [
+        75,
+        86
+      ],
+      "passed": true,
+      "rationale": "The London listing of the same fund as VUSA-XETRA. Paired with it deliberately so a divergence between two listings of one fund fails a test."
+    }
+  ],
+  "test_cases_failed": 0,
+  "test_cases_passed": 20
+}

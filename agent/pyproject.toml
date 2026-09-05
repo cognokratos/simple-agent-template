@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "nat-streaming-react"
 version = "0.1.9"
-description = "Native-tool ReAct workflow with text-aware streaming guardrails and unified MLflow tracing with reliable ChatRequest input guardrails, deterministic critical-pattern fallback, narrow read-only alert allow override, explicit Guardrails decisions, self-check prompt capture, and live MLflow evaluation metadata for NeMo Agent Toolkit"
+description = "ETF research ReAct workflow with native HITL approvals, text-aware Guardrails, MCP tools, and MLflow/OpenTelemetry tracing for NeMo Agent Toolkit 1.8"
 requires-python = ">=3.11,<3.14"
 dependencies = []
 

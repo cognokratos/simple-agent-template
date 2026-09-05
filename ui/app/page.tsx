@@ -1,11 +1,12 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 import {
   AssistantRuntimeProvider,
   AuiIf,
   ComposerPrimitive,
-  MessagePartPrimitive,
   MessagePrimitive,
   ThreadPrimitive,
   type ToolCallMessagePartComponent,
@@ -29,6 +30,28 @@ type SessionState =
   | { status: "authenticated"; user: AuthenticatedUser }
   | { status: "error"; message: string };
 
+type ApprovalPrompt = {
+  input_type?: string;
+  text?: string;
+  placeholder?: string | null;
+  required?: boolean;
+  options?: Array<{ id?: string; label?: string; value?: unknown; description?: string }>;
+};
+
+type ApprovalArgs = {
+  executionId?: string;
+  interactionId?: string;
+  prompt?: ApprovalPrompt;
+};
+
+function parseArgs(argsText: string): ApprovalArgs {
+  try {
+    return JSON.parse(argsText) as ApprovalArgs;
+  } catch {
+    return {};
+  }
+}
+
 function pretty(value: unknown): string {
   if (typeof value === "string") {
     try {
@@ -40,6 +63,155 @@ function pretty(value: unknown): string {
   return JSON.stringify(value, null, 2);
 }
 
+function HumanApprovalCard({ argsText }: { argsText: string }) {
+  const args = parseArgs(argsText);
+  const prompt = args.prompt ?? {};
+  const [rationale, setRationale] = useState("");
+  const [state, setState] = useState<"pending" | "submitting" | "submitted" | "error">("pending");
+  const [message, setMessage] = useState<string>("");
+
+  const submit = async (response: Record<string, unknown>) => {
+    if (!args.executionId || !args.interactionId || state === "submitting" || state === "submitted") return;
+    setState("submitting");
+    setMessage("");
+    try {
+      const result = await fetch(
+        `/api/gateway/interactions/${encodeURIComponent(args.executionId)}/${encodeURIComponent(args.interactionId)}`,
+        {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ response }),
+        },
+      );
+      if (!result.ok) {
+        throw new Error((await result.text()) || `Approval failed (${result.status})`);
+      }
+      setState("submitted");
+      setMessage("Response submitted. The workflow is continuing.");
+    } catch (error) {
+      setState("error");
+      setMessage(error instanceof Error ? error.message : "Approval submission failed");
+    }
+  };
+
+  const textPrompt = prompt.input_type === "text";
+  const radioPrompt = prompt.input_type === "radio";
+  const options = prompt.options ?? [];
+  const confirmOption = options.find((option) => option.id === "confirm") ?? { id: "confirm", label: "Confirm", value: true };
+  const cancelOption = options.find((option) => option.id === "cancel") ?? { id: "cancel", label: "Cancel", value: false };
+  const disabled = state === "submitting" || state === "submitted";
+
+  return (
+    <section className="approval-card">
+      <div className="approval-kicker">Human approval required</div>
+      <pre className="approval-summary">{prompt.text ?? "Review the proposed research decision."}</pre>
+      {radioPrompt ? (
+        <div className="approval-form">
+          <div className="approval-choices">
+            {options
+              .filter((option) => option.id !== "cancel")
+              .map((option) => (
+                <button
+                  key={String(option.id)}
+                  className="approval-choice"
+                  type="button"
+                  disabled={disabled}
+                  onClick={() =>
+                    submit({
+                      type: "radio",
+                      selected_option: {
+                        id: String(option.id),
+                        label: String(option.label ?? option.id),
+                        value: String(option.value ?? option.id),
+                        description: String(option.description ?? ""),
+                      },
+                    })
+                  }
+                >
+                  <span className="approval-choice-label">{String(option.label ?? option.id)}</span>
+                  {option.description ? (
+                    <span className="approval-choice-description">{option.description}</span>
+                  ) : null}
+                </button>
+              ))}
+          </div>
+          <div className="approval-actions">
+            <button
+              className="approval-secondary"
+              type="button"
+              disabled={disabled}
+              onClick={() =>
+                submit({
+                  type: "radio",
+                  selected_option: {
+                    id: "cancel",
+                    label: "Cancel",
+                    value: "__CANCEL__",
+                    description: "",
+                  },
+                })
+              }
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
+      ) : textPrompt ? (
+        <div className="approval-form">
+          <label htmlFor={`rationale-${args.interactionId}`}>Override rationale</label>
+          <textarea
+            id={`rationale-${args.interactionId}`}
+            value={rationale}
+            onChange={(event) => setRationale(event.target.value)}
+            placeholder={prompt.placeholder ?? "Enter an audit-ready rationale"}
+            disabled={disabled}
+            rows={3}
+          />
+          <div className="approval-actions">
+            <button
+              className="approval-secondary"
+              type="button"
+              disabled={disabled}
+              onClick={() => submit({ type: "text", text: "__CANCEL__" })}
+            >
+              Cancel
+            </button>
+            <button
+              className="approval-primary"
+              type="button"
+              disabled={disabled || rationale.trim().length === 0}
+              onClick={() => submit({ type: "text", text: rationale.trim() })}
+            >
+              Approve override
+            </button>
+          </div>
+        </div>
+      ) : (
+        <div className="approval-actions">
+          <button
+            className="approval-secondary"
+            type="button"
+            disabled={disabled}
+            onClick={() => submit({ type: "binary_choice", selected_option: cancelOption })}
+          >
+            Cancel
+          </button>
+          <button
+            className="approval-primary"
+            type="button"
+            disabled={disabled}
+            onClick={() => submit({ type: "binary_choice", selected_option: confirmOption })}
+          >
+            Confirm action
+          </button>
+        </div>
+      )}
+      {state === "submitting" && <p className="approval-status">Submitting…</p>}
+      {message && <p className={state === "error" ? "approval-error" : "approval-status"}>{message}</p>}
+    </section>
+  );
+}
+
 const ToolCallCard: ToolCallMessagePartComponent = ({
   toolName,
   argsText,
@@ -48,6 +220,10 @@ const ToolCallCard: ToolCallMessagePartComponent = ({
 }) => {
   const [expanded, setExpanded] = useState(true);
   const running = status?.type === "running" || result === undefined;
+
+  if (toolName === "human_confirmation") {
+    return <HumanApprovalCard argsText={argsText} />;
+  }
 
   return (
     <section className="tool-card">
@@ -92,11 +268,21 @@ function UserMessage() {
   );
 }
 
-function AssistantText() {
+/** Render the Markdown the model emits.
+ *
+ * `react-markdown` does **not** render raw HTML unless `rehype-raw` is added,
+ * and it deliberately is not. Assistant text can quote issuer descriptions and
+ * stored research notes, which are untrusted free text from outside this system,
+ * so a renderer that executed embedded HTML would turn a display concern into an
+ * injection vector. Markdown formatting is rendered; HTML is escaped.
+ *
+ * GFM is enabled for tables and strikethrough, which the model uses when
+ * comparing funds. */
+function AssistantText({ text }: { text: string }) {
   return (
-    <p className="assistant-text">
-      <MessagePartPrimitive.Text />
-    </p>
+    <div className="assistant-text">
+      <ReactMarkdown remarkPlugins={[remarkGfm]}>{text}</ReactMarkdown>
+    </div>
   );
 }
 
@@ -109,7 +295,7 @@ function AssistantMessage() {
       <div className="message assistant-message">
         <MessagePrimitive.Parts>
           {({ part }) => {
-            if (part.type === "text") return <AssistantText />;
+            if (part.type === "text") return <AssistantText text={part.text} />;
             if (part.type === "tool-call") {
               return part.toolUI ?? <ToolCallCard {...part} />;
             }
@@ -127,13 +313,25 @@ function Chat() {
       <ThreadPrimitive.Viewport className="thread-viewport">
         <AuiIf condition={(state) => state.thread.isEmpty}>
           <div className="welcome">
-            <h1>Alert Investigation Agent</h1>
-            <p>Keycloak → Rust gateway → NAT ReAct → Rust MCP → Postgres</p>
+            <h1>ETF Research Agent</h1>
+            <p>Keycloak → Rust gateway → NeMo Agent Toolkit HITL → deterministic Rust evaluation engine → Postgres</p>
+            <p className="scenario-hint">Try asking:</p>
             <div className="scenario-list">
-              <code>Show me my open alerts</code>
-              <code>Tell me more about alert ALT-1001</code>
-              <code>Show all transactions for all open alerts</code>
+              <code>Show me the highest-rated ETF candidates</code>
+              <code>Compare VWCE and IWDA against my investor profile</code>
+              <code>Evaluate VWCE-XETRA and explain every score component</code>
+              <code>Why is AGGH-XETRA marked research instead of shortlist?</code>
+              <code>Which ETFs were rejected because of hard constraints?</code>
+              <code>Which ETFs still need research?</code>
+              <code>Show the decision history for VWCE-XETRA</code>
+              <code>Which shortlisted ETFs are currently unassigned?</code>
             </div>
+            <p className="disclaimer">
+              Scores measure deterministic quality and fit against a configured
+              investor profile for a dated data snapshot. They are not financial
+              advice, return forecasts or trade recommendations, and this system
+              cannot buy, sell or hold anything.
+            </p>
           </div>
         </AuiIf>
 
@@ -147,7 +345,7 @@ function Chat() {
           <ComposerPrimitive.Root className="composer">
             <ComposerPrimitive.Input
               className="composer-input"
-              placeholder="Ask about alerts…"
+              placeholder="Ask about an ETF, or compare two of them…"
               rows={1}
             />
             <ComposerPrimitive.Send className="send-button">
@@ -204,9 +402,10 @@ function LoginScreen({ message }: { message?: string }) {
         <div className="login-logo" aria-hidden="true">
           AI
         </div>
-        <h1>Alert Investigation Agent</h1>
+        <h1>ETF Research Agent</h1>
         <p>
-          Sign in through Keycloak before accessing alert and transaction data.
+          Sign in through Keycloak before reviewing ETF candidates and recording
+          research decisions.
         </p>
         {message && <p className="login-error">{message}</p>}
         <a className="login-button" href="/api/gateway/auth/login">

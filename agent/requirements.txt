@@ -3,12 +3,18 @@
 # this supported ReAct variant necessarily installs the complete plugin.
 nvidia-nat[langchain,opentelemetry]==1.8.0
 
-# NeMo Guardrails middleware and its compatible Guardrails release.
+# NeMo Guardrails middleware. This constrains nemoguardrails to >=0.11,<0.22,
+# which is why the pin below is 0.21.0 and not the current release. Three
+# streaming regex-rail defects in 0.21 are fixed in 0.23.0 and are worked around
+# from application code in nat_streaming_react.guardrails_compat; that module
+# self-disables and can be deleted once this pin allows >=0.23.
 nvidia-nat-security[guardrails]==1.8.0
 
 # MCP client integration used to discover the Rust server's tools.
 nvidia-nat-mcp==1.8.0
-# Local Presidio analyzer/anonymizer dependencies used by the deterministic
-# output masking rail. The sdd extra matches NeMo Guardrails 0.21.0.
-nemoguardrails[sdd,tracing]==0.21.0
+# Guardrails tracing plus deterministic regex output protection. We intentionally
+# do not install the `sdd`/Presidio extra: generic NER masking corrupts the exact
+# structured evidence a research decision rests on, such as ISINs, expense ratios,
+# fund sizes and scores.
+nemoguardrails[tracing]==0.21.0
 

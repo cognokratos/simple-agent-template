@@ -13,6 +13,7 @@ workflow trace.
 
 import hashlib
 import json
+import logging
 import os
 import re
 from collections.abc import AsyncGenerator
@@ -37,6 +38,11 @@ from nat.middleware.middleware import InvocationContext
 from nat.plugins.security.middleware.guardrails.nemo_guardrails_middleware import GuardrailsMiddleware
 from nat.plugins.security.middleware.guardrails.nemo_guardrails_middleware_config import GuardrailsMiddlewareConfig
 
+from nat_streaming_react.guardrails_compat import RailFlowParameterGuard
+from nat_streaming_react.guardrails_compat import RailsPool
+from nat_streaming_react.guardrails_compat import register_regex_rail_compatibility
+
+logger = logging.getLogger(__name__)
 tracer = trace.get_tracer("nat_streaming_react.guardrails", "0.1.9")
 
 
@@ -150,17 +156,80 @@ _CRITICAL_INPUT_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
         ),
     ),
     (
-        "criminal_financial_evasion",
+        "market_abuse",
         re.compile(
             r"\b(?:give|provide|write|show|tell|explain|help)\b.{0,80}"
-            r"\b(?:step[- ]by[- ]step|instructions?|method|plan|how to)\b.{0,160}"
-            r"\b(?:launder|hide|conceal|disguise|evade|avoid|bypass)\b.{0,160}"
-            r"\b(?:criminal proceeds|illicit funds|money laundering|aml monitoring|"
-            r"aml controls?|transaction monitoring|detection)\b",
+            r"\b(?:step[- ]by[- ]step|instructions?|method|plan|scheme|how to)\b.{0,160}"
+            r"\b(?:front[- ]run|insider trade|insider trading|manipulate|spoof|"
+            r"wash trade|pump and dump)\b",
+            re.IGNORECASE | re.DOTALL,
+        ),
+    ),
+    (
+        # The domain-specific control bypass. Every one of these asks the model to
+        # act as if an authorization it never received had already happened, which
+        # is precisely the boundary the approval token exists to hold.
+        "approval_or_policy_bypass",
+        re.compile(
+            r"\b(?:pretend|assume|act as if|say|claim|make it look like|forge|fake|"
+            r"fabricate|skip|without)\b.{0,120}"
+            r"\b(?:human (?:approval|confirmation)|approval (?:token|step)|"
+            r"already approved|rules engine|deterministic (?:policy|decision)|"
+            r"hard constraints?)\b",
             re.IGNORECASE | re.DOTALL,
         ),
     ),
 )
+
+
+def _is_rail_block_envelope(payload: Any) -> bool:
+    """Whether a streamed chunk is NeMo's block signal rather than model text."""
+
+    return (
+        isinstance(payload, dict)
+        and set(payload) == {"error"}
+        and isinstance(payload.get("error"), dict)
+    )
+
+
+def _prior_turn_text(raw: Any) -> str:
+    """Client-supplied turns attributed to the *assistant*.
+
+    The self-check LLM evaluates the latest user turn, but the model is handed the
+    whole conversation, and the whole conversation comes from the client: the
+    gateway validates that each history message has role ``user`` or ``assistant``,
+    not who wrote it. A caller can therefore submit fabricated assistant turns that
+    no rail ever saw, carrying the implied authority of the agent's own voice.
+    Running the deterministic patterns across those turns closes that channel
+    without paying for a second LLM call.
+
+    Prior *user* turns are deliberately excluded. Each was screened by the full
+    rail when it was the latest turn, and a refused one never reached the model —
+    but its text stays in the history the client replays. Screening it again made
+    one refusal poison the rest of the conversation: every later message, however
+    innocuous, matched the injection still sitting in the transcript and was
+    refused. A browser session caught that; no test did.
+
+    The residual gap is a fabricated prior *user* turn, which no rail sees either.
+    It is knowingly left open here: closing it means re-screening text the user
+    can see was already refused, and the same caller can simply send that text as
+    the latest turn, where the full rail does screen it.
+    """
+
+    messages = getattr(raw, "messages", None)
+    if not messages:
+        return ""
+
+    collected: list[str] = []
+    for message in messages:
+        role = getattr(message, "role", None)
+        role_value = getattr(role, "value", role)
+        if role_value == "user":
+            continue
+        content = _content_to_text(getattr(message, "content", None))
+        if content:
+            collected.append(content)
+    return "\n".join(collected)
 
 
 def _critical_input_matches(text: str) -> list[str]:
@@ -171,72 +240,61 @@ def _critical_input_matches(text: str) -> list[str]:
     return [name for name, pattern in _CRITICAL_INPUT_PATTERNS if pattern.search(text)]
 
 
-_ALERT_ID_PATTERN = r"ALT-[A-Z0-9][A-Z0-9_-]*"
-_READ_ONLY_ALERT_TEMPLATES: tuple[tuple[str, re.Pattern[str]], ...] = (
+# A canonical etf_id (VWCE-XETRA), a bare ticker (IWDA), or an ISIN.
+_ETF_REFERENCE_PATTERN = r"(?:[A-Z]{2}[A-Z0-9]{9}[0-9]|[A-Z0-9]{2,6}(?:-[A-Z0-9]{2,10})?)"
+_READ_ONLY_ETF_TEMPLATES: tuple[tuple[str, re.Pattern[str]], ...] = (
     (
-        "list_open_alerts",
+        "list_candidates",
         re.compile(
             r"^\s*(?:please\s+)?(?:show|list|display|get|retrieve)\s+"
-            r"(?:me\s+)?(?:all\s+)?(?:of\s+)?(?:my\s+)?open\s+alerts?"
+            r"(?:me\s+)?(?:all\s+)?(?:of\s+)?(?:my\s+)?(?:the\s+)?"
+            r"(?:\d+\s+)?(?:highest[- ]?(?:rated|scoring)\s+|top\s+|shortlisted\s+|"
+            r"rejected\s+|unreviewed\s+)?(?:etfs?|funds?|candidates?)"
+            r"(?:\s+(?:that\s+)?(?:still\s+)?(?:need|require|awaiting)\s+(?:more\s+)?research)?"
             r"(?:\s+(?:with|including)\s+(?:their\s+)?"
-            r"(?:details?|status(?:es)?|severity|titles?))?[.!?]?\s*$",
+            r"(?:details?|scores?|decisions?|ters?|costs?))?[.!?]?\s*$",
             re.IGNORECASE,
         ),
     ),
     (
-        "list_open_alert_transactions",
+        "specific_etf_direct",
         re.compile(
-            r"^\s*(?:please\s+)?(?:show|list|display|get|retrieve)\s+"
-            r"(?:me\s+)?(?:all\s+)?transactions?\s+(?:for|from)\s+"
-            r"(?:all\s+)?(?:my\s+)?open\s+alerts?"
-            r"(?:\s+(?:with|including)\s+(?:their\s+)?details?)?[.!?]?\s*$",
+            rf"^\s*(?:please\s+)?(?:show|display|get|retrieve|summarize|evaluate)\s+"
+            rf"(?:me\s+)?(?:etf\s+|fund\s+)?{_ETF_REFERENCE_PATTERN}"
+            r"(?:\s+(?:with|including)\s+(?:all\s+)?"
+            r"(?:details?|metrics?|metadata|current\s+state|its\s+score))?[.!?]?\s*$",
             re.IGNORECASE,
         ),
     ),
     (
-        "specific_alert_direct",
-        re.compile(
-            rf"^\s*(?:please\s+)?(?:show|display|get|retrieve|summarize)\s+"
-            rf"(?:me\s+)?(?:alert\s+)?{_ALERT_ID_PATTERN}"
-            r"(?:\s*,?\s*(?:and\s+)?(?:"
-            r"quote\s+its\s+(?:complete\s+|full\s+)?description\s+exactly"
-            r"(?:\s*,?\s*including\s+every\s+key\s+and\s+value)?|"
-            r"including\s+(?:the\s+)?customer\s+and\s+assigned\s+analyst|"
-            r"with\s+(?:all\s+)?transactions?))?[.!?]?\s*$",
-            re.IGNORECASE,
-        ),
-    ),
-    (
-        "specific_alert_details",
+        "specific_etf_details",
         re.compile(
             rf"^\s*(?:please\s+)?(?:show|display|get|retrieve|summarize)\s+"
             r"(?:me\s+)?(?:the\s+)?(?:(?:complete|full)\s+)?"
-            r"(?:details?|information)(?:\s+and\s+(?:all\s+)?transactions?)?\s+"
-            rf"(?:for|of|from)\s+(?:alert\s+)?{_ALERT_ID_PATTERN}"
-            r"(?:\s*,?\s*(?:including|with)\s+(?:the\s+)?(?:"
-            r"customer\s+and\s+assigned\s+analyst|customer|assigned\s+analyst|"
-            r"all\s+transactions?))?[.!?]?\s*$",
+            r"(?:details?|information|metrics?|metadata|score|evaluation|history)"
+            r"(?:\s+and\s+current\s+state)?\s+"
+            rf"(?:for|of|from)\s+(?:etf\s+|fund\s+)?{_ETF_REFERENCE_PATTERN}[.!?]?\s*$",
             re.IGNORECASE,
         ),
     ),
     (
-        "specific_alert_transactions",
+        "research_summary",
         re.compile(
-            rf"^\s*(?:please\s+)?(?:show|list|display|get|retrieve)\s+"
-            r"(?:me\s+)?(?:all\s+)?transactions?\s+(?:for|of|from)\s+"
-            rf"(?:alert\s+)?{_ALERT_ID_PATTERN}[.!?]?\s*$",
+            r"^\s*(?:please\s+)?(?:show|give|summarize|what\s+is)\s+"
+            r"(?:me\s+)?(?:the\s+)?(?:current\s+)?(?:etf\s+)?research\s+summary"
+            r"(?:\s+by\s+(?:decision|asset\s+class|region|provider))?[.!?]?\s*$",
             re.IGNORECASE,
         ),
     ),
 )
 
 
-def _read_only_alert_allow_matches(text: str) -> list[str]:
-    """Recognize tightly scoped, read-only alert investigation requests.
+def _read_only_etf_allow_matches(text: str) -> list[str]:
+    """Recognize tightly scoped, read-only ETF research requests.
 
     Every pattern is anchored to the complete message. This prevents an attacker
     from appending an instruction override or harmful request to an otherwise
-    valid alert query and then benefiting from the allow override.
+    valid fund query and then benefiting from the allow override.
     """
 
     if not _env_bool("GUARDRAILS_INPUT_READ_ONLY_ALLOW_OVERRIDE", True):
@@ -248,7 +306,7 @@ def _read_only_alert_allow_matches(text: str) -> list[str]:
 
     return [
         name
-        for name, pattern in _READ_ONLY_ALERT_TEMPLATES
+        for name, pattern in _READ_ONLY_ETF_TEMPLATES
         if pattern.fullmatch(normalized)
     ]
 
@@ -288,11 +346,31 @@ def _resolve_input_policy(
     return blocked, allow_override_applied, decision_source
 
 
+_TRUE_VALUES = frozenset({"1", "true", "yes", "on"})
+_FALSE_VALUES = frozenset({"0", "false", "no", "off"})
+
+
 def _env_bool(name: str, default: bool) -> bool:
-    value = os.getenv(name)
-    if value is None:
+    """Parse a boolean switch, refusing to guess.
+
+    Anything unrecognised used to become ``False``, which for
+    ``GUARDRAILS_INPUT_DETERMINISTIC_FALLBACK`` meant a typo silently switched off
+    the deterministic block patterns. An unreadable value now keeps the declared
+    default — the safe setting for every flag here — and says so.
+    """
+
+    raw = os.getenv(name)
+    if raw is None or not raw.strip():
         return default
-    return value.strip().lower() in {"1", "true", "yes", "on"}
+    value = raw.strip().lower()
+    if value in _TRUE_VALUES:
+        return True
+    if value in _FALSE_VALUES:
+        return False
+    logger.warning(
+        "%s=%r is not a recognised boolean; keeping the default (%s)", name, raw, default
+    )
+    return default
 
 
 def _trace_limit() -> int:
@@ -439,6 +517,45 @@ def _emit_nat_evaluation_event(name: str, input_data: Any, output_data: Any) -> 
 class TextGuardrailsMiddleware(GuardrailsMiddleware):
     """Apply NeMo rails to text while preserving NAT chat chunk types."""
 
+    def __init__(self, config: TextGuardrailsMiddlewareConfig, builder: Builder) -> None:
+        super().__init__(config, builder)
+        # The pinned NeMo Guardrails release declares the regex output action
+        # without a blocking output mapping and without **kwargs, which makes the
+        # streaming rail a silent no-op. Re-register a corrected declaration
+        # through the supported extension point instead of editing site-packages.
+        self.regex_rail_compatibility_applied = register_regex_rail_compatibility(self._llm_rails)
+        # The same release resolves $bot_message into the shared flow config, so
+        # without this guard every request after the first would be evaluated
+        # against the first request's text.
+        self.rail_flow_guard = RailFlowParameterGuard(self._llm_rails)
+        # ...and the guard alone only makes *sequential* reuse safe. Concurrent
+        # evaluations must not share an instance at all, so every rail run leases
+        # one from this pool. See RailsPool.
+        self.rails_pool = RailsPool(self._build_rails)
+
+    def _build_rails(self) -> Any:
+        """Construct an isolated rails instance equivalent to the primary one."""
+
+        from nemoguardrails import LLMRails
+
+        rails = LLMRails(self._guardrails_config.guardrails.model_copy(deep=True))
+        register_regex_rail_compatibility(rails)
+
+        # Carry over whatever NAT bound onto the primary instance — rail LLM
+        # bindings live here. Absent in this deployment, where the rail model comes
+        # from the guardrails config itself, but a pooled instance must never
+        # silently lose a binding the primary has.
+        params = getattr(getattr(self._llm_rails, "runtime", None), "registered_action_params", None)
+        if isinstance(params, dict):
+            for name, value in params.items():
+                rails.register_action_param(name, value)
+        elif self._config.llm_bindings:
+            raise RuntimeError(
+                "Guardrails rail LLM bindings are configured but cannot be copied onto a "
+                "pooled rails instance; concurrent rail isolation would lose them."
+            )
+        return rails
+
     async def pre_invoke(self, context: InvocationContext) -> InvocationContext | None:
         """Run input rails on the latest user message and record the verdict."""
 
@@ -477,9 +594,26 @@ class TextGuardrailsMiddleware(GuardrailsMiddleware):
             )
             return None
 
-        rendered_prompt = _rendered_self_check_prompt(self._llm_rails, text)
-        deterministic_matches = _critical_input_matches(text)
-        deterministic_allow_matches = _read_only_alert_allow_matches(text)
+        async with self.rails_pool.acquire() as rails:
+            return await self._check_input(context, value, text, rails)
+
+    async def _check_input(
+        self,
+        context: InvocationContext,
+        value: Any,
+        text: str,
+        rails: Any,
+    ) -> InvocationContext | None:
+        """Evaluate the input rails on an instance no other request is using."""
+
+        rendered_prompt = _rendered_self_check_prompt(rails, text)
+        # History matches are labelled so a span shows which turn decided, and they
+        # join the deterministic block set so they win over the read-only allow
+        # override exactly as a match on the latest turn would.
+        deterministic_matches = _critical_input_matches(text) + [
+            f"history:{name}" for name in _critical_input_matches(_prior_turn_text(value))
+        ]
+        deterministic_allow_matches = _read_only_etf_allow_matches(text)
 
         with tracer.start_as_current_span("guardrail.input.self_check") as span:
             _set_common_guardrail_attributes(
@@ -492,7 +626,7 @@ class TextGuardrailsMiddleware(GuardrailsMiddleware):
             span.set_attribute("gen_ai.provider.name", "ollama")
             span.set_attribute(
                 "gen_ai.request.model",
-                os.getenv("OLLAMA_GUARD_MODEL", os.getenv("OLLAMA_MODEL", "qwen3:8b")),
+                os.getenv("LLM_GUARD_MODEL", os.getenv("LLM_MODEL", "qwen3:8b")),
             )
             span.set_attribute("guardrail.input.sha256", _sha256(text))
             span.set_attribute("guardrail.input.length", len(text))
@@ -538,7 +672,7 @@ class TextGuardrailsMiddleware(GuardrailsMiddleware):
                 span.set_attribute("input.mime_type", "application/json")
 
             try:
-                response: GenerationResponse = await self._llm_rails.generate_async(
+                response: GenerationResponse = await rails.generate_async(
                     messages=[{"role": "user", "content": text}],
                     options=GenerationOptions(
                         rails=["input"],
@@ -554,7 +688,7 @@ class TextGuardrailsMiddleware(GuardrailsMiddleware):
 
                 # Decision precedence is intentionally asymmetric:
                 # 1. Deterministic critical blocks always win.
-                # 2. A narrow read-only alert allow rule can correct an LLM
+                # 2. A narrow read-only ETF allow rule can correct an LLM
                 #    false positive, but only when no critical block matched.
                 # 3. All other inputs follow the LLM self-check verdict.
                 deterministic_blocked = bool(deterministic_matches)
@@ -733,7 +867,12 @@ class TextGuardrailsMiddleware(GuardrailsMiddleware):
         ctx: InvocationContext,
         call_next: CallNextStream,
     ) -> AsyncIterator[Any]:
-        """Sanitize clean text chunks and record output-rail decisions."""
+        """Stream clean text through NeMo's deterministic output regex rail.
+
+        This deliberately uses NeMo ``stream_async`` again: the earlier numeric
+        corruption was caused by the UI SSE adapter double-parsing scalar text,
+        not by this streaming guardrail path.
+        """
 
         await self.bind_llms_to_rail()
 
@@ -798,49 +937,58 @@ class TextGuardrailsMiddleware(GuardrailsMiddleware):
                 system_fingerprint=stream_state["system_fingerprint"],
             )
 
-        with tracer.start_as_current_span("guardrail.output.regex_presidio") as span:
+        with tracer.start_as_current_span("guardrail.output.secret_regex") as span:
             _set_common_guardrail_attributes(
                 span,
                 stage="output",
-                name="regex + Presidio output",
+                name="streaming secret regex output",
             )
-            span.set_attribute("guardrail.type", "deterministic_output_pipeline")
+            span.set_attribute("guardrail.type", "streaming_deterministic_output_pipeline")
             span.set_attribute(
                 "guardrail.configured_rails",
-                _json(["regex check output", "mask sensitive data on output"]),
+                _json(["regex check output"]),
             )
 
             try:
-                async for guarded_text in self._llm_rails.stream_async(
-                    messages=messages,
-                    generator=upstream_text(),
-                ):
-                    try:
-                        payload = json.loads(guarded_text)
-                        if isinstance(payload, dict) and "error" in payload:
-                            error = payload.get("error") or {}
-                            block_message = error.get(
-                                "message",
-                                "Blocked by output rail.",
-                            )
-                            blocked = True
-                            ctx.output = ""
-                            blocked_output = self.on_post_invoke_blocked(
-                                ctx,
-                                block_message,
-                            )
-                            if isinstance(blocked_output, str):
-                                guarded_parts.append(blocked_output)
-                                yield wrap_text(blocked_output)
-                            else:
-                                yield blocked_output
-                            break
-                    except (json.JSONDecodeError, TypeError, ValueError):
-                        pass
+                # One instance per concurrent stream. Sharing one made a chunk get
+                # checked against another response's text, and a credential walked
+                # through untouched.
+                async with self.rails_pool.acquire() as rails:
+                    async for guarded_text in rails.stream_async(
+                        messages=messages,
+                        generator=upstream_text(),
+                    ):
+                        try:
+                            payload = json.loads(guarded_text)
+                            # NeMo signals a streaming block by emitting exactly
+                            # {"error": {...}} in place of a chunk. Match that
+                            # envelope precisely: this middleware relays tool
+                            # results, and a model chunk that merely happens to
+                            # contain an "error" key must not truncate a response.
+                            if _is_rail_block_envelope(payload):
+                                error = payload["error"]
+                                block_message = error.get(
+                                    "message",
+                                    "Blocked by output rail.",
+                                )
+                                blocked = True
+                                ctx.output = ""
+                                blocked_output = self.on_post_invoke_blocked(
+                                    ctx,
+                                    block_message,
+                                )
+                                if isinstance(blocked_output, str):
+                                    guarded_parts.append(blocked_output)
+                                    yield wrap_text(blocked_output)
+                                else:
+                                    yield blocked_output
+                                break
+                        except (json.JSONDecodeError, TypeError, ValueError):
+                            pass
 
-                    if guarded_text:
-                        guarded_parts.append(guarded_text)
-                        yield wrap_text(guarded_text)
+                        if guarded_text:
+                            guarded_parts.append(guarded_text)
+                            yield wrap_text(guarded_text)
 
                 raw_text = "".join(raw_parts)
                 guarded_text_full = "".join(guarded_parts)
@@ -849,15 +997,10 @@ class TextGuardrailsMiddleware(GuardrailsMiddleware):
                     "blocked" if blocked else "modified" if modified else "passed"
                 )
                 regex_outcome = "blocked" if blocked else "passed"
-                presidio_outcome = (
-                    "skipped" if blocked else "modified" if modified else "passed"
-                )
-
                 span.set_attribute("guardrail.outcome", overall_outcome)
                 span.set_attribute("guardrail.blocked", blocked)
                 span.set_attribute("guardrail.modified", modified)
                 span.set_attribute("guardrail.regex.outcome", regex_outcome)
-                span.set_attribute("guardrail.presidio.outcome", presidio_outcome)
                 span.set_attribute("guardrail.input.length", len(raw_text))
                 span.set_attribute("guardrail.output.length", len(guarded_text_full))
                 span.set_attribute("guardrail.input.sha256", _sha256(raw_text))
@@ -870,7 +1013,6 @@ class TextGuardrailsMiddleware(GuardrailsMiddleware):
                     "blocked": blocked,
                     "modified": modified,
                     "regex": {"outcome": regex_outcome},
-                    "presidio": {"outcome": presidio_outcome},
                     "input_length": len(raw_text),
                     "output_length": len(guarded_text_full),
                     "block_message": block_message or None,
@@ -878,8 +1020,8 @@ class TextGuardrailsMiddleware(GuardrailsMiddleware):
                 if _env_bool("GUARDRAILS_TRACE_CAPTURE_CONTENT", True):
                     output_payload["sanitized_output"] = guarded_text_full
                 if _env_bool("GUARDRAILS_TRACE_CAPTURE_RAW_OUTPUT", False):
-                    # Off by default: pre-mask output can contain exactly the PII
-                    # or secret that this rail exists to prevent from escaping.
+                    # Off by default: raw output can contain exactly the secret
+                    # that this rail exists to prevent from escaping.
                     output_payload["raw_output_before_guardrails"] = raw_text
 
                 span.set_attribute("input.value", _json({
@@ -895,19 +1037,18 @@ class TextGuardrailsMiddleware(GuardrailsMiddleware):
                 span.set_attribute("output.mime_type", "application/json")
 
                 _emit_nat_evaluation_event(
-                    "guardrail_output_regex_presidio_decision",
+                    "guardrail_output_secret_regex_decision",
                     {
                         "raw_output_sha256": _sha256(raw_text),
                         "raw_output_length": len(raw_text),
                     },
                     {
                         "stage": "output",
-                        "name": "regex + Presidio output",
+                        "name": "streaming secret regex output",
                         "outcome": overall_outcome,
                         "blocked": blocked,
                         "modified": modified,
                         "regex_outcome": regex_outcome,
-                        "presidio_outcome": presidio_outcome,
                         "sanitized_output_length": len(guarded_text_full),
                     },
                 )
@@ -918,14 +1059,6 @@ class TextGuardrailsMiddleware(GuardrailsMiddleware):
                         "guardrail.name": "regex check output",
                         "guardrail.outcome": regex_outcome,
                         "guardrail.blocked": blocked,
-                    },
-                )
-                span.add_event(
-                    "guardrail.rail_result",
-                    {
-                        "guardrail.name": "mask sensitive data on output",
-                        "guardrail.outcome": presidio_outcome,
-                        "guardrail.modified": modified,
                     },
                 )
                 span.set_status(Status(StatusCode.OK))

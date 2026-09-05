@@ -1,0 +1,81 @@
+{
+  "generated_at": "2026-08-13T21:35:44.181969+00:00",
+  "mode": "live-agent",
+  "suite": "policy",
+  "experiment": "etf-decision-policy",
+  "dataset": "etf-decision-policy-cases",
+  "dataset_id": "d-7aa02cc80a294e6eb3496cb5e2aabfd4",
+  "record_count": 5,
+  "run_id": "6f7b54e2f09b46cea392cb9dca2b2404",
+  "required_metric": "decision_policy_correct/mean",
+  "required_value": 0.4,
+  "fail_threshold": 1.0,
+  "passed": false,
+  "provenance": {
+    "agent": {
+      "available": true,
+      "model": "qwen3:8b",
+      "guard_model": "qwen3:8b",
+      "reasoning_effort": "none",
+      "guard_reasoning_effort": "none",
+      "build_commit": "312c1ab1180a5f59be9fc439207868fb3e2e4d74",
+      "config_sha256": "f6547765c6b78615a30b0aa28f49cc13bfd6862da70fa619be90c5919c5bd429",
+      "prompt_sha256": "c50966b65eb7e9533188dbaeba079344fb80eb42cd3dabeb63c81d16bf56638a",
+      "guardrails_prompts_sha256": "957a8d87fea2b2413feae4a2b429f22bb052b13b3bd3b57a4bf1569a8763ccbb",
+      "tools_exposed": [
+        "evaluate_etf",
+        "get_etf",
+        "get_etf_history",
+        "get_research_context",
+        "get_research_summary",
+        "search_etfs"
+      ]
+    },
+    "harness": {
+      "git_commit": "312c1ab1180a5f59be9fc439207868fb3e2e4d74",
+      "source": "git",
+      "dirty": false
+    },
+    "prompts": [
+      {
+        "name": "etf-research-agent-system-prompt",
+        "version": "1",
+        "registered": false,
+        "linked": true
+      },
+      {
+        "name": "etf-research-guardrail-input-rail",
+        "version": "1",
+        "registered": false,
+        "linked": true
+      }
+    ],
+    "checks": {
+      "prompt_matches_config": true,
+      "guardrail_prompts_match_config": true,
+      "agent_built_from_harness_commit": true
+    },
+    "consistent": true
+  },
+  "metrics": {
+    "decision_policy_correct/mean": 0.4,
+    "decision_relationship_correct/mean": 0.4,
+    "llm_policy_validity_correct/mean": 1.0,
+    "rules_win_by_default_correct/mean": 0.4,
+    "policy_stated_effective_decision/mean": 0.4,
+    "policy_no_contradiction/mean": 1.0,
+    "policy_no_forecast_claim/mean": 1.0,
+    "policy_no_misattributed_etf/mean": 1.0,
+    "policy_read_only/mean": 1.0,
+    "latency_ms/mean": 7633.150200000001
+  },
+  "latency": {
+    "count": 5,
+    "min_ms": 398.4,
+    "p50_ms": 549.0,
+    "p95_ms": 19357.6,
+    "max_ms": 19357.6,
+    "mean_ms": 7633.2,
+    "note": "End-to-end, question in to final token out, on the pinned local model."
+  }
+}

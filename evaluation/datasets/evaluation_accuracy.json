@@ -1,0 +1,218 @@
+[
+  {
+    "inputs": {
+      "question": "Read-only evaluation: run the deterministic evaluation engine for ETF VWCE-XETRA using evaluate_etf. Do not change any state. Report the deterministic decision and the investment score.",
+      "case_id": "EVAL-VWCE-XETRA"
+    },
+    "expectations": {
+      "etf_id": "VWCE-XETRA",
+      "expected_decision": "shortlist",
+      "expected_investment_score": 87,
+      "source_rationale": "a broad, cheap, global accumulating fund that meets every preference"
+    },
+    "tags": {
+      "category": "deterministic_evaluation",
+      "source": "data/test_cases.json and the shipped engine",
+      "decision": "shortlist",
+      "priority": "critical"
+    }
+  },
+  {
+    "inputs": {
+      "question": "Read-only evaluation: run the deterministic evaluation engine for ETF SWRD-XETRA using evaluate_etf. Do not change any state. Report the deterministic decision and the investment score.",
+      "case_id": "EVAL-SWRD-XETRA"
+    },
+    "expectations": {
+      "etf_id": "SWRD-XETRA",
+      "expected_decision": "shortlist",
+      "expected_investment_score": 84,
+      "source_rationale": "the lowest-cost developed-world core holding in the snapshot"
+    },
+    "tags": {
+      "category": "deterministic_evaluation",
+      "source": "data/test_cases.json and the shipped engine",
+      "decision": "shortlist",
+      "priority": "critical"
+    }
+  },
+  {
+    "inputs": {
+      "question": "Read-only evaluation: run the deterministic evaluation engine for ETF CSPX-LSE using evaluate_etf. Do not change any state. Report the deterministic decision and the investment score.",
+      "case_id": "EVAL-CSPX-LSE"
+    },
+    "expectations": {
+      "etf_id": "CSPX-LSE",
+      "expected_decision": "shortlist",
+      "expected_investment_score": 86,
+      "source_rationale": "cheapest cost band and huge scale, held back by single-market concentration"
+    },
+    "tags": {
+      "category": "deterministic_evaluation",
+      "source": "data/test_cases.json and the shipped engine",
+      "decision": "shortlist",
+      "priority": "critical"
+    }
+  },
+  {
+    "inputs": {
+      "question": "Read-only evaluation: run the deterministic evaluation engine for ETF SPXS-LSE using evaluate_etf. Do not change any state. Report the deterministic decision and the investment score.",
+      "case_id": "EVAL-SPXS-LSE"
+    },
+    "expectations": {
+      "etf_id": "SPXS-LSE",
+      "expected_decision": "shortlist",
+      "expected_investment_score": 77,
+      "source_rationale": "the same index through a swap: cheaper still, penalised for the structure"
+    },
+    "tags": {
+      "category": "deterministic_evaluation",
+      "source": "data/test_cases.json and the shipped engine",
+      "decision": "shortlist",
+      "priority": "critical"
+    }
+  },
+  {
+    "inputs": {
+      "question": "Read-only evaluation: run the deterministic evaluation engine for ETF IUSN-XETRA using evaluate_etf. Do not change any state. Report the deterministic decision and the investment score.",
+      "case_id": "EVAL-IUSN-XETRA"
+    },
+    "expectations": {
+      "etf_id": "IUSN-XETRA",
+      "expected_decision": "shortlist",
+      "expected_investment_score": 75,
+      "source_rationale": "near-perfect diversification at a higher cost; sits on the shortlist boundary"
+    },
+    "tags": {
+      "category": "deterministic_evaluation",
+      "source": "data/test_cases.json and the shipped engine",
+      "decision": "shortlist",
+      "priority": "critical"
+    }
+  },
+  {
+    "inputs": {
+      "question": "Read-only evaluation: run the deterministic evaluation engine for ETF EIMI-LSE using evaluate_etf. Do not change any state. Report the deterministic decision and the investment score.",
+      "case_id": "EVAL-EIMI-LSE"
+    },
+    "expectations": {
+      "etf_id": "EIMI-LSE",
+      "expected_decision": "shortlist",
+      "expected_investment_score": 86,
+      "source_rationale": "broad emerging-market exposure, acceptable at a high risk tolerance"
+    },
+    "tags": {
+      "category": "deterministic_evaluation",
+      "source": "data/test_cases.json and the shipped engine",
+      "decision": "shortlist",
+      "priority": "critical"
+    }
+  },
+  {
+    "inputs": {
+      "question": "Read-only evaluation: run the deterministic evaluation engine for ETF AGGH-XETRA using evaluate_etf. Do not change any state. Report the deterministic decision and the investment score.",
+      "case_id": "EVAL-AGGH-XETRA"
+    },
+    "expectations": {
+      "etf_id": "AGGH-XETRA",
+      "expected_decision": "research",
+      "expected_investment_score": 84,
+      "source_rationale": "raw score reaches shortlist; a missing critical metric caps it at research"
+    },
+    "tags": {
+      "category": "deterministic_evaluation",
+      "source": "data/test_cases.json and the shipped engine",
+      "decision": "research",
+      "priority": "critical"
+    }
+  },
+  {
+    "inputs": {
+      "question": "Read-only evaluation: run the deterministic evaluation engine for ETF IEAC-LSE using evaluate_etf. Do not change any state. Report the deterministic decision and the investment score.",
+      "case_id": "EVAL-IEAC-LSE"
+    },
+    "expectations": {
+      "etf_id": "IEAC-LSE",
+      "expected_decision": "research",
+      "expected_investment_score": 76,
+      "source_rationale": "high standalone quality, poor fit for a 20-year growth mandate"
+    },
+    "tags": {
+      "category": "deterministic_evaluation",
+      "source": "data/test_cases.json and the shipped engine",
+      "decision": "research",
+      "priority": "critical"
+    }
+  },
+  {
+    "inputs": {
+      "question": "Read-only evaluation: run the deterministic evaluation engine for ETF IB01-LSE using evaluate_etf. Do not change any state. Report the deterministic decision and the investment score.",
+      "case_id": "EVAL-IB01-LSE"
+    },
+    "expectations": {
+      "etf_id": "IB01-LSE",
+      "expected_decision": "research",
+      "expected_investment_score": 67,
+      "source_rationale": "a cash substitute: cheap and liquid but 20 holdings and the wrong asset class"
+    },
+    "tags": {
+      "category": "deterministic_evaluation",
+      "source": "data/test_cases.json and the shipped engine",
+      "decision": "research",
+      "priority": "critical"
+    }
+  },
+  {
+    "inputs": {
+      "question": "Read-only evaluation: run the deterministic evaluation engine for ETF WCLD-LSE using evaluate_etf. Do not change any state. Report the deterministic decision and the investment score.",
+      "case_id": "EVAL-WCLD-LSE"
+    },
+    "expectations": {
+      "etf_id": "WCLD-LSE",
+      "expected_decision": "research",
+      "expected_investment_score": 59,
+      "source_rationale": "a small, young, concentrated theme with an incomplete record"
+    },
+    "tags": {
+      "category": "deterministic_evaluation",
+      "source": "data/test_cases.json and the shipped engine",
+      "decision": "research",
+      "priority": "critical"
+    }
+  },
+  {
+    "inputs": {
+      "question": "Read-only evaluation: run the deterministic evaluation engine for ETF VTI-ARCA using evaluate_etf. Do not change any state. Report the deterministic decision and the investment score.",
+      "case_id": "EVAL-VTI-ARCA"
+    },
+    "expectations": {
+      "etf_id": "VTI-ARCA",
+      "expected_decision": "reject",
+      "expected_investment_score": 88,
+      "source_rationale": "the strongest raw score in the snapshot, rejected by a hard constraint"
+    },
+    "tags": {
+      "category": "deterministic_evaluation",
+      "source": "data/test_cases.json and the shipped engine",
+      "decision": "reject",
+      "priority": "critical"
+    }
+  },
+  {
+    "inputs": {
+      "question": "Read-only evaluation: run the deterministic evaluation engine for ETF GLD-ARCA using evaluate_etf. Do not change any state. Report the deterministic decision and the investment score.",
+      "case_id": "EVAL-GLD-ARCA"
+    },
+    "expectations": {
+      "etf_id": "GLD-ARCA",
+      "expected_decision": "reject",
+      "expected_investment_score": 57,
+      "source_rationale": "a single-asset commodity trust: no diversification and not UCITS"
+    },
+    "tags": {
+      "category": "deterministic_evaluation",
+      "source": "data/test_cases.json and the shipped engine",
+      "decision": "reject",
+      "priority": "critical"
+    }
+  }
+]

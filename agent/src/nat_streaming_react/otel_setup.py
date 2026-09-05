@@ -38,7 +38,7 @@ def configure_opentelemetry() -> None:
             "http://otel-collector:4318/v1/traces",
         ),
     )
-    service_name = os.getenv("OTEL_SERVICE_NAME", "alerts-agent")
+    service_name = os.getenv("OTEL_SERVICE_NAME", "etf-research-agent")
     environment = os.getenv("DEPLOYMENT_ENVIRONMENT", "local")
 
     provider = TracerProvider(

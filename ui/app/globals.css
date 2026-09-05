@@ -191,9 +191,108 @@ textarea {
   }
 }
 
+/* Assistant prose is rendered Markdown. `white-space: pre-wrap` is deliberately
+   NOT set here: block elements carry the layout now, and pre-wrap would add the
+   source newlines back on top of it. */
 .assistant-text {
   margin: 0;
-  white-space: pre-wrap;
+}
+
+.assistant-text > *:first-child {
+  margin-top: 0;
+}
+
+.assistant-text > *:last-child {
+  margin-bottom: 0;
+}
+
+.assistant-text p {
+  margin: 0 0 0.7em;
+}
+
+.assistant-text ul,
+.assistant-text ol {
+  margin: 0 0 0.7em;
+  padding-left: 1.35em;
+}
+
+.assistant-text li {
+  margin: 0.15em 0;
+}
+
+/* Nested lists are how the model expresses per-fund detail; keep them tight. */
+.assistant-text li > ul,
+.assistant-text li > ol {
+  margin: 0.15em 0 0.35em;
+}
+
+.assistant-text strong {
+  font-weight: 650;
+  color: #ffffff;
+}
+
+.assistant-text h1,
+.assistant-text h2,
+.assistant-text h3,
+.assistant-text h4 {
+  margin: 0.9em 0 0.45em;
+  font-size: 1em;
+  font-weight: 700;
+  color: #ffffff;
+}
+
+.assistant-text code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 0.92em;
+  background: rgba(127, 127, 127, 0.18);
+  border-radius: 4px;
+  padding: 0.1em 0.35em;
+}
+
+.assistant-text pre {
+  margin: 0 0 0.7em;
+  padding: 10px 12px;
+  overflow-x: auto;
+  border-radius: 8px;
+  background: #14161b;
+}
+
+.assistant-text pre code {
+  background: none;
+  padding: 0;
+}
+
+.assistant-text blockquote {
+  margin: 0 0 0.7em;
+  padding-left: 0.8em;
+  border-left: 2px solid #343a46;
+  color: #c3cad6;
+}
+
+/* Wide tables must scroll inside the message rather than stretch the thread. */
+.assistant-text table {
+  display: block;
+  width: max-content;
+  max-width: 100%;
+  overflow-x: auto;
+  border-collapse: collapse;
+  margin: 0 0 0.7em;
+  font-size: 0.94em;
+}
+
+.assistant-text th,
+.assistant-text td {
+  border: 1px solid #343a46;
+  padding: 5px 9px;
+  text-align: left;
+}
+
+.assistant-text th {
+  background: rgba(127, 127, 127, 0.12);
+}
+
+.assistant-text a {
+  color: #8ab4ff;
 }
 
 .assistant-message {
@@ -204,20 +303,44 @@ textarea {
 
 .scenario-list {
   display: grid;
-  gap: 8px;
-  margin-top: 22px;
+  gap: 6px;
+  margin-top: 14px;
   text-align: left;
 }
 
+.scenario-hint {
+  margin: 22px 0 0;
+  text-align: left;
+  font-size: 13px;
+  opacity: 0.6;
+}
+
+/* Examples to type, not controls. They previously carried a border, a raised
+   background and button-like padding, so they read as clickable — and clicking
+   one did nothing, which reads as broken. */
 .scenario-list code {
   display: block;
-  border: 1px solid #343a46;
-  border-radius: 10px;
-  background: #191c22;
-  color: #dfe5ef;
-  padding: 10px 12px;
+  border: 0;
+  border-left: 2px solid #343a46;
+  border-radius: 0;
+  background: transparent;
+  color: #aab3c2;
+  padding: 2px 0 2px 12px;
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
   font-size: 13px;
+}
+
+/* The limitation notice is part of the product, not fine print bolted on: the
+   whole point of the system is that a score is a policy result rather than a
+   prediction, so the welcome screen says so where a first-time user reads it. */
+.disclaimer {
+  margin: 26px 0 0;
+  text-align: left;
+  font-size: 12px;
+  line-height: 1.55;
+  color: #7c8595;
+  border-top: 1px solid #262b35;
+  padding-top: 14px;
 }
 
 .tool-card {
@@ -413,4 +536,142 @@ textarea {
   .auth-header span {
     display: none;
   }
+}
+
+.approval-card {
+  margin: 0.75rem 0;
+  border: 1px solid rgba(217, 119, 6, 0.5);
+  border-radius: 14px;
+  padding: 1rem;
+  background: rgba(251, 191, 36, 0.08);
+}
+
+.approval-kicker {
+  font-size: 0.72rem;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  margin-bottom: 0.65rem;
+}
+
+.approval-summary {
+  white-space: pre-wrap;
+  word-break: break-word;
+  font: inherit;
+  line-height: 1.45;
+  margin: 0 0 0.9rem;
+  padding: 0;
+  background: transparent;
+}
+
+.approval-form,
+.approval-actions {
+  display: flex;
+  gap: 0.65rem;
+}
+
+.approval-form {
+  flex-direction: column;
+}
+
+.approval-form label {
+  font-weight: 700;
+  font-size: 0.85rem;
+}
+
+.approval-form textarea {
+  width: 100%;
+  resize: vertical;
+  border: 1px solid rgba(127, 127, 127, 0.4);
+  border-radius: 10px;
+  padding: 0.7rem;
+  font: inherit;
+  background: inherit;
+  color: inherit;
+}
+
+.approval-actions {
+  justify-content: flex-end;
+}
+
+.approval-primary,
+.approval-secondary {
+  border: 0;
+  border-radius: 9px;
+  padding: 0.55rem 0.85rem;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.approval-primary {
+  /* Explicit palette values, not `background: currentColor` with `color: Canvas`.
+     In any property other than `color`, `currentColor` resolves to the element's
+     OWN computed colour — which was `Canvas` — so background and text came out
+     identical and the label was invisible. The primary approval button rendered
+     as a blank rectangle. */
+  background: #f5f7fa;
+  color: #101114;
+}
+
+.approval-secondary {
+  border: 1px solid rgba(127, 127, 127, 0.45);
+  background: transparent;
+  color: inherit;
+}
+
+.approval-primary:disabled,
+.approval-secondary:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.approval-status,
+.approval-error {
+  margin: 0.65rem 0 0;
+  font-size: 0.82rem;
+}
+
+.approval-error {
+  font-weight: 700;
+}
+
+/* Decision choice on the approval card. Each option is a distinct action, so
+   they are buttons rather than a radio group plus a submit: one click, one
+   decision, no ambiguity about what is currently selected. */
+.approval-choices {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  margin-bottom: 0.75rem;
+}
+
+.approval-choice {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  padding: 0.6rem 0.75rem;
+  text-align: left;
+  border: 1px solid currentColor;
+  border-radius: 8px;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+}
+
+.approval-choice:hover:not(:disabled) {
+  background: rgba(127, 127, 127, 0.12);
+}
+
+.approval-choice:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.approval-choice-label {
+  font-weight: 600;
+}
+
+.approval-choice-description {
+  font-size: 0.8125rem;
+  opacity: 0.75;
 }

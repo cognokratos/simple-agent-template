@@ -1,0 +1,152 @@
+name: CI
+
+# Deterministic checks only: no secrets, no model endpoint, no Ollama, no paid
+# API. Everything here runs from a clean checkout and must be able to go green
+# without any repository configuration at all.
+#
+# The live-agent evaluation suites are deliberately absent. They need a running
+# cluster and an LLM, they are non-deterministic by construction, and two of their
+# gates are currently red on purpose (see docs/EVALUATION_ANALYSIS.md). Gating a
+# pull request on model behaviour would mean either weakening those gates or
+# living with a permanently red check — and a check that is always red has stopped
+# carrying information. `live-evaluation.yml` runs them on demand instead.
+
+on:
+  push:
+    branches: ["main"]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  fixtures:
+    name: ETF fixtures and Python checks
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      # Dependency-free on purpose, so the data can be checked without Docker,
+      # Rust or Node. If this step ever needs a pip install, that is a finding.
+      - name: Validate the ETF fixtures, investor profile, rules spec and labelled cases
+        run: python3 scripts/validate_etf_fixtures.py
+
+      - name: Byte-compile the agent, evaluator and scripts
+        run: python3 -m compileall -q agent/src evaluation scripts
+
+      - name: Evaluator parser and deterministic-scorer tests
+        run: python3 -m unittest discover -s evaluation/tests -p 'test_*.py' -v
+
+      - name: Security-critical source wiring
+        run: python3 scripts/verify_security_sources.py
+
+  rust:
+    name: Rust (${{ matrix.crate }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        crate: [mcp-server, gateway]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: ${{ matrix.crate }}
+
+      # No `cargo fmt --check`. These crates are laid out by hand — argument lists
+      # and assertions are wrapped for readability rather than to rustfmt's
+      # heuristics — and no rustfmt.toml reproduces that. Adding the gate would
+      # mean reformatting ~4,700 lines to satisfy a tool, which is a worse trade
+      # than declining to check whitespace. Clippy, which catches things that
+      # matter, is enforced.
+      - name: Clippy
+        working-directory: ${{ matrix.crate }}
+        run: cargo clippy --all-targets -- -D warnings
+
+      # For mcp-server this also regenerates
+      # evaluation/results/deterministic-etf-baseline.json from the shipped
+      # engine, which is why the next step can compare it against the committed
+      # one: the published numbers and the deployed code cannot diverge.
+      - name: Tests
+        working-directory: ${{ matrix.crate }}
+        run: cargo test
+
+      - name: The committed deterministic baseline matches the engine
+        if: matrix.crate == 'mcp-server'
+        run: |
+          if ! git diff --exit-code -- evaluation/results/deterministic-etf-baseline.json; then
+            echo "::error::The checked-in deterministic baseline disagrees with the engine."
+            echo "Run 'make rules-test' and commit the regenerated artifact."
+            exit 1
+          fi
+
+  frontend:
+    name: assistant-ui
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: ui/package-lock.json
+
+      # `npm ci`, not `npm install`: the lockfile is committed precisely so the
+      # Docker build and this job install the same tree.
+      - name: Install
+        working-directory: ui
+        run: npm ci
+
+      - name: Typecheck
+        working-directory: ui
+        run: npm run typecheck
+
+      - name: NAT SSE wire contract
+        working-directory: ui
+        run: npm run verify:nat-wire
+
+      - name: Build
+        working-directory: ui
+        run: npm run build
+
+  compose:
+    name: Compose topology
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      # No .env exists in a clean checkout, and every variable has a default in
+      # docker-compose.yml. Creating it from the example is what a first-time
+      # reader does, so it is what CI does.
+      - name: Create .env from the example
+        run: cp .env.example .env
+
+      - name: Render and validate the Compose configuration
+        run: docker compose config -q
+
+      - name: Render and validate the debug port override
+        run: docker compose -f docker-compose.yml -f docker-compose.debug.yml config -q
+
+      # Asserts the east-west topology from the *resolved* configuration: which
+      # services publish host ports, which networks each one joins, and that the
+      # database and MCP are not reachable from the edge. No containers start.
+      - name: Security topology of the resolved Compose configuration
+        run: docker compose --profile evaluation config --format json | python3 scripts/verify_security_config.py

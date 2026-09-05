@@ -1,16 +1,23 @@
+# Pinned so the project identity does not depend on the directory the repository
+# happens to be cloned into. Container, image and default volume names all derive
+# from it, so leaving it implicit means `docker ps` brands the stack after
+# somebody's folder.
+name: etf-research-agent
+
 services:
   postgres:
     image: postgres:17-alpine
     environment:
-      POSTGRES_USER: ${POSTGRES_USER:-alerts}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-alerts}
-      POSTGRES_DB: ${POSTGRES_DB:-alerts}
+      POSTGRES_USER: ${POSTGRES_USER:-etf_research}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-etf_research}
+      POSTGRES_DB: ${POSTGRES_DB:-etf_research}
     volumes:
       - postgres-data:/var/lib/postgresql/data
       - ./db/init.sql:/docker-entrypoint-initdb.d/001-init.sql:ro
-      - ./db/guardrail_test_fixtures.sql:/docker-entrypoint-initdb.d/002-guardrail-test-fixtures.sql:ro
+    networks:
+      - data_net
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-alerts} -d ${POSTGRES_DB:-alerts}"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-etf_research} -d ${POSTGRES_DB:-etf_research}"]
       interval: 3s
       timeout: 3s
       retries: 20
@@ -20,18 +27,20 @@ services:
     image: python:3.12-alpine
     command: ["python", "/config/generate_realm.py"]
     environment:
-      KEYCLOAK_REALM_OUTPUT: /import/alerts-realm.json
-      KEYCLOAK_REALM: ${KEYCLOAK_REALM:-alerts}
-      KEYCLOAK_GATEWAY_CLIENT_ID: ${KEYCLOAK_GATEWAY_CLIENT_ID:-alerts-gateway}
+      KEYCLOAK_REALM_OUTPUT: /import/etf-research-realm.json
+      KEYCLOAK_REALM: ${KEYCLOAK_REALM:-etf-research}
+      KEYCLOAK_GATEWAY_CLIENT_ID: ${KEYCLOAK_GATEWAY_CLIENT_ID:-etf-research-gateway}
       KEYCLOAK_GATEWAY_CLIENT_SECRET: ${KEYCLOAK_GATEWAY_CLIENT_SECRET:-dev-gateway-client-secret-change-me}
-      KEYCLOAK_ANALYST_USERNAME: ${KEYCLOAK_ANALYST_USERNAME:-analyst}
-      KEYCLOAK_ANALYST_PASSWORD: ${KEYCLOAK_ANALYST_PASSWORD:-analyst}
-      KEYCLOAK_ANALYST_EMAIL: ${KEYCLOAK_ANALYST_EMAIL:-analyst@example.test}
+      KEYCLOAK_RESEARCHER_USERNAME: ${KEYCLOAK_RESEARCHER_USERNAME:-researcher}
+      KEYCLOAK_RESEARCHER_PASSWORD: ${KEYCLOAK_RESEARCHER_PASSWORD:-researcher}
+      KEYCLOAK_RESEARCHER_EMAIL: ${KEYCLOAK_RESEARCHER_EMAIL:-researcher@example.test}
       OIDC_CALLBACK_URL: ${OIDC_CALLBACK_URL:-http://localhost:3000/api/gateway/auth/callback}
       UI_PUBLIC_URL: ${UI_PUBLIC_URL:-http://localhost:3000}
     volumes:
       - ./keycloak/generate_realm.py:/config/generate_realm.py:ro
       - keycloak-import:/import
+    networks:
+      - auth_net
     restart: "no"
 
   keycloak:
@@ -48,6 +57,9 @@ services:
     volumes:
       - keycloak-data:/opt/keycloak/data
       - keycloak-import:/opt/keycloak/data/import:ro
+    networks:
+      - edge
+      - auth_net
     depends_on:
       keycloak-realm-init:
         condition: service_completed_successfully
@@ -72,11 +84,20 @@ services:
     build:
       context: ./mcp-server
     environment:
-      DATABASE_URL: postgresql://${POSTGRES_USER:-alerts}:${POSTGRES_PASSWORD:-alerts}@postgres:5432/${POSTGRES_DB:-alerts}
+      DATABASE_URL: postgresql://${POSTGRES_USER:-etf_research}:${POSTGRES_PASSWORD:-etf_research}@postgres:5432/${POSTGRES_DB:-etf_research}
       MCP_BIND_ADDRESS: 0.0.0.0:8080
       MCP_ALLOWED_HOSTS: ${MCP_ALLOWED_HOSTS:-mcp-server,mcp-server:8080,localhost,localhost:8080,127.0.0.1,127.0.0.1:8080,::1}
       MCP_API_KEY: ${MCP_API_KEY:-dev-mcp-api-key-change-me}
-      RUST_LOG: ${RUST_LOG:-alerts_mcp_server=info,rmcp=info}
+      HITL_APPROVAL_SECRET: ${HITL_APPROVAL_SECRET:-dev-hitl-approval-secret-change-me-32chars}
+      RULES_SPEC_PATH: /app/data/rules_spec.json
+      ETFS_DATA_PATH: /app/data/etfs.json
+      INVESTOR_PROFILE_PATH: /app/data/investor_profile.json
+      RUST_LOG: ${RUST_LOG:-etf_mcp_server=info,rmcp=info}
+    volumes:
+      - ./data:/app/data:ro
+    networks:
+      - mcp_net
+      - data_net
     depends_on:
       postgres:
         condition: service_healthy
@@ -86,6 +107,29 @@ services:
       interval: 3s
       timeout: 3s
       retries: 20
+    restart: unless-stopped
+
+  mcp-inspector:
+    build:
+      context: ./mcp-server/inspector
+    command:
+      - --web
+      - --config
+      - /tmp/mcp.json
+    environment:
+      MCP_INSPECTOR_API_TOKEN: ${MCP_INSPECTOR_API_TOKEN:-dev-mcp-inspector-token-change-me}
+      MCP_API_KEY: ${MCP_API_KEY:-dev-mcp-api-key-change-me}
+      MCP_AUTO_OPEN_ENABLED: "false"
+    volumes:
+      - ./mcp-server/inspector/mcp.template.json:/config/mcp.template.json:ro
+    networks:
+      - edge
+      - mcp_net
+    depends_on:
+      mcp-server:
+        condition: service_healthy
+    ports:
+      - "${PUBLIC_BIND_ADDRESS:-127.0.0.1}:6274:6274"
     restart: unless-stopped
 
   mlflow:
@@ -106,6 +150,9 @@ services:
       - "*"
     volumes:
       - mlflow-data:/mlflow
+    networks:
+      - edge
+      - telemetry_net
     healthcheck:
       test:
         - CMD-SHELL
@@ -117,7 +164,11 @@ services:
       timeout: 3s
       retries: 20
     ports:
-      - "${PUBLIC_BIND_ADDRESS:-127.0.0.1}:5000:5000"
+      # Host port only. 5000 is a common collision — macOS AirPlay Receiver and
+      # any other MLflow on the machine both want it — and the container port must
+      # stay 5000 because MLFLOW_TRACKING_URI addresses it over the internal
+      # network. Set MLFLOW_PORT to move the host side alone.
+      - "${PUBLIC_BIND_ADDRESS:-127.0.0.1}:${MLFLOW_PORT:-5000}:5000"
     restart: unless-stopped
 
   otel-collector:
@@ -125,6 +176,9 @@ services:
     command: ["--config=/etc/otelcol-contrib/config.yml"]
     volumes:
       - ./observability/otel-collector.yml:/etc/otelcol-contrib/config.yml:ro
+    networks:
+      - edge
+      - telemetry_net
     depends_on:
       mlflow:
         condition: service_healthy
@@ -141,20 +195,27 @@ services:
   agent:
     build:
       context: ./agent
+      args:
+        # Baked into the image so GET /version reports the commit this agent was
+        # built from, not whatever the host tree happens to be at eval time.
+        AGENT_BUILD_COMMIT: ${GIT_COMMIT:-unknown}
     environment:
-      OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://host.docker.internal:11434/v1}
-      OLLAMA_API_KEY: ${OLLAMA_API_KEY:-ollama}
-      OLLAMA_MODEL: ${OLLAMA_MODEL:-qwen3:8b}
-      OLLAMA_GUARD_MODEL: ${OLLAMA_GUARD_MODEL:-qwen3:8b}
-      OLLAMA_GUARD_REASONING_EFFORT: ${OLLAMA_GUARD_REASONING_EFFORT:-none}
-      OLLAMA_REASONING_EFFORT: ${OLLAMA_REASONING_EFFORT:-none}
-      ALERTS_MCP_URL: http://mcp-server:8080/mcp
+      LLM_BASE_URL: ${LLM_BASE_URL:-http://host.docker.internal:11434/v1}
+      LLM_API_KEY: ${LLM_API_KEY:-ollama}
+      LLM_MODEL: ${LLM_MODEL:-qwen3:8b}
+      LLM_GUARD_MODEL: ${LLM_GUARD_MODEL:-qwen3:8b}
+      # `-` not `:-`, so an explicitly empty value stays empty and the parameter
+      # is omitted. A hosted provider needs it absent, not set to "none".
+      LLM_GUARD_REASONING_EFFORT: ${LLM_GUARD_REASONING_EFFORT-none}
+      LLM_REASONING_EFFORT: ${LLM_REASONING_EFFORT-none}
+      ETF_MCP_URL: http://mcp-server:8080/mcp
       MCP_API_KEY: ${MCP_API_KEY:-dev-mcp-api-key-change-me}
+      HITL_APPROVAL_SECRET: ${HITL_APPROVAL_SECRET:-dev-hitl-approval-secret-change-me-32chars}
       NAT_GATEWAY_API_KEY: ${AGENT_API_KEY:-dev-agent-api-key-change-me}
       OTEL_COLLECTOR_TRACES_ENDPOINT: ${OTEL_COLLECTOR_TRACES_ENDPOINT:-http://otel-collector:4318/v1/traces}
       OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: ${OTEL_EXPORTER_OTLP_TRACES_ENDPOINT:-http://otel-collector:4318/v1/traces}
       OTEL_EXPORTER_OTLP_TRACES_PROTOCOL: http/protobuf
-      OTEL_SERVICE_NAME: ${OTEL_SERVICE_NAME:-alerts-agent}
+      OTEL_SERVICE_NAME: ${OTEL_SERVICE_NAME:-etf-research-agent}
       DEPLOYMENT_ENVIRONMENT: ${DEPLOYMENT_ENVIRONMENT:-local}
       NAT_TRACE_CONTENT_MAX_CHARS: ${NAT_TRACE_CONTENT_MAX_CHARS:-65536}
       GUARDRAILS_TRACE_CAPTURE_CONTENT: ${GUARDRAILS_TRACE_CAPTURE_CONTENT:-true}
@@ -171,6 +232,10 @@ services:
         condition: service_healthy
     extra_hosts:
       - "host.docker.internal:host-gateway"
+    networks:
+      - agent_net
+      - mcp_net
+      - telemetry_net
     healthcheck:
       test:
         - CMD-SHELL
@@ -192,8 +257,8 @@ services:
       OIDC_CALLBACK_URL: ${OIDC_CALLBACK_URL:-http://localhost:3000/api/gateway/auth/callback}
       KEYCLOAK_PUBLIC_URL: ${KEYCLOAK_PUBLIC_URL:-http://localhost:8082}
       KEYCLOAK_INTERNAL_URL: http://keycloak:8080
-      KEYCLOAK_REALM: ${KEYCLOAK_REALM:-alerts}
-      KEYCLOAK_GATEWAY_CLIENT_ID: ${KEYCLOAK_GATEWAY_CLIENT_ID:-alerts-gateway}
+      KEYCLOAK_REALM: ${KEYCLOAK_REALM:-etf-research}
+      KEYCLOAK_GATEWAY_CLIENT_ID: ${KEYCLOAK_GATEWAY_CLIENT_ID:-etf-research-gateway}
       KEYCLOAK_GATEWAY_CLIENT_SECRET: ${KEYCLOAK_GATEWAY_CLIENT_SECRET:-dev-gateway-client-secret-change-me}
       AGENT_WORKFLOW_URL: http://agent:8000/v1/workflow/full
       AGENT_API_KEY: ${AGENT_API_KEY:-dev-agent-api-key-change-me}
@@ -205,10 +270,14 @@ services:
       GATEWAY_MAX_MESSAGES: ${GATEWAY_MAX_MESSAGES:-100}
       GATEWAY_MAX_MESSAGE_CHARS: ${GATEWAY_MAX_MESSAGE_CHARS:-32768}
       GATEWAY_MAX_TOTAL_MESSAGE_CHARS: ${GATEWAY_MAX_TOTAL_MESSAGE_CHARS:-262144}
-      GATEWAY_SESSION_COOKIE: ${GATEWAY_SESSION_COOKIE:-alerts_gateway_session}
-      GATEWAY_CSRF_COOKIE: ${GATEWAY_CSRF_COOKIE:-alerts_gateway_csrf}
-      GATEWAY_LOGIN_COOKIE: ${GATEWAY_LOGIN_COOKIE:-alerts_gateway_login}
-      RUST_LOG: ${GATEWAY_RUST_LOG:-alerts_auth_gateway=info}
+      GATEWAY_SESSION_COOKIE: ${GATEWAY_SESSION_COOKIE:-etf_research_gateway_session}
+      GATEWAY_CSRF_COOKIE: ${GATEWAY_CSRF_COOKIE:-etf_research_gateway_csrf}
+      GATEWAY_LOGIN_COOKIE: ${GATEWAY_LOGIN_COOKIE:-etf_research_gateway_login}
+      RUST_LOG: ${GATEWAY_RUST_LOG:-etf_auth_gateway=info}
+    networks:
+      - gateway_net
+      - auth_net
+      - agent_net
     depends_on:
       keycloak:
         condition: service_healthy
@@ -228,7 +297,11 @@ services:
     environment:
       GATEWAY_INTERNAL_URL: http://gateway:8081
       UI_PUBLIC_URL: ${UI_PUBLIC_URL:-http://localhost:3000}
-      GATEWAY_CSRF_COOKIE: ${GATEWAY_CSRF_COOKIE:-alerts_gateway_csrf}
+      GATEWAY_CSRF_COOKIE: ${GATEWAY_CSRF_COOKIE:-etf_research_gateway_csrf}
+      UI_TOOL_NAMES: search_etfs,get_etf,evaluate_etf,get_research_summary,get_research_context,commit_evaluation,shortlist_etf,assign_etf,get_etf_history
+    networks:
+      - edge
+      - gateway_net
     depends_on:
       gateway:
         condition: service_healthy
@@ -244,30 +317,86 @@ services:
     command: ["python", "-m", "evaluation", "run", "--suite", "all"]
     volumes:
       - ./evaluation:/app/evaluation:ro
+      - ./evaluation/results:/app/evaluation/results
+      - ./data:/app/data:ro
+      # Read-only, so the harness can register the agent's prompts in MLflow and
+      # compare its own digest against the one the running agent reports.
+      - ./agent/config.yml:/app/agent-config.yml:ro
     environment:
       PYTHONPATH: /app
       MLFLOW_TRACKING_URI: ${MLFLOW_TRACKING_URI:-http://mlflow:5000}
       AGENT_WORKFLOW_URL: ${AGENT_WORKFLOW_URL:-http://agent:8000/v1/workflow/full}
       AGENT_API_KEY: ${AGENT_API_KEY:-dev-agent-api-key-change-me}
+      # This container has no .git and no working tree, so the host is the only
+      # place that can answer what commit the harness is running. GIT_SOURCE says
+      # where that answer came from — a git checkout, or nowhere. GIT_DIRTY is
+      # empty unless a real git tree was examined, so "not observable" never
+      # renders as "clean".
+      GIT_COMMIT: ${GIT_COMMIT:-}
+      GIT_DIRTY: ${GIT_DIRTY:-}
+      GIT_SOURCE: ${GIT_SOURCE:-}
+      # MLflow probes for a git repo through GitPython on import. There is no git
+      # binary here by design, and the commit is supplied above, so silence the
+      # multi-paragraph warning it would otherwise print before every suite.
+      GIT_PYTHON_REFRESH: quiet
       MLFLOW_GENAI_EVAL_SKIP_TRACE_VALIDATION: ${MLFLOW_GENAI_EVAL_SKIP_TRACE_VALIDATION:-true}
       MLFLOW_GENAI_EVAL_MAX_WORKERS: ${MLFLOW_GENAI_EVAL_MAX_WORKERS:-1}
       MLFLOW_ENABLE_ASYNC_TRACE_LOGGING: ${MLFLOW_ENABLE_ASYNC_TRACE_LOGGING:-false}
       EVALUATION_HTTP_TIMEOUT_SECONDS: ${EVALUATION_HTTP_TIMEOUT_SECONDS:-360}
       EVALUATION_HTTP_MAX_ATTEMPTS: ${EVALUATION_HTTP_MAX_ATTEMPTS:-4}
-      GUARDRAILS_EVALUATION_EXPERIMENT: ${GUARDRAILS_EVALUATION_EXPERIMENT:-alerts-agent-guardrails-evaluation}
-      GUARDRAILS_EVALUATION_DATASET: ${GUARDRAILS_EVALUATION_DATASET:-alerts-agent-guardrails-dataset}
-      TOOL_CALLING_EVALUATION_EXPERIMENT: ${TOOL_CALLING_EVALUATION_EXPERIMENT:-alerts-agent-tool-calling-evaluation}
-      TOOL_CALLING_EVALUATION_DATASET: ${TOOL_CALLING_EVALUATION_DATASET:-alerts-agent-tool-calling-dataset}
+      EVALUATION_EXPERIMENT: ${EVALUATION_EXPERIMENT:-etf-evaluation-accuracy}
+      EVALUATION_DATASET: ${EVALUATION_DATASET:-etf-evaluation-cases}
+      POLICY_EVALUATION_EXPERIMENT: ${POLICY_EVALUATION_EXPERIMENT:-etf-decision-policy}
+      POLICY_EVALUATION_DATASET: ${POLICY_EVALUATION_DATASET:-etf-decision-policy-cases}
+      GROUNDING_EVALUATION_EXPERIMENT: ${GROUNDING_EVALUATION_EXPERIMENT:-etf-research-grounding}
+      GROUNDING_EVALUATION_DATASET: ${GROUNDING_EVALUATION_DATASET:-etf-research-grounding-cases}
+      INJECTION_EVALUATION_EXPERIMENT: ${INJECTION_EVALUATION_EXPERIMENT:-etf-data-plane-injection}
+      INJECTION_EVALUATION_DATASET: ${INJECTION_EVALUATION_DATASET:-etf-data-plane-injection-cases}
+      GUARDRAILS_EVALUATION_EXPERIMENT: ${GUARDRAILS_EVALUATION_EXPERIMENT:-etf-prompt-robustness}
+      GUARDRAILS_EVALUATION_DATASET: ${GUARDRAILS_EVALUATION_DATASET:-etf-prompt-robustness-cases}
+    networks:
+      - agent_net
+      - telemetry_net
     depends_on:
       mlflow:
         condition: service_healthy
       agent:
         condition: service_healthy
 
+networks:
+  # Each network is one trust relationship. Membership decides which containers
+  # can route to a service at all; publishing a host port (see `ports:`) is what
+  # decides whether the host and browser can. NAT, MCP, PostgreSQL and the
+  # gateway publish nothing, so they are unreachable from outside the cluster.
+  #
+  # None of these are `internal: true`. That flag removes a network's default
+  # route, i.e. it blocks *egress*; it does nothing for inbound reachability,
+  # which is already governed by `ports:`. The agent must reach the model
+  # endpoint (host.docker.internal in development, a hosted endpoint in
+  # production), so marking its networks internal would break inference without
+  # adding any protection this topology does not already have.
+
+  # Browser/host-facing services. Only members of this network publish ports.
+  edge:
+  # assistant-ui -> Rust gateway. The UI never reaches NAT or MCP.
+  gateway_net:
+  # Rust gateway -> Keycloak OIDC backchannel.
+  auth_net:
+  # Rust gateway and the containerized evaluator -> NAT. Nothing else routes here.
+  agent_net:
+  # NAT and the loopback-only MCP Inspector -> Rust MCP server.
+  mcp_net:
+  # MCP server -> PostgreSQL. The database is reachable from one service only.
+  data_net:
+  # Trace export: NAT/evaluator -> OpenTelemetry Collector -> MLflow.
+  telemetry_net:
+
 volumes:
   postgres-data:
+    name: ${POSTGRES_DATA_VOLUME:-etf-research-postgres-data-v1}
   mlflow-data:
+    name: ${MLFLOW_DATA_VOLUME:-etf-research-mlflow-data}
   keycloak-data:
-    name: ${KEYCLOAK_DATA_VOLUME:-alerts-agent-keycloak-data}
+    name: ${KEYCLOAK_DATA_VOLUME:-etf-research-keycloak-data}
   keycloak-import:
-    name: ${KEYCLOAK_IMPORT_VOLUME:-alerts-agent-keycloak-import}
+    name: ${KEYCLOAK_IMPORT_VOLUME:-etf-research-keycloak-import}

@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "etf-mcp": {
+      "type": "streamable-http",
+      "url": "http://mcp-server:8080/mcp",
+      "headers": {
+        "Authorization": "Bearer ${MCP_API_KEY}"
+      }
+    }
+  }
+}

@@ -1,0 +1,300 @@
+[
+  {
+    "case_id": "TC-BROAD-GLOBAL-SHORTLIST",
+    "etf_id": "VWCE-XETRA",
+    "expected_decision": "shortlist",
+    "expected_score_range": [
+      83,
+      92
+    ],
+    "expected_rule_codes": [
+      "COST-C",
+      "DIV-H-A",
+      "SCALE-A",
+      "STRUCT-R-PHYSICAL",
+      "PREF-ACC-MET"
+    ],
+    "expected_missing_data": [
+      "tracking_difference_3y"
+    ],
+    "rationale": "Global equity, accumulating, physical, very large and cheap. Every preference in the profile is met and the only gap is the realised tracking difference, which is not a critical field. This is the shape the policy is meant to reward."
+  },
+  {
+    "case_id": "TC-LOWEST-COST-CORE-SHORTLIST",
+    "etf_id": "SWRD-XETRA",
+    "expected_decision": "shortlist",
+    "expected_score_range": [
+      80,
+      90
+    ],
+    "expected_rule_codes": [
+      "COST-B",
+      "PREF-BROAD-MET"
+    ],
+    "rationale": "Developed-world core holding at twelve basis points. Slightly narrower than a full all-world fund but cheaper, so it should land in the same band."
+  },
+  {
+    "case_id": "TC-DISTRIBUTING-COSTS-A-PREFERENCE",
+    "etf_id": "VWRL-LSE",
+    "expected_decision": "shortlist",
+    "expected_score_range": [
+      78,
+      88
+    ],
+    "expected_rule_codes": [
+      "PREF-ACC-UNMET"
+    ],
+    "rationale": "The same strategy as VWCE in a distributing share class. The accumulating preference is unmet, which must cost points without disqualifying an otherwise excellent fund."
+  },
+  {
+    "case_id": "TC-SINGLE-MARKET-CONCENTRATION",
+    "etf_id": "CSPX-LSE",
+    "expected_decision": "shortlist",
+    "expected_score_range": [
+      80,
+      92
+    ],
+    "expected_rule_codes": [
+      "COST-A",
+      "DIV-C-D",
+      "FIT-REGION-HIGH-SINGLE_DEVELOPED_MARKET"
+    ],
+    "rationale": "Cheapest band and enormous scale, held back by a 36% top-ten weight and a single-market mandate. Should still clear the shortlist threshold but by a smaller margin than a global fund."
+  },
+  {
+    "case_id": "TC-SYNTHETIC-REPLICATION-PENALTY",
+    "etf_id": "SPXS-LSE",
+    "expected_decision": "shortlist",
+    "expected_score_range": [
+      75,
+      84
+    ],
+    "expected_rule_codes": [
+      "COST-A",
+      "STRUCT-R-SYNTHETIC",
+      "PREF-PHYS-UNMET"
+    ],
+    "rationale": "The cheapest S&P 500 exposure in the snapshot, penalised twice for being swap-based: once on fund structure, once on the stated physical-replication preference. The gap to CSPX is the price of the structure."
+  },
+  {
+    "case_id": "TC-SMALL-CAP-BOUNDARY",
+    "etf_id": "IUSN-XETRA",
+    "expected_decision": "shortlist",
+    "expected_score_range": [
+      75,
+      80
+    ],
+    "expected_rule_codes": [
+      "DIV-C-A",
+      "DIV-H-A",
+      "COST-D"
+    ],
+    "rationale": "Near-perfect diversification at a higher cost and a shorter record. Deliberately included as a boundary case near the research/shortlist threshold."
+  },
+  {
+    "case_id": "TC-EMERGING-MARKETS",
+    "etf_id": "EIMI-LSE",
+    "expected_decision": "shortlist",
+    "expected_score_range": [
+      80,
+      92
+    ],
+    "expected_rule_codes": [
+      "STRUCT-R-SAMPLED",
+      "FIT-REGION-HIGH-EMERGING",
+      "PREF-BROAD-UNMET"
+    ],
+    "rationale": "Broad emerging-market exposure is a legitimate candidate for a high risk tolerance over twenty years. The region penalty and the unmet breadth preference cost it, but neither disqualifies it."
+  },
+  {
+    "case_id": "TC-CONCENTRATED-INDEX",
+    "etf_id": "EQQQ-LSE",
+    "expected_decision": "research",
+    "expected_score_range": [
+      55,
+      70
+    ],
+    "expected_rule_codes": [
+      "DIV-H-E",
+      "DIV-C-E",
+      "PREF-ACC-UNMET"
+    ],
+    "rationale": "A long-established, liquid fund whose index holds 101 names with half the weight in ten of them. Concentration and the distributing share class pull it out of shortlist territory."
+  },
+  {
+    "case_id": "TC-SINGLE-DEVELOPED-MARKET",
+    "etf_id": "VJPN-LSE",
+    "expected_decision": "research",
+    "expected_score_range": [
+      65,
+      74
+    ],
+    "expected_rule_codes": [
+      "FIT-REGION-HIGH-SINGLE_DEVELOPED_MARKET",
+      "PREF-BROAD-UNMET"
+    ],
+    "rationale": "A sound single-market fund that fits the profile poorly: distributing, regionally narrow, and modest in size. Research rather than shortlist."
+  },
+  {
+    "case_id": "TC-QUALITY-WITHOUT-FIT",
+    "etf_id": "IEAC-LSE",
+    "expected_decision": "research",
+    "expected_score_range": [
+      70,
+      82
+    ],
+    "expected_caps": [
+      "CAP-PROFILE-FIT",
+      "CAP-CRITICAL-DATA"
+    ],
+    "expected_missing_data": [
+      "top_10_concentration"
+    ],
+    "rationale": "A large, cheap, well-diversified euro corporate bond fund. Its standalone quality is high and its fit with a twenty-year, high-risk-tolerance mandate is not, so the profile-fit cap must stop it shortlisting on quality alone. This is the distinction the whole project exists to draw."
+  },
+  {
+    "case_id": "TC-MISSING-CRITICAL-DATA-CAP",
+    "etf_id": "AGGH-XETRA",
+    "expected_decision": "research",
+    "expected_score_range": [
+      78,
+      90
+    ],
+    "expected_caps": [
+      "CAP-CRITICAL-DATA"
+    ],
+    "expected_missing_data": [
+      "top_10_concentration"
+    ],
+    "rationale": "The issuer does not publish a top-ten concentration figure for a ten-thousand-holding index. Renormalising over the remaining weight flatters the fund, which is exactly why an incomplete record cannot reach shortlist."
+  },
+  {
+    "case_id": "TC-CASH-SUBSTITUTE",
+    "etf_id": "IB01-LSE",
+    "expected_decision": "research",
+    "expected_score_range": [
+      60,
+      74
+    ],
+    "expected_caps": [
+      "CAP-CRITICAL-DATA"
+    ],
+    "expected_rule_codes": [
+      "COST-A",
+      "DIV-H-F"
+    ],
+    "rationale": "Very short-dated Treasury bills: cheap and liquid, but twenty holdings and a cash-substitute role for a growth mandate. Low diversification and poor asset-class fit, with a missing concentration figure on top."
+  },
+  {
+    "case_id": "TC-THEMATIC-INCOMPLETE-RECORD",
+    "etf_id": "ESPO-XETRA",
+    "expected_decision": "research",
+    "expected_score_range": [
+      50,
+      62
+    ],
+    "expected_caps": [
+      "CAP-CRITICAL-DATA"
+    ],
+    "expected_missing_data": [
+      "aum_usd",
+      "top_10_concentration"
+    ],
+    "rationale": "A narrow theme whose size and concentration were not verified for this snapshot. Two critical metrics are absent, so the record cannot support a shortlist however the remaining weight scores."
+  },
+  {
+    "case_id": "TC-EXPENSIVE-THEME",
+    "etf_id": "INRG-LSE",
+    "expected_decision": "research",
+    "expected_score_range": [
+      48,
+      60
+    ],
+    "expected_rule_codes": [
+      "COST-E",
+      "DIV-H-E",
+      "DIV-C-E"
+    ],
+    "rationale": "A long-established theme fund at 65 basis points with a hundred holdings and a 45% top-ten weight. Expensive and concentrated, but broad enough geographically and old enough not to reject."
+  },
+  {
+    "case_id": "TC-SCORE-REJECT",
+    "etf_id": "XNIF-XETRA",
+    "expected_decision": "reject",
+    "expected_score_range": [
+      30,
+      45
+    ],
+    "expected_rule_codes": [
+      "COST-F",
+      "DIV-C-F",
+      "STRUCT-R-SYNTHETIC",
+      "FIT-REGION-HIGH-EMERGING_SINGLE_MARKET"
+    ],
+    "rationale": "The most expensive, most concentrated and most narrowly focused fund in the snapshot, and swap-based on top. It fails on cost, diversification and fit simultaneously, which is what the reject band is for. No hard constraint is involved: the score alone rejects it."
+  },
+  {
+    "case_id": "TC-HARD-CONSTRAINT-BEATS-QUALITY",
+    "etf_id": "VTI-ARCA",
+    "expected_decision": "reject",
+    "expected_score_range": [
+      80,
+      95
+    ],
+    "expected_hard_constraints": [
+      "HC-UCITS"
+    ],
+    "rationale": "Whole-of-market United States equity at three basis points: the highest score of any rejected fund in the snapshot, and second only to IWDA-AMS overall. The profile requires UCITS eligibility and this fund is United States domiciled, so it is rejected outright. The score is published anyway, because a rejection nobody can explain is not auditable."
+  },
+  {
+    "case_id": "TC-HARD-CONSTRAINT-OLDEST-FUND",
+    "etf_id": "SPY-ARCA",
+    "expected_decision": "reject",
+    "expected_score_range": [
+      75,
+      90
+    ],
+    "expected_hard_constraints": [
+      "HC-UCITS"
+    ],
+    "rationale": "The oldest and largest exchange-traded fund in the world is still not investable under a profile that requires UCITS. Age and scale cannot lift a hard constraint."
+  },
+  {
+    "case_id": "TC-HARD-CONSTRAINT-SINGLE-ASSET",
+    "etf_id": "GLD-ARCA",
+    "expected_decision": "reject",
+    "expected_score_range": [
+      50,
+      65
+    ],
+    "expected_hard_constraints": [
+      "HC-UCITS"
+    ],
+    "expected_rule_codes": [
+      "DIV-H-F",
+      "DIV-C-F",
+      "FIT-ASSET-HIGH-COMMODITY"
+    ],
+    "rationale": "A single-asset commodity trust: no diversification, poor asset-class fit for a growth mandate, and non-UCITS. Two independent reasons to reject, and the hard constraint is the one that decides."
+  },
+  {
+    "case_id": "TC-CROSS-LISTED-IDENTITY",
+    "etf_id": "VUSA-XETRA",
+    "expected_decision": "shortlist",
+    "expected_score_range": [
+      75,
+      86
+    ],
+    "rationale": "The Xetra listing of the same Irish fund as VUSA-LSE, sharing its ticker and ISIN. Both listings must evaluate identically, and only etf_id may distinguish them; anything keyed on ticker alone is a defect."
+  },
+  {
+    "case_id": "TC-CROSS-LISTED-IDENTITY-PEER",
+    "etf_id": "VUSA-LSE",
+    "expected_decision": "shortlist",
+    "expected_score_range": [
+      75,
+      86
+    ],
+    "rationale": "The London listing of the same fund as VUSA-XETRA. Paired with it deliberately so a divergence between two listings of one fund fails a test."
+  }
+]

@@ -5,8 +5,6 @@ from __future__ import annotations
 import argparse
 import sys
 
-import mlflow
-
 from evaluation.config import SUITES, tracking_uri
 from evaluation.datasets import sync_dataset
 from evaluation.runner import configure_mlflow, run_suite

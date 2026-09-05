@@ -2,16 +2,19 @@
 
 from __future__ import annotations
 
+import json
+import math
 import os
 from datetime import datetime, timezone
 from typing import Any
 
 import mlflow
 
-from evaluation.client import live_predict_fn
-from evaluation.config import SUITES, SuiteConfig, tracking_uri
+from evaluation import provenance
+from evaluation.client import collected_latencies_ms, live_predict_fn, reset_latencies
+from evaluation.config import PACKAGE_ROOT, SUITES, SuiteConfig, tracking_uri
 from evaluation.datasets import sync_dataset
-from evaluation.scorers import GUARDRAIL_SCORERS, TOOL_SCORERS
+from evaluation.scorers import SCORERS
 
 
 def configure_mlflow() -> None:
@@ -25,7 +28,33 @@ def configure_mlflow() -> None:
 
 
 def _scorers(config: SuiteConfig):
-    return GUARDRAIL_SCORERS if config.key == "guardrails" else TOOL_SCORERS
+    return SCORERS[config.key]
+
+
+def _latency_distribution(samples: list[float]) -> dict[str, Any]:
+    """Percentiles rather than a mean.
+
+    A mean latency hides the tail, and the tail is what a user waits for.
+    Nearest-rank percentiles are used deliberately: on suites of four to ten cases
+    an interpolated percentile invents values that were never measured.
+    """
+    if not samples:
+        return {"count": 0}
+    ordered = sorted(samples)
+
+    def nearest_rank(fraction: float) -> float:
+        index = max(0, math.ceil(fraction * len(ordered)) - 1)
+        return round(ordered[index], 1)
+
+    return {
+        "count": len(ordered),
+        "min_ms": round(ordered[0], 1),
+        "p50_ms": nearest_rank(0.50),
+        "p95_ms": nearest_rank(0.95),
+        "max_ms": round(ordered[-1], 1),
+        "mean_ms": round(sum(ordered) / len(ordered), 1),
+        "note": "End-to-end, question in to final token out, on the pinned local model.",
+    }
 
 
 def _metric_value(metrics: dict[str, Any], preferred_key: str) -> float | None:
@@ -59,6 +88,15 @@ def run_suite(
     )
 
     with mlflow.start_run(run_name=effective_name) as run:
+        # Collected inside the run so that loading a registered prompt links its
+        # version to this run through MLflow's own prompt tracking.
+        record = provenance.collect()
+        # Every trace this run produces links to the deployed agent build rather
+        # than to whatever the host tree currently is.
+        try:
+            mlflow.set_active_model(name=provenance.active_model_name(record))
+        except Exception as exc:  # noqa: BLE001 - provenance must not fail a run
+            print(f"warning: could not set the active model version: {exc}")
         mlflow.set_tags(
             {
                 "evaluation.suite": suite,
@@ -71,7 +109,9 @@ def run_suite(
                     "http://agent:8000/v1/workflow/full",
                 ),
             }
+            | provenance.mlflow_tags(record)
         )
+        reset_latencies()
         result = mlflow.genai.evaluate(
             data=dataset,
             predict_fn=live_predict_fn,
@@ -84,17 +124,62 @@ def run_suite(
                 "dataset_id": dataset.dataset_id,
                 "dataset_name": config.dataset_name,
                 "metrics": result.metrics,
+                "provenance": record,
             },
             "evaluation-summary.json",
         )
 
+    latency = _latency_distribution(collected_latencies_ms())
     required_value = _metric_value(result.metrics, config.required_metric)
     passed = required_value is not None and required_value >= fail_threshold
+    results_dir = PACKAGE_ROOT / "results"
+    results_dir.mkdir(parents=True, exist_ok=True)
+    summary = {
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "mode": "live-agent",
+        "suite": suite,
+        "experiment": config.experiment_name,
+        "dataset": config.dataset_name,
+        "dataset_id": dataset.dataset_id,
+        "record_count": record_count,
+        "run_id": result.run_id,
+        "required_metric": config.required_metric,
+        "required_value": required_value,
+        "fail_threshold": fail_threshold,
+        "passed": passed,
+        # What was measured, not just how. Written into the artifact as well as
+        # MLflow so the JSON is self-describing on its own.
+        "provenance": record,
+        "metrics": result.metrics,
+        "latency": latency,
+    }
+    (results_dir / f"{suite}-latest.json").write_text(
+        json.dumps(summary, indent=2, default=str) + "\n",
+        encoding="utf-8",
+    )
     print(f"\nEvaluation suite: {suite}")
     print(f"Experiment: {config.experiment_name}")
     print(f"Dataset: {config.dataset_name} ({dataset.dataset_id})")
     print(f"Run ID: {result.run_id}")
+    agent = record.get("agent", {})
+    prompts = ", ".join(
+        f"{entry['name']}@v{entry['version']}" for entry in record.get("prompts", []) if "version" in entry
+    )
+    print(
+        f"Agent: build={agent.get('build_commit', 'unknown')} "
+        f"model={agent.get('model', '?')} prompt={str(agent.get('prompt_sha256') or '?')[:12]}"
+    )
+    print(f"Prompts: {prompts or 'not registered'}")
+    print(
+        f"Provenance: {'consistent' if record.get('consistent') else 'INCONSISTENT'} "
+        f"{record.get('checks', {})}"
+    )
     print(f"Metrics: {result.metrics}")
+    if latency.get("count"):
+        print(
+            f"Latency: p50={latency['p50_ms']}ms p95={latency['p95_ms']}ms "
+            f"min={latency['min_ms']}ms max={latency['max_ms']}ms (n={latency['count']})"
+        )
     print(
         f"Gate: {config.required_metric}={required_value!r} "
         f"required>={fail_threshold} -> {'PASS' if passed else 'FAIL'}"

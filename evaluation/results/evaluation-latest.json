@@ -1,0 +1,83 @@
+{
+  "generated_at": "2026-08-13T21:35:02.728814+00:00",
+  "mode": "live-agent",
+  "suite": "evaluation",
+  "experiment": "etf-evaluation-accuracy",
+  "dataset": "etf-evaluation-cases",
+  "dataset_id": "d-a9729729db6f4976a4d2fd4415137a17",
+  "record_count": 12,
+  "run_id": "c9fb1f83e2784e72b4b9b27c9fbd86fd",
+  "required_metric": "evaluation_correct/mean",
+  "required_value": 1.0,
+  "fail_threshold": 1.0,
+  "passed": true,
+  "provenance": {
+    "agent": {
+      "available": true,
+      "model": "qwen3:8b",
+      "guard_model": "qwen3:8b",
+      "reasoning_effort": "none",
+      "guard_reasoning_effort": "none",
+      "build_commit": "312c1ab1180a5f59be9fc439207868fb3e2e4d74",
+      "config_sha256": "f6547765c6b78615a30b0aa28f49cc13bfd6862da70fa619be90c5919c5bd429",
+      "prompt_sha256": "c50966b65eb7e9533188dbaeba079344fb80eb42cd3dabeb63c81d16bf56638a",
+      "guardrails_prompts_sha256": "957a8d87fea2b2413feae4a2b429f22bb052b13b3bd3b57a4bf1569a8763ccbb",
+      "tools_exposed": [
+        "evaluate_etf",
+        "get_etf",
+        "get_etf_history",
+        "get_research_context",
+        "get_research_summary",
+        "search_etfs"
+      ]
+    },
+    "harness": {
+      "git_commit": "312c1ab1180a5f59be9fc439207868fb3e2e4d74",
+      "source": "git",
+      "dirty": false
+    },
+    "prompts": [
+      {
+        "name": "etf-research-agent-system-prompt",
+        "version": "1",
+        "registered": false,
+        "linked": true
+      },
+      {
+        "name": "etf-research-guardrail-input-rail",
+        "version": "1",
+        "registered": false,
+        "linked": true
+      }
+    ],
+    "checks": {
+      "prompt_matches_config": true,
+      "guardrail_prompts_match_config": true,
+      "agent_built_from_harness_commit": true
+    },
+    "consistent": true
+  },
+  "metrics": {
+    "evaluation_correct/mean": 1.0,
+    "evaluation_decision_match_tool/mean": 1.0,
+    "evaluation_decision_match_stated/mean": 1.0,
+    "evaluation_stated_decision_present/mean": 1.0,
+    "evaluation_no_contradiction/mean": 1.0,
+    "evaluation_no_forecast_claim/mean": 1.0,
+    "evaluation_no_execution_claim/mean": 1.0,
+    "evaluation_no_misattributed_etf/mean": 1.0,
+    "evaluation_cites_actual_etf/mean": 1.0,
+    "evaluation_authoritative_tool_used/mean": 1.0,
+    "evaluation_read_only/mean": 1.0,
+    "latency_ms/mean": 33569.723999999995
+  },
+  "latency": {
+    "count": 12,
+    "min_ms": 27611.4,
+    "p50_ms": 30815.5,
+    "p95_ms": 53526.1,
+    "max_ms": 53526.1,
+    "mean_ms": 33569.7,
+    "note": "End-to-end, question in to final token out, on the pinned local model."
+  }
+}

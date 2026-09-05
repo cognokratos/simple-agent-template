@@ -1,5 +1,20 @@
 .DS_Store
 .idea
 .env
-mcp-server/target
 *.pyc
+__pycache__/
+
+# Rust build output.
+mcp-server/target
+gateway/target
+
+# UI build artifacts. package-lock.json is deliberately NOT ignored: it is what
+# makes `npm ci` reproducible in the Docker build.
+ui/node_modules/
+ui/.next/
+# Written by `tsc --noEmit` (the `typecheck` script and CI).
+ui/*.tsbuildinfo
+
+# Local evaluation scratch. The checked-in artifacts under evaluation/results are
+# deliberately tracked: they are the published evidence.
+*.log

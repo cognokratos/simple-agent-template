@@ -1,4 +1,11 @@
-"""Synchronous client for evaluating the live NAT SSE workflow."""
+"""Synchronous client for evaluating the live NAT SSE workflow.
+
+The evaluator intentionally calls NAT directly with the internal API key. Every
+evaluation prompt is read-only, so none of them may enter an HITL wait; one that
+does is a defect in the dataset and is raised rather than answered. Tool starts
+and tool ends are captured independently, so scorers can judge both the
+trajectory and the deterministic MCP result.
+"""
 
 from __future__ import annotations
 
@@ -17,10 +24,41 @@ import mlflow
 
 from evaluation.config import agent_workflow_url
 
-
-KNOWN_TOOL_NAMES = {"search_alerts", "get_alert"}
+KNOWN_TOOL_NAMES = {
+    "search_etfs",
+    "get_etf",
+    "evaluate_etf",
+    "get_research_summary",
+    "get_research_context",
+    "commit_evaluation",
+    "shortlist_etf",
+    "assign_etf",
+    "get_etf_history",
+}
+# Event names emitted by nat_streaming_react.text_guardrails. These are magic
+# strings shared across two separately deployed codebases, and the output name was
+# wrong for the entire life of the harness: the agent emits
+# `guardrail_output_secret_regex_decision`, the evaluator looked for a
+# `..._regex_presidio_decision` name left over from when Presidio was in the
+# pipeline. Nothing scored on it, so `output_guardrail` was silently always None
+# and `guardrail_output_event_present` silently always False.
+#
+# Two guards now: `scripts/verify_security_sources.py` asserts every decision
+# event the agent emits is recognised here, and matching falls back to the
+# `guardrail_<stage>_` prefix so a future rail rename degrades to a still-captured
+# event rather than to silence.
 INPUT_GUARDRAIL_EVENT = "guardrail_input_self_check_decision"
-OUTPUT_GUARDRAIL_EVENT = "guardrail_output_regex_presidio_decision"
+OUTPUT_GUARDRAIL_EVENT = "guardrail_output_secret_regex_decision"
+INPUT_GUARDRAIL_EVENT_PREFIX = "guardrail_input_"
+OUTPUT_GUARDRAIL_EVENT_PREFIX = "guardrail_output_"
+
+
+def is_input_guardrail_event(name: str) -> bool:
+    return name == INPUT_GUARDRAIL_EVENT or name.startswith(INPUT_GUARDRAIL_EVENT_PREFIX)
+
+
+def is_output_guardrail_event(name: str) -> bool:
+    return name == OUTPUT_GUARDRAIL_EVENT or name.startswith(OUTPUT_GUARDRAIL_EVENT_PREFIX)
 
 
 @dataclass
@@ -28,11 +66,13 @@ class ParsedInvocation:
     answer_parts: list[str] = field(default_factory=list)
     tool_starts: list[dict[str, Any]] = field(default_factory=list)
     function_tool_starts: list[dict[str, Any]] = field(default_factory=list)
+    tool_results: list[dict[str, Any]] = field(default_factory=list)
     input_guardrail: dict[str, Any] | None = None
     output_guardrail: dict[str, Any] | None = None
     workflow_trace_id: str | None = None
     workflow_run_id: str | None = None
     raw_event_count: int = 0
+    duration_ms: float = 0.0
 
     @property
     def answer(self) -> str:
@@ -40,9 +80,6 @@ class ParsedInvocation:
 
     @property
     def tool_calls(self) -> list[dict[str, Any]]:
-        # NAT/LangChain can expose an MCP call as TOOL_* or FUNCTION_*. Prefer
-        # TOOL_* when present; otherwise use the function events. This avoids
-        # double-counting when both layers happen to be visible.
         return self.tool_starts if self.tool_starts else self.function_tool_starts
 
     def as_output(self) -> dict[str, Any]:
@@ -50,13 +87,12 @@ class ParsedInvocation:
         return {
             "answer": self.answer,
             "blocked": blocked,
-            "guardrail": {
-                "input": self.input_guardrail,
-                "output": self.output_guardrail,
-            },
+            "guardrail": {"input": self.input_guardrail, "output": self.output_guardrail},
             "tool_calls": self.tool_calls,
+            "tool_results": self.tool_results,
             "agent_trace_id": self.workflow_trace_id,
             "agent_run_id": self.workflow_run_id,
+            "duration_ms": round(self.duration_ms, 3),
             "evaluation_metadata": {
                 "guardrail_input_event_present": self.input_guardrail is not None,
                 "guardrail_output_event_present": self.output_guardrail is not None,
@@ -83,6 +119,9 @@ def _normalize(value: Any) -> Any:
         normalized = {str(key): _normalize(item) for key, item in value.items()}
         if set(normalized) == {"value"}:
             return normalized["value"]
+        # MCP content commonly wraps JSON in {type:"text", text:"{...}"}.
+        if normalized.get("type") == "text" and isinstance(normalized.get("text"), str):
+            return _parse_json(normalized["text"])
         return normalized
     if isinstance(value, list):
         return [_normalize(item) for item in value]
@@ -123,17 +162,15 @@ def _find_key(value: Any, keys: set[str]) -> Any:
 
 
 def _normalize_tool_name(value: Any) -> str:
-    text = str(value or "unknown_tool")
-    return text.split("__")[-1]
+    return str(value or "unknown_tool").split("__")[-1]
 
 
 def _tool_input(payload: dict[str, Any]) -> Any:
-    candidates = (
+    for candidate in (
         _nested(payload, "metadata", "tool_inputs"),
         _nested(payload, "data", "input"),
         _nested(payload, "metadata", "span_inputs"),
-    )
-    for candidate in candidates:
+    ):
         if candidate not in (None, "", [], {}):
             normalized = _normalize(candidate)
             if isinstance(normalized, dict) and set(normalized) == {"input"}:
@@ -142,21 +179,19 @@ def _tool_input(payload: dict[str, Any]) -> Any:
     return {}
 
 
-def _function_output(payload: dict[str, Any]) -> Any:
-    candidates = (
+def _event_output(payload: dict[str, Any]) -> Any:
+    for candidate in (
         _nested(payload, "data", "output"),
         _nested(payload, "data", "payload"),
         _nested(payload, "metadata", "span_outputs"),
-    )
-    for candidate in candidates:
+        _nested(payload, "metadata", "tool_outputs"),
+    ):
         if candidate not in (None, "", [], {}):
             return _normalize(candidate)
     return {}
 
 
 def _decode_python_content(source: str) -> str | None:
-    """Best-effort fallback for NAT's Python/Pydantic chunk representation."""
-
     match = re.search(r"content=(?P<value>'(?:\\.|[^'])*'|\"(?:\\.|[^\"])*\")", source)
     if not match:
         return None
@@ -167,7 +202,32 @@ def _decode_python_content(source: str) -> str | None:
     return decoded if isinstance(decoded, str) else None
 
 
+def _parse_nat_output(value: str) -> Any:
+    """Mirror ui/lib/nat-wire.ts: decode JSON containers only, never scalars.
+
+    NAT's SSE `value` field is assistant text. Scalar-looking chunks such as
+    "87", "0.0022", "3600" or "true" are valid JSON scalars; parsing them changes
+    their runtime type and silently drops every digit from the reconstructed
+    answer (scores, expense ratios, fund sizes, ISINs, dates).
+    """
+    stripped = value.strip()
+    if not stripped:
+        return value
+    is_container = (stripped.startswith("{") and stripped.endswith("}")) or (
+        stripped.startswith("[") and stripped.endswith("]")
+    )
+    return _parse_json(stripped) if is_container else value
+
+
 def _workflow_text(value: Any) -> str:
+    if isinstance(value, str):
+        parsed = _parse_nat_output(value)
+        if isinstance(parsed, str):
+            fallback = _decode_python_content(parsed)
+            return fallback if fallback is not None else parsed
+        return _workflow_text(parsed)
+    if isinstance(value, bool) or isinstance(value, (int, float)):
+        return str(value)
     normalized = _normalize(value)
     if normalized is None:
         return ""
@@ -178,12 +238,10 @@ def _workflow_text(value: Any) -> str:
         return "".join(_workflow_text(item) for item in normalized)
     if not isinstance(normalized, dict):
         return ""
-
     if "value" in normalized:
         return _workflow_text(normalized["value"])
     if isinstance(normalized.get("answer"), str):
         return normalized["answer"]
-
     choices = normalized.get("choices")
     if isinstance(choices, list):
         parts: list[str] = []
@@ -196,7 +254,6 @@ def _workflow_text(value: Any) -> str:
                 parts.append(content)
         if parts:
             return "".join(parts)
-
     content = normalized.get("content")
     return content if isinstance(content, str) else ""
 
@@ -207,8 +264,7 @@ def _iter_event_blocks(response: Iterable[bytes]) -> Iterable[str]:
         line = raw_line.decode("utf-8", errors="replace").rstrip("\r\n")
         if line:
             lines.append(line)
-            continue
-        if lines:
+        elif lines:
             yield "\n".join(lines)
             lines = []
     if lines:
@@ -218,27 +274,19 @@ def _iter_event_blocks(response: Iterable[bytes]) -> Iterable[str]:
 def _parse_intermediate(block: str) -> tuple[dict[str, Any], dict[str, Any]] | None:
     if not block.startswith("intermediate_data:"):
         return None
-    raw = block[len("intermediate_data:") :].strip()
-    envelope = _record(raw)
+    envelope = _record(block[len("intermediate_data:") :].strip())
     if not envelope:
         return None
-    payload = _record(envelope.get("payload", {}))
-    return envelope, payload
+    return envelope, _record(envelope.get("payload", {}))
 
 
 def _update_trace_ids(parsed: ParsedInvocation, envelope: dict[str, Any], payload: dict[str, Any]) -> None:
     if parsed.workflow_trace_id is None:
-        trace_id = _find_key(
-            [envelope, payload],
-            {"workflow_trace_id", "nat.workflow.trace_id"},
-        )
+        trace_id = _find_key([envelope, payload], {"workflow_trace_id", "nat.workflow.trace_id"})
         if trace_id is not None:
             parsed.workflow_trace_id = str(trace_id)
     if parsed.workflow_run_id is None:
-        run_id = _find_key(
-            [envelope, payload],
-            {"workflow_run_id", "nat.workflow.run_id"},
-        )
+        run_id = _find_key([envelope, payload], {"workflow_run_id", "nat.workflow.run_id"})
         if run_id is not None:
             parsed.workflow_run_id = str(run_id)
 
@@ -250,7 +298,6 @@ def _handle_intermediate(parsed: ParsedInvocation, block: str) -> None:
     envelope, payload = result
     parsed.raw_event_count += 1
     _update_trace_ids(parsed, envelope, payload)
-
     event_type = str(envelope.get("type") or payload.get("event_type") or "").upper()
     name = _normalize_tool_name(
         envelope.get("name")
@@ -261,45 +308,50 @@ def _handle_intermediate(parsed: ParsedInvocation, block: str) -> None:
     event_id = str(envelope.get("id") or payload.get("UUID") or "")
 
     if event_type == "TOOL_START" and name in KNOWN_TOOL_NAMES:
-        parsed.tool_starts.append(
-            {"id": event_id, "name": name, "arguments": _tool_input(payload)}
-        )
+        parsed.tool_starts.append({"id": event_id, "name": name, "arguments": _tool_input(payload)})
         return
-
     if event_type == "FUNCTION_START" and name in KNOWN_TOOL_NAMES:
-        parsed.function_tool_starts.append(
-            {"id": event_id, "name": name, "arguments": _tool_input(payload)}
-        )
+        parsed.function_tool_starts.append({"id": event_id, "name": name, "arguments": _tool_input(payload)})
         return
-
+    if event_type == "TOOL_END" and name in KNOWN_TOOL_NAMES:
+        parsed.tool_results.append({"id": event_id, "name": name, "result": _event_output(payload)})
+        return
     if event_type != "FUNCTION_END":
         return
 
-    output = _function_output(payload)
-    if name == INPUT_GUARDRAIL_EVENT:
+    output = _event_output(payload)
+    if is_input_guardrail_event(name):
         parsed.input_guardrail = _record(output)
-    elif name == OUTPUT_GUARDRAIL_EVENT:
+    elif is_output_guardrail_event(name):
         parsed.output_guardrail = _record(output)
+    elif name in KNOWN_TOOL_NAMES and not any(
+        item.get("id") == event_id and item.get("name") == name for item in parsed.tool_results
+    ):
+        parsed.tool_results.append({"id": event_id, "name": name, "result": output})
+
+
+def _data_line(block: str) -> str | None:
+    for line in block.splitlines():
+        if line.startswith("data:"):
+            return line[len("data:") :].strip()
+    return None
 
 
 def _handle_data(parsed: ParsedInvocation, block: str) -> None:
-    if not block.startswith("data:"):
+    raw = _data_line(block)
+    if raw is None or not raw or raw == "[DONE]":
         return
-    raw = block[len("data:") :].strip()
-    if not raw or raw == "[DONE]":
-        return
-    data = _normalize(raw)
-    value = data.get("value") if isinstance(data, dict) and "value" in data else data
+    # Parse only the SSE envelope. _normalize would recursively coerce the inner
+    # scalar assistant chunk before _workflow_text ever sees it.
+    data = _parse_json(raw)
+    value = data["value"] if isinstance(data, dict) and "value" in data else data
     text = _workflow_text(value)
     if text:
         parsed.answer_parts.append(text)
 
 
 def _request_payload(question: str, case_id: str | None) -> bytes:
-    payload: dict[str, Any] = {
-        "messages": [{"role": "user", "content": question}],
-        "stream": True,
-    }
+    payload: dict[str, Any] = {"messages": [{"role": "user", "content": question}], "stream": True}
     if case_id:
         payload["user"] = case_id
         payload["evaluation_case_id"] = case_id
@@ -307,21 +359,10 @@ def _request_payload(question: str, case_id: str | None) -> bytes:
 
 
 def _workflow_url() -> str:
-    base = agent_workflow_url()
-    parsed = urllib.parse.urlsplit(base)
+    parsed = urllib.parse.urlsplit(agent_workflow_url())
     query = urllib.parse.parse_qs(parsed.query)
-    query["filter_steps"] = [
-        "WORKFLOW_START,WORKFLOW_END,TOOL_START,TOOL_END,FUNCTION_START,FUNCTION_END"
-    ]
-    return urllib.parse.urlunsplit(
-        (
-            parsed.scheme,
-            parsed.netloc,
-            parsed.path,
-            urllib.parse.urlencode(query, doseq=True),
-            parsed.fragment,
-        )
-    )
+    query["filter_steps"] = ["WORKFLOW_START,WORKFLOW_END,TOOL_START,TOOL_END,FUNCTION_START,FUNCTION_END"]
+    return urllib.parse.urlunsplit((parsed.scheme, parsed.netloc, parsed.path, urllib.parse.urlencode(query, doseq=True), parsed.fragment))
 
 
 def _timeout() -> float:
@@ -356,6 +397,7 @@ def invoke_live_agent(question: str, case_id: str | None = None) -> dict[str, An
 
     last_error: Exception | None = None
     for attempt in range(1, _max_attempts() + 1):
+        started = time.perf_counter()
         try:
             with urllib.request.urlopen(request, timeout=_timeout()) as response:
                 parsed = ParsedInvocation()
@@ -363,19 +405,18 @@ def invoke_live_agent(question: str, case_id: str | None = None) -> dict[str, An
                     stripped = block.strip()
                     if not stripped:
                         continue
+                    if "event: interaction_required" in stripped:
+                        raise RuntimeError(
+                            "Evaluation prompt unexpectedly requested human interaction; eval suites must be read-only"
+                        )
                     if stripped.startswith("intermediate_data:"):
                         _handle_intermediate(parsed, stripped)
-                    elif stripped.startswith("data:"):
+                    elif "data:" in stripped:
                         _handle_data(parsed, stripped)
                     elif stripped.startswith("{"):
                         error_payload = _record(stripped)
-                        raise RuntimeError(
-                            str(
-                                error_payload.get("message")
-                                or error_payload.get("details")
-                                or "NAT workflow failed"
-                            )
-                        )
+                        raise RuntimeError(str(error_payload.get("message") or error_payload.get("details") or "NAT workflow failed"))
+                parsed.duration_ms = (time.perf_counter() - started) * 1000.0
                 return parsed.as_output()
         except (urllib.error.URLError, TimeoutError, ConnectionError) as error:
             last_error = error
@@ -386,8 +427,26 @@ def invoke_live_agent(question: str, case_id: str | None = None) -> dict[str, An
     raise RuntimeError(f"Could not call live agent after {_max_attempts()} attempts: {last_error}")
 
 
-@mlflow.trace(name="live_alerts_agent_prediction", span_type="AGENT")
+# Per-case latencies for the run in progress. MLflow aggregates feedback to a
+# mean, and a mean is the least useful latency statistic: it hides the tail, which
+# is the part a user actually experiences. The runner drains this to report a
+# distribution instead.
+_LATENCIES_MS: list[float] = []
+
+
+def reset_latencies() -> None:
+    _LATENCIES_MS.clear()
+
+
+def collected_latencies_ms() -> list[float]:
+    return list(_LATENCIES_MS)
+
+
+@mlflow.trace(name="live_etf_research_prediction", span_type="AGENT")
 def live_predict_fn(question: str, case_id: str | None = None) -> dict[str, Any]:
     """MLflow predict function: query the running NAT agent for each dataset row."""
-
-    return invoke_live_agent(question=question, case_id=case_id)
+    result = invoke_live_agent(question=question, case_id=case_id)
+    duration = result.get("duration_ms")
+    if isinstance(duration, (int, float)):
+        _LATENCIES_MS.append(float(duration))
+    return result

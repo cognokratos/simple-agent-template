@@ -12,7 +12,7 @@ function cookieValue(cookieHeader: string, name: string): string | undefined {
 export async function POST(request: Request) {
   const cookieHeader = request.headers.get("cookie") ?? "";
   const csrfCookieName =
-    process.env.GATEWAY_CSRF_COOKIE ?? "alerts_gateway_csrf";
+    process.env.GATEWAY_CSRF_COOKIE ?? "etf_research_gateway_csrf";
   const csrfToken = cookieValue(cookieHeader, csrfCookieName);
 
   const upstream = await fetch(gatewayInternalUrl("/auth/logout"), {

@@ -1,0 +1,318 @@
+{
+  "version": "1.1.0",
+  "description": "Deterministic ETF evaluation policy. Scores measure fund quality and fit against data/investor_profile.json for the shipped data snapshot. They are not a forecast of future return. Every threshold, band, matrix and cap lives in this file; mcp-server/src/rules.rs only interprets it.",
+  "decision_vocabulary": ["reject", "research", "shortlist"],
+  "decision_order": ["reject", "research", "shortlist"],
+  "decision_thresholds": [
+    {
+      "decision": "reject",
+      "min_score": 0,
+      "max_score": 49,
+      "note": "Quality or profile fit is poor enough that no further research is warranted under this policy."
+    },
+    {
+      "decision": "research",
+      "min_score": 50,
+      "max_score": 74,
+      "note": "Plausible candidate, but something is missing, weak, or a poor fit. Needs a human to look closer."
+    },
+    {
+      "decision": "shortlist",
+      "min_score": 75,
+      "max_score": 100,
+      "note": "Strong quality and strong fit against the configured profile. An investment candidate, not a trade instruction."
+    }
+  ],
+  "profile_fit_components": ["risk_fit", "investor_fit"],
+  "region_classes": {
+    "global": "global",
+    "developed_world": "developed",
+    "europe": "regional",
+    "asia_pacific": "regional",
+    "united_states": "single_developed_market",
+    "japan": "single_developed_market",
+    "emerging": "emerging",
+    "india": "emerging_single_market"
+  },
+  "score_components": [
+    {
+      "key": "cost_efficiency",
+      "weight": 20,
+      "description": "Ongoing charge. The one input to long-run outcomes that is known in advance rather than estimated.",
+      "metrics": [
+        {
+          "kind": "numeric",
+          "key": "ter",
+          "field": "ter",
+          "weight": 20,
+          "direction": "lower_is_better",
+          "bands": [
+            { "code": "COST-A", "threshold": 0.001, "fraction": 1.0, "note": "TER at or below 0.10%." },
+            { "code": "COST-B", "threshold": 0.002, "fraction": 0.85, "note": "TER above 0.10% and at or below 0.20%." },
+            { "code": "COST-C", "threshold": 0.003, "fraction": 0.65, "note": "TER above 0.20% and at or below 0.30%." },
+            { "code": "COST-D", "threshold": 0.005, "fraction": 0.4, "note": "TER above 0.30% and at or below 0.50%." },
+            { "code": "COST-E", "threshold": 0.008, "fraction": 0.15, "note": "TER above 0.50% and at or below 0.80%." },
+            { "code": "COST-F", "threshold": null, "fraction": 0.0, "note": "TER above 0.80%." }
+          ]
+        }
+      ]
+    },
+    {
+      "key": "diversification",
+      "weight": 20,
+      "description": "How much single-name and single-index risk the fund carries, from constituent count and top-ten weight.",
+      "metrics": [
+        {
+          "kind": "numeric",
+          "key": "holdings_count",
+          "field": "holdings_count",
+          "weight": 12,
+          "direction": "higher_is_better",
+          "bands": [
+            { "code": "DIV-H-A", "threshold": 2000, "fraction": 1.0, "note": "2000 or more constituents." },
+            { "code": "DIV-H-B", "threshold": 1000, "fraction": 0.85, "note": "1000 to 1999 constituents." },
+            { "code": "DIV-H-C", "threshold": 400, "fraction": 0.65, "note": "400 to 999 constituents." },
+            { "code": "DIV-H-D", "threshold": 150, "fraction": 0.4, "note": "150 to 399 constituents." },
+            { "code": "DIV-H-E", "threshold": 50, "fraction": 0.15, "note": "50 to 149 constituents." },
+            { "code": "DIV-H-F", "threshold": null, "fraction": 0.0, "note": "Fewer than 50 constituents." }
+          ]
+        },
+        {
+          "kind": "numeric",
+          "key": "top_10_concentration",
+          "field": "top_10_concentration",
+          "weight": 8,
+          "direction": "lower_is_better",
+          "bands": [
+            { "code": "DIV-C-A", "threshold": 0.1, "fraction": 1.0, "note": "Top ten holdings are 10% of the fund or less." },
+            { "code": "DIV-C-B", "threshold": 0.2, "fraction": 0.85, "note": "Top ten holdings are 10% to 20%." },
+            { "code": "DIV-C-C", "threshold": 0.3, "fraction": 0.65, "note": "Top ten holdings are 20% to 30%." },
+            { "code": "DIV-C-D", "threshold": 0.4, "fraction": 0.4, "note": "Top ten holdings are 30% to 40%." },
+            { "code": "DIV-C-E", "threshold": 0.55, "fraction": 0.15, "note": "Top ten holdings are 40% to 55%." },
+            { "code": "DIV-C-F", "threshold": null, "fraction": 0.0, "note": "Top ten holdings exceed 55% of the fund." }
+          ]
+        }
+      ]
+    },
+    {
+      "key": "fund_scale",
+      "weight": 15,
+      "description": "Assets under management: fund scale and commercial viability. A large fund is less likely to be closed or merged, and its secondary market is usually deeper — but AUM is a proxy for scale, not a measurement of liquidity. This component says nothing about bid/ask spreads, average daily volume, order-book depth or primary-market creation capacity, none of which this snapshot carries.",
+      "metrics": [
+        {
+          "kind": "numeric",
+          "key": "aum_usd",
+          "field": "aum_usd",
+          "weight": 15,
+          "direction": "higher_is_better",
+          "bands": [
+            { "code": "SCALE-A", "threshold": 20000000000, "fraction": 1.0, "note": "20bn USD or more under management." },
+            { "code": "SCALE-B", "threshold": 5000000000, "fraction": 0.8, "note": "5bn to 20bn USD." },
+            { "code": "SCALE-C", "threshold": 1000000000, "fraction": 0.6, "note": "1bn to 5bn USD." },
+            { "code": "SCALE-D", "threshold": 250000000, "fraction": 0.4, "note": "250m to 1bn USD." },
+            { "code": "SCALE-E", "threshold": 100000000, "fraction": 0.2, "note": "100m to 250m USD." },
+            { "code": "SCALE-F", "threshold": null, "fraction": 0.0, "note": "Below 100m USD; closure risk is material." }
+          ]
+        }
+      ]
+    },
+    {
+      "key": "fund_structure",
+      "weight": 9,
+      "description": "How the fund is built: whether it holds the index constituents, samples them, or takes swap exposure to them. This is a structural property disclosed by the issuer, not a measurement of how well the fund has actually tracked. Keeping it separate from tracking_quality is deliberate: a physically replicated fund can still track poorly, and calling structure 'tracking quality' would dress an assumption up as an observation.",
+      "metrics": [
+        {
+          "kind": "categorical",
+          "key": "replication",
+          "field": "replication",
+          "weight": 9,
+          "code_prefix": "STRUCT-R",
+          "categories": {
+            "physical": { "fraction": 1.0, "note": "Full physical replication: the fund holds the index constituents." },
+            "sampled": { "fraction": 0.85, "note": "Optimised sampling: physical holdings, but not the full index." },
+            "synthetic": { "fraction": 0.45, "note": "Swap-based replication introduces counterparty exposure the investor did not ask for." }
+          }
+        }
+      ]
+    },
+    {
+      "key": "tracking_quality",
+      "weight": 6,
+      "description": "Observed tracking fidelity: realised three-year tracking difference against the index. Nothing else feeds this component. The shipped snapshot carries no realised tracking data for any fund, so this component is reported as unavailable throughout rather than substituted with a structural proxy.",
+      "metrics": [
+        {
+          "kind": "numeric",
+          "key": "tracking_difference_3y",
+          "field": "tracking_difference_3y",
+          "weight": 6,
+          "direction": "lower_is_better",
+          "absolute": true,
+          "bands": [
+            { "code": "TRACK-D-A", "threshold": 0.001, "fraction": 1.0, "note": "Realised three-year tracking difference within 10 basis points." },
+            { "code": "TRACK-D-B", "threshold": 0.0025, "fraction": 0.8, "note": "Within 25 basis points." },
+            { "code": "TRACK-D-C", "threshold": 0.005, "fraction": 0.55, "note": "Within 50 basis points." },
+            { "code": "TRACK-D-D", "threshold": 0.01, "fraction": 0.25, "note": "Within 100 basis points." },
+            { "code": "TRACK-D-E", "threshold": null, "fraction": 0.0, "note": "Tracking difference exceeds 100 basis points." }
+          ]
+        }
+      ]
+    },
+    {
+      "key": "fund_maturity",
+      "weight": 10,
+      "description": "How long the fund has actually operated. Not a performance signal: an older fund has a longer operating record to inspect and a lower chance of closure.",
+      "metrics": [
+        {
+          "kind": "numeric",
+          "key": "fund_age_years",
+          "field": "fund_age_years",
+          "weight": 10,
+          "direction": "higher_is_better",
+          "bands": [
+            { "code": "AGE-A", "threshold": 15, "fraction": 1.0, "note": "Fifteen years or more of operating history." },
+            { "code": "AGE-B", "threshold": 10, "fraction": 0.85, "note": "Ten to fifteen years." },
+            { "code": "AGE-C", "threshold": 5, "fraction": 0.6, "note": "Five to ten years." },
+            { "code": "AGE-D", "threshold": 3, "fraction": 0.35, "note": "Three to five years." },
+            { "code": "AGE-E", "threshold": 1, "fraction": 0.15, "note": "One to three years." },
+            { "code": "AGE-F", "threshold": null, "fraction": 0.0, "note": "Under a year; there is no operating record yet." }
+          ]
+        }
+      ]
+    },
+    {
+      "key": "risk_fit",
+      "weight": 10,
+      "description": "Whether the fund's asset class and geographic breadth match the risk tolerance stated in the investor profile. Structural, not derived from price history.",
+      "metrics": [
+        {
+          "kind": "profile_matrix",
+          "key": "asset_class_fit",
+          "field": "asset_class",
+          "profile_key": "risk_tolerance",
+          "weight": 6,
+          "code_prefix": "FIT-ASSET",
+          "matrix": {
+            "high": { "equity": 1.0, "multi_asset": 0.75, "commodity": 0.2, "bond": 0.1, "money_market": 0.05 },
+            "medium": { "equity": 0.8, "multi_asset": 1.0, "commodity": 0.35, "bond": 0.7, "money_market": 0.3 },
+            "low": { "equity": 0.3, "multi_asset": 0.7, "commodity": 0.15, "bond": 1.0, "money_market": 0.8 }
+          }
+        },
+        {
+          "kind": "profile_matrix",
+          "key": "region_fit",
+          "field": "region",
+          "map_through": "region_classes",
+          "profile_key": "risk_tolerance",
+          "weight": 4,
+          "code_prefix": "FIT-REGION",
+          "matrix": {
+            "high": { "global": 1.0, "developed": 0.95, "regional": 0.8, "single_developed_market": 0.65, "emerging": 0.55, "emerging_single_market": 0.3 },
+            "medium": { "global": 1.0, "developed": 0.95, "regional": 0.75, "single_developed_market": 0.55, "emerging": 0.4, "emerging_single_market": 0.2 },
+            "low": { "global": 1.0, "developed": 0.9, "regional": 0.6, "single_developed_market": 0.4, "emerging": 0.2, "emerging_single_market": 0.1 }
+          }
+        }
+      ]
+    },
+    {
+      "key": "investor_fit",
+      "weight": 10,
+      "description": "Stated preferences from the investor profile. A preference that is switched off contributes no weight in either direction rather than penalising every fund.",
+      "metrics": [
+        {
+          "kind": "preference",
+          "key": "accumulating",
+          "preference": "accumulating",
+          "field": "distribution_policy",
+          "weight": 4,
+          "code_prefix": "PREF-ACC",
+          "satisfied_when": ["accumulating"],
+          "note": "Accumulating share classes reinvest income inside the fund, which suits a buy-and-hold mandate."
+        },
+        {
+          "kind": "preference",
+          "key": "physical_replication",
+          "preference": "physical_replication",
+          "field": "replication",
+          "weight": 3,
+          "code_prefix": "PREF-PHYS",
+          "satisfied_when": ["physical", "sampled"],
+          "note": "The investor prefers to own the constituents rather than a swap on them."
+        },
+        {
+          "kind": "preference",
+          "key": "broad_diversification",
+          "preference": "broad_diversification",
+          "field": "region",
+          "map_through": "region_classes",
+          "weight": 3,
+          "code_prefix": "PREF-BROAD",
+          "satisfied_when": ["global", "developed"],
+          "note": "The investor prefers global or developed-world breadth over a regional or single-market mandate."
+        }
+      ]
+    }
+  ],
+  "preference_realisation": {
+    "accumulating": "investor_fit metric 'accumulating'.",
+    "physical_replication": "investor_fit metric 'physical_replication'. Replication is also read by the fund_structure component, which applies to every profile: fund_structure scores the methodology on its own merits, while this preference scores whether the methodology matches what this investor asked for. The two are separate questions and are reported separately.",
+    "broad_diversification": "investor_fit metric 'broad_diversification'.",
+    "low_cost": "Realised by the always-on cost_efficiency component, weight 20. Switching this preference off does not disable cost scoring; cost is treated as a quality property of the fund, not a taste."
+  },
+  "hard_constraints": [
+    {
+      "code": "HC-UCITS",
+      "profile_key": "require_ucits",
+      "field": "ucits",
+      "required_value": true,
+      "decision": "reject",
+      "bypassable": false,
+      "message": "The investor profile requires UCITS eligibility and this fund is not UCITS. Change require_ucits in the investor profile to consider it; no human approval can bypass this."
+    }
+  ],
+  "missing_data_policy": {
+    "description": "Absent metrics are never scored as zero quality. A metric with no value is removed from the available weight, the remaining components are renormalised over the weight that was actually available, and the absence is reported. Renormalising can flatter a fund whose missing metrics were the ones it would have scored badly on, which is exactly why an incomplete record cannot reach shortlist. Every evaluation publishes the arithmetic: each component reports its nominal_weight, the available_weight that could actually be scored, the raw_earned_points out of that available weight, and the normalized_contribution to the 0-100 score.",
+    "absent_metric_handling": "renormalise",
+    "critical_fields": ["ter", "aum_usd", "fund_age_years", "holdings_count", "top_10_concentration"],
+    "critical_fields_note": "The static, issuer-published inputs to the four highest-weighted components. tracking_difference_3y is deliberately not critical: the shipped snapshot carries no realised tracking data for any fund, so the tracking_quality component is unavailable across the whole universe. Treating it as critical would cap every fund at research and the cap would stop discriminating; scoring the absence as zero would penalise every fund for a figure nobody published.",
+    "completeness_fields": [
+      "ter",
+      "aum_usd",
+      "fund_age_years",
+      "holdings_count",
+      "top_10_concentration",
+      "replication",
+      "distribution_policy",
+      "asset_class",
+      "region",
+      "tracking_difference_3y"
+    ]
+  },
+  "decision_caps": [
+    {
+      "code": "CAP-CRITICAL-DATA",
+      "max_decision": "research",
+      "condition": { "type": "critical_field_missing" },
+      "message": "A critical metric is missing, so the record is not complete enough to justify shortlisting. The deterministic decision is capped at research."
+    },
+    {
+      "code": "CAP-COMPLETENESS",
+      "max_decision": "research",
+      "condition": { "type": "data_completeness_below", "value": 0.7 },
+      "message": "Fewer than 70% of the scored metrics have values. The deterministic decision is capped at research until the record is completed."
+    },
+    {
+      "code": "CAP-PROFILE-FIT",
+      "max_decision": "research",
+      "condition": { "type": "profile_fit_below", "value": 0.5 },
+      "message": "The fund earns less than half of the available profile-fit weight. High standalone quality does not make it a fit for this profile, so the deterministic decision is capped at research."
+    }
+  ],
+  "override_policy": {
+    "decision_order": ["reject", "research", "shortlist"],
+    "authority": "The deterministic decision computed from this specification is authoritative by default. It is recomputed on the server for every read and again at the moment of any write.",
+    "llm": "A model recommendation may equal the deterministic decision or be more conservative (lower in decision_order) where grounded evidence warrants caution. It may never be more optimistic. reject -> research, reject -> shortlist and research -> shortlist are refused when a model proposes them.",
+    "human": "An authenticated human may override in either direction, including upward, provided a rationale is recorded against their identity in the append-only history.",
+    "non_bypassable": "A hard constraint with bypassable=false can never be overridden by any actor. The only way to reach a different outcome is to change the investor profile, which is itself a versioned, reviewable change.",
+    "not_a_forecast": "The score expresses quality and profile fit for a dated data snapshot. It is not an expected-return forecast and must never be presented as one."
+  }
+}

@@ -3,8 +3,8 @@ import type { ReactNode } from "react";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "Local NeMo Agent",
-  description: "assistant-ui + NeMo Agent Toolkit + Ollama proof of concept",
+  title: "ETF Research Agent",
+  description: "Deterministic ETF evaluation with human-approved decisions",
 };
 
 export default function RootLayout({ children }: Readonly<{ children: ReactNode }>) {
