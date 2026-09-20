@@ -1,217 +1,133 @@
-# assistant-ui + lean NeMo Agent Toolkit + Guardrails + Ollama
+# Secured agent template
 
-Local guarded streaming stack:
-
-```text
-Browser
-  -> Next.js + assistant-ui (Docker, port 3000)
-  -> NeMo Agent Toolkit Core + Security middleware (Docker, port 8000)
-  -> direct OpenAI Python client
-  -> Ollama OpenAI-compatible API (host, port 11434)
-```
-
-The application workflow does **not** install `nvidia-nat-langchain`. It calls
-Ollama directly with `AsyncOpenAI`. NeMo Guardrails creates only its own OpenAI
-LangChain provider for the self-check rails.
-
-## What was removed
-
-The previous build installed:
+A working, secured, observable, evaluated LLM agent you can fork and point at
+your own domain.
 
 ```text
-nvidia-nat[langchain,guardrails]
+Browser / assistant-ui
+    ↓ Keycloak login; opaque HttpOnly BFF session; CSRF
+Rust authentication gateway
+    ↓ static service credential; gateway-minted identity headers
+NeMo Agent Toolkit ReAct workflow      ← NeMo Guardrails input/output rails
+    ↓ static service credential
+Rust MCP server
+    ↓ parameterized SQLx queries
+PostgreSQL
+
+NAT + Guardrails spans ──OTLP──▶ OpenTelemetry Collector ──▶ MLflow
 ```
 
-NAT's LangChain package declares integrations for AWS, OCI, Milvus, Hugging
-Face, Exa, LiteLLM, NVIDIA endpoints, LangGraph, LangSmith and telemetry as
-normal dependencies. This version instead installs:
+assistant-ui is the only application service reachable from the browser. The
+gateway, NAT, MCP and the database publish no host ports and sit on segmented
+networks. Any OpenAI-compatible model endpoint works; the defaults target a
+local Ollama.
 
-```text
-nvidia-nat-security[guardrails]==1.8.0
-nemoguardrails==0.21.0
-langchain-openai==1.4.1
-openai==2.52.0
-```
+The sample application triages customer-support tickets for a fictional online
+shop and is **read-only** by default. Everything that is not the sample is
+meant to be reused unchanged — see [docs/EXTENDING.md](docs/EXTENDING.md).
 
-Some large dependencies remain because NeMo Guardrails 0.21 itself requires
-LangChain Community, Annoy, FastEmbed and ONNX Runtime, and NAT Core includes
-its own general runtime dependencies. The unrelated NAT LangChain provider
-bundle is no longer installed.
-
-## 1. Prepare Ollama on the host
+## Start
 
 ```bash
-ollama pull qwen3:8b
+make env          # create .env from .env.example
+make pull-models  # no-op unless LLM_BASE_URL is an Ollama endpoint
+make dev          # build and start everything
+make wait         # readiness
+make open-ui      # http://localhost:3000
 ```
 
-Containers must be able to reach Ollama.
+Sign in with `agent` / `agent`. Then try:
 
-### macOS Ollama application
+```
+Show me the open support tickets
+Which ticket should we handle first, and why?
+Summarize ticket TKT-1003 and its history
+```
+
+The prioritization prompt needs the agent to reason over several tickets at
+once, which is more than the shipped default model, `qwen3:8b`, reliably
+manages — see [docs/CONFIGURATION.md#model-endpoint](docs/CONFIGURATION.md#model-endpoint)
+for what was observed and a tested alternative. The other two prompts are
+single-tool and answer reliably on the default.
+
+Changing a ticket's priority ("Mark it as high priority") is disabled by
+default: the sample application ships read-only. To try the human-approval
+flow, opt in per [docs/APPROVALS.md](docs/APPROVALS.md) — in short, uncomment
+the `functions:` block in `agent/config.yml`, add `ticket_priority_change` to
+`workflow.tool_names`, and set `HITL_APPROVAL_SECRET` and
+`HITL_ENABLE_INTERACTIVE=true`. With that enabled, asking to change a ticket's
+priority shows an approval card requiring a human decision and, for any actual
+change, a typed reason; the choice is bound to a signed token, verified and
+applied by the MCP server in one transaction, and recorded in `ticket_audit`.
+
+## What this template gives you
+
+| | |
+| --- | --- |
+| **Authentication** | Keycloak OIDC with PKCE, server-side tokens, opaque sessions, CSRF, strict cookie attributes |
+| **Isolation** | Seven Compose networks, one per trust relationship, asserted statically *and* at runtime |
+| **Guardrails** | NeMo input self-check with deterministic override layers; streaming secret blocking; configurable PII masking |
+| **Observability** | One trace per request covering the agent run *and* the guardrail decisions, with readable question/answer and credential redaction |
+| **Evaluation** | Four MLflow suites with deterministic scorers, latency distributions, and provenance linking every result to the agent that produced it |
+| **Approvals** | An optional, opt-in signed-approval boundary for state-changing actions — off by default |
+
+## Documentation
+
+| Document | For |
+| --- | --- |
+| [ARCHITECTURE.md](docs/ARCHITECTURE.md) | The request path, trust boundaries, network segmentation, where the model is and is not trusted |
+| [SECURITY.md](docs/SECURITY.md) | Each control, why it exists, and how to check it |
+| [CONFIGURATION.md](docs/CONFIGURATION.md) | Every setting |
+| [GUARDRAILS.md](docs/GUARDRAILS.md) | Input and output rails, and what the pinned Guardrails release actually does |
+| [OBSERVABILITY.md](docs/OBSERVABILITY.md) | The trace pipeline, content capture policy, and what redaction does not cover |
+| [EVALUATION.md](docs/EVALUATION.md) | The suites, the scoring methodology, and provenance |
+| [APPROVALS.md](docs/APPROVALS.md) | The optional human-approval boundary |
+| [VERIFICATION.md](docs/VERIFICATION.md) | What you can check, what it needs, what it proves |
+| [EXTENDING.md](docs/EXTENDING.md) | Building a domain application on this |
+| [LIMITATIONS.md](docs/LIMITATIONS.md) | Known gaps, untested behaviour, and production prerequisites |
+| [TEST-SCENARIOS.md](docs/TEST-SCENARIOS.md) | Prompts to type, and what should happen |
+
+## Verify it
 
 ```bash
-launchctl setenv OLLAMA_HOST "0.0.0.0:11434"
+make static-check   # no Docker, no cluster, no model
+make test           # everything, with the cluster up
+make security-test  # authentication and topology boundaries
+make eval-all       # the evaluation suites; needs a model
 ```
 
-Fully quit and restart the Ollama application afterward.
+`make help` lists every target.
 
-### Linux systemd service
+## Repository layout
 
-```bash
-sudo systemctl edit ollama.service
-```
-
-Add:
-
-```ini
-[Service]
-Environment="OLLAMA_HOST=0.0.0.0:11434"
-```
-
-Then restart:
-
-```bash
-sudo systemctl daemon-reload
-sudo systemctl restart ollama
-```
-
-Verify Ollama directly:
-
-```bash
-curl http://localhost:11434/v1/chat/completions \
-  -H 'Content-Type: application/json' \
-  -d '{
-    "model": "qwen3:8b",
-    "messages": [{"role": "user", "content": "Say hello"}]
-  }'
-```
-
-## 2. Configure and run
-
-```bash
-cp .env.example .env
-docker compose up --build
-```
-
-Open:
-
-- UI: `http://localhost:3000`
-- NeMo Swagger: `http://localhost:8000/docs`
-
-`OLLAMA_MODEL` must exactly match a model reported by `ollama list`.
-
-## 3. Test guarded streaming
-
-```bash
-curl -N http://localhost:8000/v1/chat/completions \
-  -H 'Content-Type: application/json' \
-  -d '{
-    "model": "nemo-agent",
-    "messages": [
-      {"role": "user", "content": "Explain Docker networking briefly."}
-    ],
-    "stream": true
-  }'
-```
-
-The application response is generated incrementally by Ollama. Output
-Guardrails buffer and evaluate groups of chunks before releasing them:
-
-```yaml
-stream_output_rails: true
-rails:
-  output:
-    streaming:
-      enabled: true
-      chunk_size: 40
-      context_size: 20
-      stream_first: false
-```
-
-With `stream_first: false`, unsafe groups are blocked before reaching the UI.
-This adds some latency and makes the visible stream coarser than Ollama's raw
-stream.
-
-## 4. Faster rebuilds
-
-Normal development build:
-
-```bash
-docker compose build agent
-docker compose up -d agent
-```
-
-Do not use `--no-cache` for ordinary builds. The Dockerfile keeps dependency
-downloads and the compiled ARM64 Annoy wheel in a BuildKit cache. Application
-source changes do not invalidate the third-party dependency layer.
-
-The first ARM64 build still compiles Annoy because NeMo Guardrails 0.21 does not
-provide a suitable wheel for this environment. The C++ compiler exists only in
-the builder stage and is not copied into the runtime image.
-
-## 5. Dependency inspection
-
-After building, confirm the broad NAT LangChain plugin is absent:
-
-```bash
-docker compose run --rm agent sh -lc \
-  'python -m pip show nvidia-nat-langchain || true'
-```
-
-Inspect installed packages:
-
-```bash
-docker compose run --rm agent python -m pip list
-```
+| Path | |
+| --- | --- |
+| `ui/` | assistant-ui on Next.js |
+| `gateway/` | Rust backend-for-frontend: OIDC, sessions, CSRF, proxying |
+| `agent/` | NAT workflow, guardrail middleware, observability, optional approvals |
+| `mcp-server/` | Rust MCP tools over PostgreSQL, and the approval verifier |
+| `evaluation/` | MLflow suites, deterministic scorers, provenance |
+| `db/`, `keycloak/`, `observability/` | Schema and seed data, realm generation, collector config |
+| `scripts/` | Checks that run without the cluster, and trace tooling |
 
 ## Notes
 
-- The browser never calls Ollama directly.
-- `host.docker.internal` works automatically with Docker Desktop. Compose adds
-  the Linux `host-gateway` equivalent as well.
-- The Guardrails model and application model both use the configured Ollama
-  model in this POC. A production deployment should usually use a smaller,
-  dedicated guard model.
-- The application is stateless; assistant-ui sends the full conversation on
-  every request.
+**NAT ReAct prompt compatibility.** The custom `system_prompt` must contain the
+`{tools}` and `{tool_names}` placeholders. NAT replaces them at startup with the
+discovered MCP tool descriptions and names.
 
-## NAT 1.8 annotation compatibility
+**No site-packages are modified.** Earlier revisions patched installed NAT and
+Guardrails code at image-build time. That is now application code reached
+through supported extension points, with regression suites proving the behaviour
+it replaced. Where private NAT attributes are still relied on, they are named
+with their removal conditions in
+[OBSERVABILITY.md](docs/OBSERVABILITY.md).
 
-The workflow intentionally does **not** enable `from __future__ import annotations`. NAT 1.8 builds converter schemas from function signatures before all postponed annotations are resolved. Keeping `AsyncGenerator[str]` as a concrete runtime annotation avoids the startup error:
+**Dependency trade-off.** NAT 1.8's supported `react_agent` lives in the NAT
+LangChain plugin and exposes no OpenAI-only extra, so this installs the full
+LangChain dependency set. The expensive layer is cached, and the compiler needed
+by `annoy` stays in the builder stage.
 
-```text
-NameError: name 'AsyncGenerator' is not defined
-```
-
-The following startup messages are non-fatal for this POC:
-
-- `Dask is not installed`: only NAT async execution/evaluation features are unavailable. The FastAPI chat endpoint still works.
-- `langchain_community module is not installed`: NeMo Guardrails tries to auto-register optional Google-search safety tools. The configured `self check input` and `self check output` actions are still registered and usable. Installing `langchain-community` merely to remove that warning would make the image larger.
-- The final `_dask_client` error is secondary cleanup noise after workflow initialization has already failed; it disappears when the annotation error is fixed.
-
-## NAT message compatibility
-
-NAT 1.8's base `Message` model guarantees `role` and `content`, but ordinary
-messages do not necessarily define `tool_calls` or `tool_call_id`. The OpenAI
-serializer uses `message.model_dump(mode="json", exclude_none=True)` and only
-forwards optional tool metadata when the concrete message model contains it.
-This avoids:
-
-```text
-AttributeError: 'Message' object has no attribute 'tool_calls'
-```
-
-## Qwen3 reasoning latency
-
-Ollama enables thinking by default for supported models such as Qwen3. A
-Yes/No input rail can therefore consume many hidden reasoning tokens before
-returning its short answer. This project sends `reasoning_effort: none` through
-Ollama's OpenAI-compatible endpoint for both the application model and guard
-model by default. Override these values in `.env` when reasoning is desired:
-
-```env
-OLLAMA_REASONING_EFFORT=none
-OLLAMA_GUARD_REASONING_EFFORT=none
-```
-
-Keep the guard value at `none` in most deployments because self-check rails
-only need a deterministic classification.
+**Licensing.** Source files under `agent/src/` and `gateway/Cargo.toml` declare
+Apache-2.0. There is no root `LICENSE` file; see
+[LIMITATIONS.md](docs/LIMITATIONS.md#licensing).

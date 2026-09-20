@@ -190,3 +190,481 @@ textarea {
     max-width: 88%;
   }
 }
+
+/* Assistant prose is rendered Markdown. `white-space: pre-wrap` is deliberately
+   NOT set here: block elements carry the layout now, and pre-wrap would add the
+   source newlines back on top of it. */
+.assistant-text {
+  margin: 0;
+}
+
+.assistant-text > *:first-child {
+  margin-top: 0;
+}
+
+.assistant-text > *:last-child {
+  margin-bottom: 0;
+}
+
+.assistant-text p {
+  margin: 0 0 0.7em;
+}
+
+.assistant-text ul,
+.assistant-text ol {
+  margin: 0 0 0.7em;
+  padding-left: 1.35em;
+}
+
+.assistant-text li {
+  margin: 0.15em 0;
+}
+
+/* Nested lists are how the model expresses per-record detail; keep them tight. */
+.assistant-text li > ul,
+.assistant-text li > ol {
+  margin: 0.15em 0 0.35em;
+}
+
+.assistant-text strong {
+  font-weight: 650;
+  color: #ffffff;
+}
+
+.assistant-text h1,
+.assistant-text h2,
+.assistant-text h3,
+.assistant-text h4 {
+  margin: 0.9em 0 0.45em;
+  font-size: 1em;
+  font-weight: 700;
+  color: #ffffff;
+}
+
+.assistant-text code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 0.92em;
+  background: rgba(127, 127, 127, 0.18);
+  border-radius: 4px;
+  padding: 0.1em 0.35em;
+}
+
+.assistant-text pre {
+  margin: 0 0 0.7em;
+  padding: 10px 12px;
+  overflow-x: auto;
+  border-radius: 8px;
+  background: #14161b;
+}
+
+.assistant-text pre code {
+  background: none;
+  padding: 0;
+}
+
+.assistant-text blockquote {
+  margin: 0 0 0.7em;
+  padding-left: 0.8em;
+  border-left: 2px solid #343a46;
+  color: #c3cad6;
+}
+
+/* Wide tables must scroll inside the message rather than stretch the thread. */
+.assistant-text table {
+  display: block;
+  width: max-content;
+  max-width: 100%;
+  overflow-x: auto;
+  border-collapse: collapse;
+  margin: 0 0 0.7em;
+  font-size: 0.94em;
+}
+
+.assistant-text th,
+.assistant-text td {
+  border: 1px solid #343a46;
+  padding: 5px 9px;
+  text-align: left;
+}
+
+.assistant-text th {
+  background: rgba(127, 127, 127, 0.12);
+}
+
+.assistant-text a {
+  color: #8ab4ff;
+}
+
+.assistant-message {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.scenario-list {
+  display: grid;
+  gap: 6px;
+  margin-top: 14px;
+  text-align: left;
+}
+
+.scenario-hint {
+  margin: 22px 0 0;
+  text-align: left;
+  font-size: 13px;
+  opacity: 0.6;
+}
+
+/* Examples to type, not controls. They previously carried a border, a raised
+   background and button-like padding, so they read as clickable — and clicking
+   one did nothing, which reads as broken. */
+.scenario-list code {
+  display: block;
+  border: 0;
+  border-left: 2px solid #343a46;
+  border-radius: 0;
+  background: transparent;
+  color: #aab3c2;
+  padding: 2px 0 2px 12px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 13px;
+}
+
+.tool-card {
+  overflow: hidden;
+  border: 1px solid #3a4352;
+  border-radius: 12px;
+  background: #171a20;
+}
+
+.tool-card-header {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  gap: 9px;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  padding: 10px 12px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.tool-title {
+  flex: 1;
+  font-size: 13px;
+}
+
+.tool-toggle,
+.tool-label {
+  color: #9ca7b8;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.tool-status {
+  width: 9px;
+  height: 9px;
+  flex: 0 0 9px;
+  border-radius: 50%;
+}
+
+.tool-status.running {
+  background: #f5b942;
+  box-shadow: 0 0 0 4px rgba(245, 185, 66, 0.12);
+  animation: tool-pulse 1s ease-in-out infinite;
+}
+
+.tool-status.complete {
+  background: #52d18b;
+  box-shadow: 0 0 0 4px rgba(82, 209, 139, 0.12);
+}
+
+.tool-card-body {
+  display: grid;
+  gap: 10px;
+  border-top: 1px solid #303744;
+  padding: 11px 12px 12px;
+}
+
+.tool-card pre {
+  max-height: 280px;
+  overflow: auto;
+  margin: 5px 0 0;
+  border-radius: 8px;
+  background: #101217;
+  color: #cfd7e5;
+  padding: 9px 10px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 11px;
+  line-height: 1.45;
+  white-space: pre-wrap;
+}
+
+@keyframes tool-pulse {
+  50% {
+    opacity: 0.45;
+  }
+}
+
+.auth-header {
+  position: absolute;
+  z-index: 5;
+  top: 16px;
+  right: 24px;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  border: 1px solid #343a46;
+  border-radius: 12px;
+  background: rgba(23, 26, 32, 0.92);
+  padding: 8px 10px 8px 12px;
+  backdrop-filter: blur(12px);
+}
+
+.auth-header div {
+  display: grid;
+  gap: 1px;
+}
+
+.auth-header strong {
+  color: #eef3fb;
+  font-size: 13px;
+}
+
+.auth-header span {
+  color: #98a4b5;
+  font-size: 11px;
+}
+
+.auth-header button,
+.login-button {
+  border: 1px solid #526177;
+  border-radius: 9px;
+  background: #273041;
+  color: #eef3fb;
+  padding: 8px 12px;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+  text-decoration: none;
+}
+
+.auth-header button:disabled {
+  cursor: wait;
+  opacity: 0.65;
+}
+
+.login-shell {
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background:
+    radial-gradient(circle at 50% 0%, rgba(65, 87, 123, 0.24), transparent 42%),
+    #101217;
+}
+
+.login-card {
+  width: min(440px, 100%);
+  display: grid;
+  justify-items: center;
+  gap: 16px;
+  border: 1px solid #343a46;
+  border-radius: 20px;
+  background: #171a20;
+  padding: 38px;
+  text-align: center;
+  box-shadow: 0 24px 80px rgba(0, 0, 0, 0.35);
+}
+
+.login-card h1,
+.login-card p {
+  margin: 0;
+}
+
+.login-card p {
+  color: #aab4c3;
+  line-height: 1.55;
+}
+
+.login-logo {
+  display: grid;
+  width: 52px;
+  height: 52px;
+  place-items: center;
+  border-radius: 16px;
+  background: #273b60;
+  color: #fff;
+  font-weight: 800;
+}
+
+.login-button {
+  margin-top: 8px;
+  background: #315ea8;
+  border-color: #4777c5;
+  padding: 11px 17px;
+}
+
+.login-error {
+  color: #ff9d9d !important;
+  font-size: 13px;
+}
+
+@media (max-width: 700px) {
+  .auth-header {
+    top: 8px;
+    right: 8px;
+  }
+
+  .auth-header span {
+    display: none;
+  }
+}
+
+/* ---------------------------------------------------------------------------
+   Human approval card.
+   Rendered only when the optional approval feature is enabled; the default
+   read-only workflow never produces one.
+   --------------------------------------------------------------------------- */
+
+.approval-card {
+  margin: 0.75rem 0;
+  border: 1px solid rgba(217, 119, 6, 0.5);
+  border-radius: 14px;
+  padding: 1rem;
+  background: rgba(251, 191, 36, 0.08);
+}
+
+.approval-kicker {
+  font-size: 0.72rem;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  margin-bottom: 0.65rem;
+}
+
+.approval-summary {
+  white-space: pre-wrap;
+  word-break: break-word;
+  font: inherit;
+  line-height: 1.45;
+  margin: 0 0 0.9rem;
+  padding: 0;
+  background: transparent;
+}
+
+.approval-form,
+.approval-actions {
+  display: flex;
+  gap: 0.65rem;
+}
+
+.approval-form {
+  flex-direction: column;
+}
+
+.approval-form label {
+  font-weight: 700;
+  font-size: 0.85rem;
+}
+
+.approval-form textarea {
+  width: 100%;
+  resize: vertical;
+  border: 1px solid rgba(127, 127, 127, 0.4);
+  border-radius: 10px;
+  padding: 0.7rem;
+  font: inherit;
+  background: inherit;
+  color: inherit;
+}
+
+.approval-actions {
+  justify-content: flex-end;
+  flex-wrap: wrap;
+}
+
+.approval-primary,
+.approval-secondary {
+  border: 0;
+  border-radius: 9px;
+  padding: 0.55rem 0.85rem;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.approval-primary {
+  /* Explicit palette values, not `background: currentColor` with `color: Canvas`.
+     In any property other than `color`, `currentColor` resolves to the element's
+     OWN computed colour, so background and text come out identical and the label
+     is invisible — the primary button renders as a blank rectangle. */
+  background: #f5f7fa;
+  color: #101114;
+}
+
+.approval-secondary {
+  border: 1px solid rgba(127, 127, 127, 0.45);
+  background: transparent;
+  color: inherit;
+}
+
+.approval-primary:disabled,
+.approval-secondary:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.approval-status,
+.approval-error {
+  margin: 0.65rem 0 0;
+  font-size: 0.82rem;
+}
+
+.approval-error {
+  font-weight: 700;
+}
+
+/* Each option is a distinct action, so they are buttons rather than a radio
+   group plus a submit: one click, one decision, no ambiguity about what is
+   currently selected. */
+.approval-choices {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  margin-bottom: 0.75rem;
+}
+
+.approval-choice {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  padding: 0.6rem 0.75rem;
+  text-align: left;
+  border: 1px solid currentColor;
+  border-radius: 8px;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+}
+
+.approval-choice:hover:not(:disabled) {
+  background: rgba(127, 127, 127, 0.12);
+}
+
+.approval-choice:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.approval-choice-label {
+  font-weight: 600;
+}
+
+.approval-choice-description {
+  font-size: 0.8125rem;
+  opacity: 0.75;
+}

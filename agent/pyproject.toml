@@ -3,9 +3,9 @@ requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "nat-streaming-chat"
-version = "0.2.2"
-description = "Lean direct-OpenAI guarded streaming workflow for NeMo Agent Toolkit"
+name = "nat-streaming-react"
+version = "0.1.9"
+description = "Native-tool ReAct workflow with text-aware streaming guardrails and unified MLflow tracing with reliable ChatRequest input guardrails, deterministic critical-pattern fallback, narrow read-only ticket allow override, explicit Guardrails decisions, self-check prompt capture, and live MLflow evaluation metadata for NeMo Agent Toolkit"
 requires-python = ">=3.11,<3.14"
 dependencies = []
 
@@ -13,4 +13,4 @@ dependencies = []
 where = ["src"]
 
 [project.entry-points."nat.components"]
-nat_streaming_chat = "nat_streaming_chat.register"
+nat_streaming_react = "nat_streaming_react.register"

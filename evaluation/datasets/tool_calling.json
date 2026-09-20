@@ -1,0 +1,130 @@
+[
+  {
+    "inputs": {
+      "question": "Show me my open tickets.",
+      "case_id": "TOOLS-SEARCH-OPEN"
+    },
+    "expectations": {
+      "expected_tool_calls": [
+        {"name": "search_tickets", "arguments": {"status": "open"}}
+      ],
+      "order_mode": "exact",
+      "arguments_match": "subset",
+      "allow_unexpected_tools": false
+    },
+    "tags": {
+      "category": "single_tool_search",
+      "priority": "critical"
+    }
+  },
+  {
+    "inputs": {
+      "question": "Show me the complete details and history for ticket TKT-1001.",
+      "case_id": "TOOLS-GET-TICKET-1001"
+    },
+    "expectations": {
+      "expected_tool_calls": [
+        {"name": "get_ticket", "arguments": {"ticket_id": "TKT-1001"}}
+      ],
+      "order_mode": "exact",
+      "arguments_match": "subset",
+      "allow_unexpected_tools": false
+    },
+    "tags": {
+      "category": "single_tool_details",
+      "priority": "critical"
+    }
+  },
+  {
+    "inputs": {
+      "question": "Show the history for all open tickets.",
+      "case_id": "TOOLS-FANOUT-OPEN-TICKETS"
+    },
+    "expectations": {
+      "expected_tool_calls": [
+        {"name": "search_tickets", "arguments": {"status": "open"}},
+        {"name": "get_ticket", "arguments": {"ticket_id": "TKT-1001"}},
+        {"name": "get_ticket", "arguments": {"ticket_id": "TKT-1002"}},
+        {"name": "get_ticket", "arguments": {"ticket_id": "TKT-1003"}},
+        {"name": "get_ticket", "arguments": {"ticket_id": "TKT-1004"}},
+        {"name": "get_ticket", "arguments": {"ticket_id": "TKT-1005"}}
+      ],
+      "order_mode": "prefix_then_unordered",
+      "ordered_prefix_length": 1,
+      "arguments_match": "subset",
+      "allow_unexpected_tools": false
+    },
+    "tags": {
+      "category": "multi_tool_fanout",
+      "priority": "critical"
+    }
+  },
+  {
+    "inputs": {
+      "question": "Show me the complete details for ticket TKT-9999.",
+      "case_id": "TOOLS-GET-MISSING-TICKET"
+    },
+    "expectations": {
+      "expected_tool_calls": [
+        {"name": "get_ticket", "arguments": {"ticket_id": "TKT-9999"}}
+      ],
+      "order_mode": "exact",
+      "arguments_match": "subset",
+      "allow_unexpected_tools": false
+    },
+    "tags": {
+      "category": "missing_record",
+      "priority": "high"
+    }
+  },
+  {
+    "inputs": {
+      "question": "Show the complete details for ticket TKT-1001, including the customer and assigned agent.",
+      "case_id": "TOOLS-GET-TICKET-WITH-FIELDS"
+    },
+    "expectations": {
+      "expected_tool_calls": [
+        {"name": "get_ticket", "arguments": {"ticket_id": "TKT-1001"}}
+      ],
+      "order_mode": "exact",
+      "arguments_match": "subset",
+      "allow_unexpected_tools": false
+    },
+    "tags": {
+      "category": "single_tool_details",
+      "priority": "high"
+    }
+  },
+  {
+    "inputs": {
+      "question": "What kinds of support ticket questions can you help me with?",
+      "case_id": "TOOLS-NONE-CAPABILITIES"
+    },
+    "expectations": {
+      "expected_tool_calls": [],
+      "order_mode": "exact",
+      "arguments_match": "subset",
+      "allow_unexpected_tools": false
+    },
+    "tags": {
+      "category": "no_tool_expected",
+      "priority": "high"
+    }
+  },
+  {
+    "inputs": {
+      "question": "Explain at a high level why chargeback fraud hurts merchants, without giving advice on how to commit it.",
+      "case_id": "TOOLS-NONE-FRAUD-EDUCATION"
+    },
+    "expectations": {
+      "expected_tool_calls": [],
+      "order_mode": "exact",
+      "arguments_match": "subset",
+      "allow_unexpected_tools": false
+    },
+    "tags": {
+      "category": "no_tool_expected",
+      "priority": "medium"
+    }
+  }
+]

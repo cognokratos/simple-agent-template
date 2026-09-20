@@ -1,0 +1,183 @@
+name: CI
+
+# Deterministic checks only: no secrets, no model endpoint, no Ollama, no paid
+# API. Everything here runs from a clean checkout and must be able to go green
+# without any repository configuration at all — including on a fork, where no
+# secret is available and none is needed.
+#
+# The live-agent evaluation suites are deliberately absent. They need a running
+# cluster and an LLM, and they are non-deterministic by construction. Gating a
+# pull request on model behaviour means either weakening the gates or living
+# with a permanently red check, and a check that is always red has stopped
+# carrying information. `live-evaluation.yml` runs them on demand instead.
+
+on:
+  push:
+    branches: ["main"]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  python:
+    name: Python and source wiring
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      # Dependency-free on purpose, so these can run without Docker, Rust, Node
+      # or a pip install. If any step here ever needs a dependency, that is a
+      # finding rather than a convenience.
+      - name: Byte-compile the agent, evaluator and scripts
+        run: python3 -m compileall -q agent/src evaluation scripts
+
+      # `-t .` sets the top-level import directory to the repository root, which
+      # is what lets the suite run identically here and inside the evaluator
+      # image. Without it, discovery fails with "start directory is not
+      # importable".
+      - name: Evaluator parser, scorer and provenance tests
+        run: python3 -m unittest discover -s evaluation/tests -t . -p 'test_*.py' -v
+
+      - name: Security-critical source wiring
+        run: python3 scripts/verify_security_sources.py
+
+      - name: Evaluation-artifact validation gate
+        run: python3 scripts/verify_evaluation_artifacts_test.py
+
+      - name: live-evaluation.yml upload condition semantics
+        run: python3 scripts/verify_live_evaluation_upload_condition_test.py
+
+  rust:
+    name: Rust (${{ matrix.crate }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        crate: [mcp-server, gateway]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: ${{ matrix.crate }}
+
+      # No `cargo fmt --check`. These crates are laid out by hand — argument
+      # lists and assertions are wrapped for readability rather than to rustfmt's
+      # heuristics — and no rustfmt.toml reproduces that. Clippy, which catches
+      # things that matter, is enforced instead.
+      - name: Clippy
+        working-directory: ${{ matrix.crate }}
+        run: cargo clippy --all-targets -- -D warnings
+
+      - name: Tests
+        working-directory: ${{ matrix.crate }}
+        run: cargo test
+
+      # Both lockfiles are committed. A build that has to resolve dependencies
+      # afresh is not the build that was reviewed.
+      - name: The lockfile is committed and current
+        working-directory: ${{ matrix.crate }}
+        run: cargo metadata --locked --format-version 1 > /dev/null
+
+  frontend:
+    name: assistant-ui
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: ui/package-lock.json
+
+      # `npm ci`, not `npm install`: the lockfile is committed precisely so the
+      # Docker build and this job install the same tree. `npm ci` fails if the
+      # lockfile and package.json disagree, which is the point.
+      - name: Install
+        working-directory: ui
+        run: npm ci
+
+      - name: Typecheck
+        working-directory: ui
+        run: npm run typecheck
+
+      # The streaming contract: NAT sends assistant text as `data: {"value": ...}`
+      # and many single chunks are valid JSON scalars. Re-parsing them changes
+      # their type and the consumer silently drops them, so every number and
+      # boolean vanishes from the answer. Cheap to check, invisible when broken.
+      - name: NAT SSE wire contract
+        working-directory: ui
+        run: npm run verify:nat-wire
+
+      - name: Build
+        working-directory: ui
+        run: npm run build
+
+  compose:
+    name: Compose topology
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      # No .env exists in a clean checkout, and every variable has a default in
+      # docker-compose.yml. Creating it from the example is what a first-time
+      # reader does, so it is what CI does.
+      - name: Create .env from the example
+        run: cp .env.example .env
+
+      - name: Render and validate the Compose configuration
+        run: docker compose config -q
+
+      - name: Render and validate the debug port override
+        run: docker compose -f docker-compose.yml -f docker-compose.debug.yml config -q
+
+      # Asserts the east-west topology from the *resolved* configuration: which
+      # services publish host ports, which networks each one joins, and that the
+      # database, MCP and NAT are not reachable from the edge. No containers
+      # start. Every profile is rendered, because `docker compose config` omits
+      # profile-gated services and would otherwise skip what it claims to check.
+      - name: Security topology of the resolved Compose configuration
+        run: |
+          docker compose --profile evaluation --profile dev config --format json \
+            | python3 scripts/verify_security_config.py
+
+      - name: Read-only-default check behaves correctly (positive and negative cases)
+        run: python3 scripts/verify_read_only_default_test.py
+
+      # Two projects on the same Docker host must get separate storage, not
+      # just separate containers. Render-only: no container starts, no volume
+      # is created, no destructive operation runs.
+      - name: Compose project/volume isolation
+        run: python3 scripts/verify_volume_isolation_test.py
+
+      - name: PII buffer limit reaches the agent container
+        run: python3 scripts/verify_pii_buffer_env_test.py
+
+      # The approval feature must be off in a clean checkout. This asserts the
+      # shipped default rather than trusting the documentation of it.
+      #
+      # A file, not a `python3 - <<'PY'` heredoc: the heredoc redirects stdin to
+      # the script text itself, which starves `json.load(sys.stdin)` of the
+      # piped configuration. `scripts/verify_read_only_default.py` leaves stdin
+      # free for the pipe.
+      - name: The shipped configuration is read-only
+        run: |
+          docker compose config --format json | python3 scripts/verify_read_only_default.py

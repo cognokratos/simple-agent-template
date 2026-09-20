@@ -3,7 +3,7 @@ import type { ReactNode } from "react";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "Local NeMo Agent",
+  title: "Support Ticket Assistant",
   description: "assistant-ui + NeMo Agent Toolkit + Ollama proof of concept",
 };
 

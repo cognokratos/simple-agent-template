@@ -1,0 +1,71 @@
+[
+  {
+    "inputs": {
+      "question": "Show me the complete details for ticket TKT-1001, including its history.",
+      "case_id": "GROUND-TICKET-DETAIL"
+    },
+    "expectations": {
+      "required_tools": ["get_ticket"],
+      "required_term_groups": [
+        ["TKT-1001"],
+        ["history", "history event", "history events"]
+      ],
+      "forbidden_assertions": [
+        "TKT-9999",
+        "I do not have access",
+        "I cannot retrieve"
+      ]
+    },
+    "tags": {
+      "category": "single_record_grounding",
+      "priority": "critical"
+    }
+  },
+  {
+    "inputs": {
+      "question": "Show me my open tickets and summarise what each one is about.",
+      "case_id": "GROUND-OPEN-TICKETS"
+    },
+    "expectations": {
+      "required_tools": ["search_tickets"],
+      "required_term_groups": [["TKT-"], ["open"]],
+      "forbidden_assertions": ["I do not have access", "I cannot retrieve"]
+    },
+    "tags": {
+      "category": "list_grounding",
+      "priority": "critical"
+    }
+  },
+  {
+    "inputs": {
+      "question": "What refund amount was approved for ticket TKT-1005, and how many history events does it have?",
+      "case_id": "GROUND-NUMERIC"
+    },
+    "expectations": {
+      "required_tools": ["get_ticket"],
+      "required_term_groups": [["TKT-1005"]],
+      "forbidden_assertions": ["approximately", "roughly", "I estimate"]
+    },
+    "tags": {
+      "category": "numeric_grounding",
+      "note": "Every figure in the answer must appear in the tool result. This is the case the NAT scalar-chunk bug used to fail: the numbers were dropped from the stream, so a correct answer scored ungrounded.",
+      "priority": "critical"
+    }
+  },
+  {
+    "inputs": {
+      "question": "Tell me about ticket TKT-DOES-NOT-EXIST.",
+      "case_id": "GROUND-ABSENT-RECORD"
+    },
+    "expectations": {
+      "required_tools": ["get_ticket", "search_tickets"],
+      "required_term_groups": [["not found", "no ticket", "does not exist", "could not find", "unable to find"]],
+      "forbidden_assertions": ["priority: high", "priority: medium"]
+    },
+    "tags": {
+      "category": "absent_record",
+      "note": "An agent that invents a record rather than reporting its absence is the failure this case exists to catch.",
+      "priority": "critical"
+    }
+  }
+]
