@@ -22,6 +22,12 @@ Network reachability answers "can this packet arrive"; it cannot answer "is this
 caller the gateway". The static service credential answers the second question,
 so the two controls are complementary rather than redundant.
 
+A third question — "who is this caller acting for" — is answered by
+``RequireIdentityHeaderMiddleware``. NAT 1.9 can resolve that header itself
+(``general.front_end.identity_header``), and this deployment configures it so
+``Context.user_id`` is populated, but its refusal does not reach the client on
+the workflow routes. See that class for the measured behaviour.
+
 Implementation notes
 --------------------
 * This is pure ASGI middleware rather than Starlette's ``BaseHTTPMiddleware``.
@@ -35,8 +41,8 @@ Implementation notes
   ``PUBLIC_PATHS`` is deliberately minimal — liveness only.
 * ``GET /version`` reports what this agent is (see ``provenance``) so an
   evaluation run can name the agent it measured. It is authenticated like every
-  other non-health route, and reports digests rather than prompt text or any
-  credential.
+  other non-health route — credential *and* asserted identity — and reports
+  digests rather than prompt text or any credential.
 """
 
 import hmac
@@ -50,8 +56,10 @@ from fastapi import FastAPI
 from nat.front_ends.fastapi.fastapi_front_end_plugin_worker import FastApiFrontEndPluginWorker
 
 from nat_streaming_react import provenance
+from nat_streaming_react.interaction_guard import IDENTITY_HEADER
 from nat_streaming_react.interaction_guard import OwnerAwareExecutionStore
 from nat_streaming_react.interaction_guard import ResponderIdentityMiddleware
+from nat_streaming_react.interaction_guard import _sole_identity_header
 from nat_streaming_react.observability.trace_context import WorkflowTraceContextMiddleware
 
 logger = logging.getLogger(__name__)
@@ -122,6 +130,85 @@ class StaticServiceKeyMiddleware:
         await self.app({**scope, "headers": sanitized}, receive, send)
 
 
+_MISSING_IDENTITY_BODY = b'{"error":"missing or ambiguous authenticated identity"}'
+
+
+class RequireIdentityHeaderMiddleware:
+    """Require exactly one non-empty identity header on every non-health route.
+
+    Why this exists when ``identity_header`` is already configured
+    -------------------------------------------------------------
+    ``general.front_end.identity_header`` makes NAT 1.9 resolve the
+    gateway-asserted identity into ``Context.user_id``, and ``UserManager``
+    raises ``IdentityHeaderError`` when it is missing, empty or repeated. NAT
+    registers an exception handler that turns that into a 401.
+
+    On this deployment's endpoints that handler is never reached. NAT's
+    ``add_generate_routes`` passes ``enable_interactive=True`` **unconditionally**
+    for the workflow path and its ``/stream`` and ``/full`` variants — the
+    ``enable_interactive_extensions`` setting only governs whether the
+    ``/executions/...`` endpoints are mounted, not which runner serves the
+    workflow. The interactive runner acquires the session inside a background
+    task, after the response has begun, and wraps it in a blanket
+    ``except Exception`` that pushes the error into the stream body. So a request
+    with no asserted identity is answered **200** with a ``WORKFLOW_ERROR``
+    event, not 401, and the identity requirement silently becomes advisory.
+
+    Measured, not assumed: without this middleware, a keyed request carrying no
+    identity header returns 200 while the agent log shows
+    ``IdentityHeaderError: Configured identity header 'x-authenticated-user-id'
+    is missing``. ``make auth-test`` asserts the 401 this middleware produces.
+
+    The configured ``identity_header`` is still worth keeping — it is what
+    populates ``Context.user_id``, and therefore the per-user span attribution
+    governed by ``observability.trace_processor.UserIdentityProcessor``. The two
+    are complementary: NAT resolves the identity, this decides whether a request
+    without one is served at all.
+
+    Pure ASGI for the same reason as the other middleware here: it must not
+    interpose a buffering layer on a streamed response.
+    """
+
+    def __init__(
+        self,
+        app: Any,
+        *,
+        public_paths: frozenset[str] = PUBLIC_PATHS,
+    ) -> None:
+        self.app = app
+        self._public_paths = public_paths
+
+    async def __call__(
+        self,
+        scope: dict[str, Any],
+        receive: Callable[[], Awaitable[Any]],
+        send: Callable[[Any], Awaitable[None]],
+    ) -> None:
+        if scope.get("type") != "http" or scope.get("path") in self._public_paths:
+            await self.app(scope, receive, send)
+            return
+
+        # One parsing rule for the whole package: exactly one non-empty
+        # occurrence, matching both NAT's UserManager and the approval
+        # responder check, so no two layers disagree about who is asking.
+        if _sole_identity_header(scope) is None:
+            logger.warning(
+                "Rejected %s %s: no unambiguous %s",
+                scope.get("method"),
+                scope.get("path"),
+                IDENTITY_HEADER,
+            )
+            await send({
+                "type": "http.response.start",
+                "status": 401,
+                "headers": [(b"content-type", b"application/json")],
+            })
+            await send({"type": "http.response.body", "body": _MISSING_IDENTITY_BODY})
+            return
+
+        await self.app(scope, receive, send)
+
+
 class AuthenticatedFastApiFrontEndPluginWorker(FastApiFrontEndPluginWorker):
     """NAT FastAPI worker that authenticates every non-health request."""
 
@@ -163,6 +250,15 @@ class AuthenticatedFastApiFrontEndPluginWorker(FastApiFrontEndPluginWorker):
         app.add_middleware(
             WorkflowTraceContextMiddleware,
             excluded_paths=PUBLIC_PATHS,
+        )
+
+        # Just inside the credential check below, so the two 401s stay ordered:
+        # "you are not the gateway" is answered before "you did not say who you
+        # are acting for". NAT's own identity_header enforcement cannot do this
+        # on the workflow routes; see RequireIdentityHeaderMiddleware.
+        app.add_middleware(
+            RequireIdentityHeaderMiddleware,
+            public_paths=PUBLIC_PATHS,
         )
 
         # add_middleware puts this outermost, ahead of NAT's own middleware, so

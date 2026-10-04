@@ -471,6 +471,22 @@ def _max_attempts() -> int:
         return 4
 
 
+def _principal() -> str:
+    """The identity this harness asserts to the agent.
+
+    The evaluation harness calls the agent directly rather than through the
+    gateway, so no browser login stands behind it. Since NAT 1.9 the agent is
+    configured with ``general.front_end.identity_header`` and answers 401 to a
+    request that asserts no identity, so the harness must name itself.
+
+    A synthetic principal rather than a real user's id, deliberately: an
+    evaluation run is not a person, and traces and any audit record should say
+    so rather than attributing machine traffic to someone who was not there.
+    """
+
+    return os.getenv("EVALUATION_PRINCIPAL", "").strip() or "evaluation-harness"
+
+
 def invoke_live_agent(question: str, case_id: str | None = None) -> dict[str, Any]:
     agent_api_key = os.environ.get("AGENT_API_KEY", "").strip()
     if not agent_api_key:
@@ -482,6 +498,7 @@ def invoke_live_agent(question: str, case_id: str | None = None) -> dict[str, An
             "Content-Type": "application/json",
             "Accept": "text/event-stream",
             "Authorization": f"Bearer {agent_api_key}",
+            "x-authenticated-user-id": _principal(),
             "X-Evaluation-Case-Id": case_id or "",
         },
         method="POST",

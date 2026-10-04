@@ -16,6 +16,13 @@ The second half asserts what the provider exists for: an optional pass-through
 parameter configured empty must be **absent** from the client, not sent as ``""``
 or as the literal string ``"null"``.
 
+Note for upgrades: NAT 1.9 wraps every LangChain client in
+``configurable_fields(model_name=...)``, so ``builder.get_llm`` returns a
+``RunnableConfigurableFields`` where 1.8 returned a ``ChatOpenAI``. The checks
+below unwrap it rather than assuming the shape — and assert that the wrapper is
+there, because its presence is what makes per-request model selection possible
+upstream, and this workflow deliberately does not offer it.
+
 Run inside the agent image::
 
     docker compose exec agent python /app/verify_llm_config.py
@@ -91,6 +98,25 @@ def check_optional_parameters() -> None:
     print("PASS: prune_empty_params drops absent values at every depth")
 
 
+def _unwrap_chat_client(client):
+    """Reach the ChatOpenAI underneath NAT's Runnable wrappers.
+
+    NAT 1.9 wraps every LangChain client in
+    ``configurable_fields(model_name=...)`` so a request can override the model
+    per call, which makes the object NAT hands back a
+    ``RunnableConfigurableFields`` rather than the ``ChatOpenAI`` 1.8 returned.
+    The wrapper keeps the real client on ``.default``; retry and thinking
+    patches may add further layers, so unwrap until there is nothing left to
+    unwrap rather than assuming a fixed depth.
+    """
+
+    seen = 0
+    while (inner := getattr(client, "default", None)) is not None and seen < 8:
+        client = inner
+        seen += 1
+    return client
+
+
 async def check_the_client_actually_builds() -> None:
     """The regression. Needs no network: ChatOpenAI construction is local."""
 
@@ -102,12 +128,41 @@ async def check_the_client_actually_builds() -> None:
         client = await builder.get_llm("primary", wrapper_type=LLMFrameworkEnum.LANGCHAIN)
 
     assert client is not None, "the provider yielded no client"
-    assert type(client).__name__ == "ChatOpenAI", type(client).__name__
-    print(f"PASS: the registered provider builds a {type(client).__name__}")
 
-    model = getattr(client, "model_name", None)
+    chat_client = _unwrap_chat_client(client)
+    assert type(chat_client).__name__ == "ChatOpenAI", (
+        f"expected a ChatOpenAI under NAT's wrappers, found {type(chat_client).__name__} "
+        f"(outermost was {type(client).__name__})"
+    )
+    print(f"PASS: the registered provider builds a {type(chat_client).__name__}")
+
+    model = getattr(chat_client, "model_name", None)
     assert model, "the built client has no model name"
     print(f"PASS: the built client is bound to {model!r}")
+
+    # The point of the provider: a parameter configured empty must be absent
+    # from the *built* client, not merely from the config dump. Asserted here
+    # against the real object, because the dump-level check above cannot see
+    # what ChatOpenAI actually received.
+    for field in ("reasoning_effort",):
+        value = getattr(chat_client, field, None)
+        in_kwargs = field in (getattr(chat_client, "model_kwargs", None) or {})
+        assert value is None and not in_kwargs, (
+            f"{field} reached the built client as {value!r} despite being configured empty"
+        )
+    print("PASS: an empty optional parameter is absent from the built client, not sent blank")
+
+    # NAT 1.9 added per-request model override. This workflow does not use it —
+    # `register._stream_fn` never passes `configurable` — and the gateway
+    # rejects a client-supplied `model` outright (`deny_unknown_fields` on
+    # ChatProxyRequest), so the configured model is the only one reachable.
+    # Asserted so that adopting NAT's own `_build_lc_config` later is a visible
+    # decision rather than a silent handover of model choice to the caller.
+    assert type(client).__name__ == "RunnableConfigurableFields", (
+        f"NAT no longer wraps the client for per-request model override "
+        f"(found {type(client).__name__}); re-check who can choose the model"
+    )
+    print("PASS: per-request model override exists upstream and is deliberately unused here")
 
 
 def main() -> None:

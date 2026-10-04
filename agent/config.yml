@@ -7,6 +7,31 @@ general:
     # headers. This replaces the former build-time rewrite of NAT's installed
     # fastapi_front_end_plugin_worker.py.
     runner_class: nat_streaming_react.fastapi_worker.AuthenticatedFastApiFrontEndPluginWorker
+    # NAT 1.9's supported way to consume an identity asserted by a trusted
+    # upstream proxy. This resolves the header into a UserInfo and publishes it
+    # as Context.user_id, which is what makes per-user span attribution work.
+    #
+    # It does NOT reject a request that asserts no identity, despite raising
+    # IdentityHeaderError: NAT serves the workflow routes through its
+    # interactive runner unconditionally, and that runner catches every
+    # exception into the response body after the stream has started, so the
+    # caller sees 200. Enforcement is therefore done ahead of NAT by
+    # RequireIdentityHeaderMiddleware in fastapi_worker.py, which is what
+    # `make auth-test` asserts. Keep both: one resolves the identity, the other
+    # decides whether a request lacking it is served at all.
+    #
+    # NAT's own guidance is that this must only be enabled where untrusted
+    # clients cannot reach the server directly and the proxy strips any
+    # client-supplied value. Both hold here: NAT publishes no host port, and
+    # the gateway builds a fresh upstream request rather than forwarding client
+    # headers. The service credential enforced by `runner_class` above is what
+    # makes "the caller is the gateway" checkable at all -- network
+    # reachability alone cannot answer it. Do not enable this without it.
+    #
+    # Every direct caller must now send the header: the gateway does
+    # (gateway/src/proxy.rs), and the evaluation harness and the end-to-end
+    # trace check send an explicit synthetic principal.
+    identity_header: x-authenticated-user-id
     # Mounts NAT's /executions/... interaction endpoints, which the optional
     # human-approval feature needs and a read-only deployment does not. Off by
     # default: see the `functions:` block below for the full opt-in.

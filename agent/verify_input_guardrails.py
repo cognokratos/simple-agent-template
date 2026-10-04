@@ -5,6 +5,7 @@ from nat_streaming_react.text_guardrails import _critical_input_matches
 from nat_streaming_react.text_guardrails import _input_text
 from nat_streaming_react.text_guardrails import _read_only_ticket_allow_matches
 from nat_streaming_react.text_guardrails import _env_bool
+from nat_streaming_react.text_guardrails import _input_limit
 from nat_streaming_react.text_guardrails import _is_rail_block_envelope
 from nat_streaming_react.text_guardrails import _prior_turn_text
 from nat_streaming_react.text_guardrails import _resolve_input_policy
@@ -204,3 +205,62 @@ assert not _is_rail_block_envelope("plain text mentioning an error")
 assert not _is_rail_block_envelope(None)
 assert not _is_rail_block_envelope(["error"])
 print("PASS envelope: only NeMo's exact block envelope is treated as a verdict")
+
+# ---------------------------------------------------------------------------
+# The guard-model input is bounded, and the bound refuses rather than truncates.
+#
+# A classifier shown a prefix decides about the prefix. If an oversized message
+# were truncated, 32k of benign text followed by the real request would be
+# classified "safe" on the benign part alone. The only sound answer to input
+# the guard cannot review in full is to decline it.
+# ---------------------------------------------------------------------------
+
+for value, expected in (("65536", 65536), ("300", 300), ("10", 256), ("not-a-number", 32_000)):
+    os.environ["GUARDRAILS_INPUT_MAX_CHARS"] = value
+    assert _input_limit() == expected, (value, _input_limit())
+os.environ.pop("GUARDRAILS_INPUT_MAX_CHARS", None)
+assert _input_limit() == 32_000
+print(f"PASS input limit: default {_input_limit()} characters, floor enforced, unreadable value ignored")
+
+# The limit must sit above anything a real support question needs, or it becomes
+# an availability bug rather than a control.
+for name, prompt in {**READ_ONLY_ALLOW_CASES, **BLOCK_CASES}.items():
+    assert len(prompt) < _input_limit(), (name, len(prompt))
+print("PASS input limit: every shipped fixture is comfortably under the bound")
+
+# ---------------------------------------------------------------------------
+# What `output_parser: is_content_safe` actually does in nemoguardrails 0.21.
+#
+# Measured, not assumed, and pinned here because the whole LLM half of the
+# input rail rests on it. The parser normalises the response, keeps the first
+# TWO tokens, and matches them against {safe, unsafe, yes, no} in that order.
+# ---------------------------------------------------------------------------
+
+from nemoguardrails.llm.output_parsers import is_content_safe
+
+# 1. The verdicts the configured prompt asks for, parsed exactly and
+#    case-insensitively. `is_safe` is the first element; False means blocked.
+for response, is_safe in (("Yes", False), ("yes.", False), ("No", True), ("NO", True), ("No - benign", True)):
+    assert is_content_safe(response)[0] is is_safe, response
+
+# 2. Fail-closed on anything it does not recognise, including an empty
+#    response. This is the property that matters most: a guard model that
+#    rambles, errors into empty output, or answers in another language blocks
+#    rather than admits. (NAT's own content-safety middleware defaulted the
+#    other way until 1.9 changed it; this parser was always correct.)
+for response in ("", "   ", "Maybe", "I cannot determine that", "Peut-être", "42"):
+    assert is_content_safe(response)[0] is False, response
+
+# 3. Known hazard, pinned so it cannot be forgotten: matching is by membership
+#    in the first two tokens, and "safe" is tested before "yes"/"unsafe". A
+#    response whose first two tokens contain the bare word "safe" therefore
+#    parses as safe even when the surrounding words negate it.
+assert is_content_safe("Not safe")[0] is True, "0.21 precedence changed; re-check the mitigations below"
+# Three things keep that from being reachable in this deployment, and all three
+# are asserted elsewhere in this suite or in config.yml:
+#   * the prompt demands "exactly Yes or No and nothing else";
+#   * `max_tokens: 4` bounds the response to roughly one word;
+#   * _critical_input_matches blocks the high-risk categories deterministically,
+#     without consulting the model at all, and outranks any allow.
+# If any of those is relaxed, this parser stops being safe to rely on alone.
+print("PASS verdict parser: exact Yes/No, fail-closed on unrecognised output, 'Not safe' hazard pinned")

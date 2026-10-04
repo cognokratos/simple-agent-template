@@ -129,6 +129,60 @@ headers missing — a security-relevant field disappearing with no error anywher
 `x-authenticated-email` is redacted from telemetry; see
 [OBSERVABILITY.md](OBSERVABILITY.md).
 
+### The agent requires an asserted identity
+
+Two layers, because NAT's own one does not reach the client.
+
+`general.front_end.identity_header: x-authenticated-user-id` in
+`agent/config.yml` is NAT 1.9's supported way to consume an identity asserted by
+a trusted proxy. It resolves the header into a `UserInfo` and publishes it as
+`Context.user_id`, which is what makes per-user span attribution possible.
+
+It is **not** what refuses a request that asserts nothing. NAT raises
+`IdentityHeaderError` and registers a handler that would turn it into a `401`,
+but `add_generate_routes` passes `enable_interactive=True` unconditionally for
+the workflow path and its `/stream` and `/full` variants — the
+`enable_interactive_extensions` setting only governs whether the
+`/executions/...` endpoints are mounted, not which runner serves the workflow.
+The interactive runner acquires the session in a background task after the
+response has begun, inside a blanket `except Exception` that pushes the error
+into the stream body. Measured on 1.9.0: a keyed request with no identity header
+returns **200** with a `WORKFLOW_ERROR` event while the agent log shows
+`IdentityHeaderError: Configured identity header 'x-authenticated-user-id' is
+missing`.
+
+`RequireIdentityHeaderMiddleware` in `fastapi_worker.py` is therefore what
+actually enforces it: pure ASGI, ahead of NAT, requiring exactly one non-empty
+occurrence on every non-health route and answering `401` otherwise. `make
+auth-test` asserts that `401`, so the control cannot quietly revert to advisory.
+
+Both halves of the rule matter:
+
+* **Missing.** Previously a caller holding the service credential could reach
+  the workflow with no identity at all. The approval module refused to mint a
+  token in that state, but nothing stopped the request earlier, and the refusal
+  was the only thing standing between an unattributed request and an
+  unattributed audit record.
+* **Repeated.** A repeated header is ambiguous, not a list. Accepting the first
+  occurrence would let anything able to append a header decide who the user is.
+  `ResponderIdentityMiddleware` applies the same exactly-once rule to approval
+  responses, so both sides of an ownership check agree about the same request.
+
+This does **not** replace the service credential, and enabling it without one
+would be a mistake. NAT's own guidance is that a trusted identity header is only
+sound where untrusted clients cannot reach the server directly and the proxy
+strips any client-supplied value. Network reachability answers "can this packet
+arrive"; only the credential answers "is this caller the gateway". The two are
+complementary layers over the same question, and `make auth-test` asserts each
+independently — no key, key without identity, key with a repeated identity, and
+key with a well-formed identity.
+
+Every direct caller therefore names itself. The gateway mints the header from
+the validated session; the evaluation harness and the end-to-end trace check
+assert a synthetic principal (`EVALUATION_PRINCIPAL`, default
+`evaluation-harness`), because an evaluation run is not a person and should not
+be recorded as one.
+
 ## Verifying it
 
 ```

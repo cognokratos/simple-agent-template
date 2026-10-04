@@ -113,12 +113,41 @@ The front-end worker already strips `Authorization` from the ASGI scope before
 NAT can see it, so this is the second layer, on the principle that a credential
 must get past two independent controls to be exported.
 
+## Per-user attribution
+
+NAT 1.9 attributes every span to the authenticated user, writing two keys:
+`nat.user.id` (always, `"unknown"` when there is none) and `user.id` (only when
+set — backends such as MLflow and Langfuse group traces by it).
+
+`UserIdentityProcessor` decides whether either leaves this process.
+**Off unless `OTEL_TRACE_USER_ID=true`.**
+
+What the value is matters to that decision. With
+`general.front_end.identity_header` configured, NAT does not put the gateway's
+identifier on the span: it derives
+`uuid5(namespace, "trusted-header:<header>\x1f<id>")` and exports that. A stable
+pseudonym is a weaker disclosure than a raw subject id, but it is not anonymity
+— it is the same value for the same person on every request, so a trace store
+holding it can be used to reconstruct one person's history of questions. The
+traces already carry the question and the answer; the identifier is what turns
+them from a corpus into a per-person record.
+
+That is a decision for whoever operates the trace store and knows its access
+controls and retention, which is why it is a switch rather than a default. Turn
+it on where the backend is access-controlled and attribution helps triage.
+
+When off, `user.id` is **dropped** rather than masked — a literal placeholder
+would become a user in those backends' UIs — and `nat.user.id` is set to
+`[redacted]`, which keeps "not exported by policy" distinguishable from NAT's
+own `"unknown"`, meaning no identity was resolved at all.
+
 ## Configuration
 
 | Variable | Default | Effect |
 | --- | --- | --- |
 | `NAT_TRACE_CAPTURE_CONTENT` | `true` | Record the readable question and answer. Disabling still records errors — a failure signal is not request content, and a root span with no output and no reason is what this pipeline exists to avoid. |
 | `NAT_TRACE_CONTENT_MAX_CHARS` | `65536` | Per-field bound; truncation is marked with `nat.trace.content_truncated` |
+| `OTEL_TRACE_USER_ID` | `false` | Export the per-user identifier NAT 1.9 stamps on every span. See above. |
 | `OTEL_SERVICE_NAME` | `tickets-agent` | MLflow experiment / service name |
 | `OTEL_COLLECTOR_TRACES_ENDPOINT` | collector | OTLP/HTTP endpoint |
 

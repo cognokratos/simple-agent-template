@@ -35,8 +35,11 @@ from opentelemetry import trace as otel_trace
 
 from nat_streaming_react.observability import trace_content
 from nat_streaming_react.observability.trace_context import start_request_trace
+from nat_streaming_react.observability.trace_processor import OTEL_USER_ID_KEY
 from nat_streaming_react.observability.trace_processor import REDACTED
 from nat_streaming_react.observability.trace_processor import SensitiveHeaderRedactionProcessor
+from nat_streaming_react.observability.trace_processor import USER_ID_ENV
+from nat_streaming_react.observability.trace_processor import UserIdentityProcessor
 from nat_streaming_react.observability.trace_processor import WorkflowContentProcessor
 
 RUN_ID = "test-run-id"
@@ -302,6 +305,58 @@ def test_credentials_never_reach_telemetry() -> None:
     assert headers["x-authenticated-user-id"] == "support-rep-1"
     assert "super-secret-agent-key" not in processed.attributes["nat.metadata"]
     print("PASS: credential headers are redacted, correlation identifiers survive")
+
+
+def test_user_attribution_is_off_by_default() -> None:
+    """NAT 1.9 attributes every span to a user; exporting that is opt-in here."""
+
+    span = workflow_span(**{"nat.user.id": "8f14e45f-ceea-567d-a1d7-1c2d5e4a91b3"})
+    span.set_attribute(OTEL_USER_ID_KEY, "8f14e45f-ceea-567d-a1d7-1c2d5e4a91b3")
+
+    processed = asyncio.run(UserIdentityProcessor(enabled=False).process(span))
+
+    # Dropped outright: backends group traces by this key, so a placeholder
+    # would become a user in their UI.
+    assert OTEL_USER_ID_KEY not in processed.attributes
+    # Marked, so "not exported by policy" stays distinguishable from NAT's own
+    # "unknown", which means no identity was resolved at all.
+    assert processed.attributes["nat.user.id"] == REDACTED
+    assert "8f14e45f" not in json.dumps(processed.attributes)
+    print("PASS: per-user span attribution is withheld unless enabled")
+
+
+def test_user_attribution_is_exported_when_enabled() -> None:
+    """The switch has to actually switch, or the default is not a choice."""
+
+    user_id = "8f14e45f-ceea-567d-a1d7-1c2d5e4a91b3"
+    span = workflow_span(**{"nat.user.id": user_id})
+    span.set_attribute(OTEL_USER_ID_KEY, user_id)
+
+    processed = asyncio.run(UserIdentityProcessor(enabled=True).process(span))
+
+    assert processed.attributes[OTEL_USER_ID_KEY] == user_id
+    assert processed.attributes["nat.user.id"] == user_id
+    print("PASS: per-user span attribution is exported when enabled")
+
+
+def test_user_attribution_reads_its_environment_switch() -> None:
+    """``enabled=None`` must consult OTEL_TRACE_USER_ID, not a hardcoded default."""
+
+    previous = os.environ.get(USER_ID_ENV)
+    try:
+        os.environ[USER_ID_ENV] = "true"
+        assert UserIdentityProcessor()._enabled is True
+        for disabled in ("false", "0", "", "no", "maybe"):
+            os.environ[USER_ID_ENV] = disabled
+            assert UserIdentityProcessor()._enabled is False, disabled
+        os.environ.pop(USER_ID_ENV, None)
+        assert UserIdentityProcessor()._enabled is False
+    finally:
+        if previous is None:
+            os.environ.pop(USER_ID_ENV, None)
+        else:
+            os.environ[USER_ID_ENV] = previous
+    print("PASS: per-user attribution switch is read from the environment, default off")
 
 
 def _function_context():
@@ -850,6 +905,9 @@ def main() -> None:
     test_unreadable_boolean_keeps_the_safe_default()
     test_registry_is_bounded()
     test_credentials_never_reach_telemetry()
+    test_user_attribution_is_off_by_default()
+    test_user_attribution_is_exported_when_enabled()
+    test_user_attribution_reads_its_environment_switch()
     test_streaming_output_block_records_released_refusal_not_raw_secret()
     test_streaming_benign_scalars_are_preserved_in_the_recorded_answer()
     test_concurrent_streaming_requests_do_not_mix_captured_answers()

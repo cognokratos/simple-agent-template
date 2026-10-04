@@ -1,18 +1,36 @@
 # NVIDIA's built-in `_type: react_agent` is implemented by the NAT LangChain
-# plugin. Version 1.8.0 does not expose a smaller OpenAI-only ReAct extra, so
-# this supported ReAct variant necessarily installs the complete plugin.
-nvidia-nat[langchain,opentelemetry]==1.8.0
+# plugin. 1.9.0 splits that plugin's provider integrations into optional
+# extras, so this template installs only the OpenAI one instead of the complete
+# set 1.8.0 hard-depended on (langchain-aws, -community, -exa, -huggingface,
+# -litellm, -milvus, -nvidia-ai-endpoints, -oci, plus wikipedia and openevals).
+# The core pins are unchanged across the two releases -- langchain >=1.3.3,
+# langchain-core >=1.4.0, langgraph >=1.0.5 -- so this is a smaller install of
+# the same framework, not a framework migration.
+nvidia-nat==1.9.0
+nvidia-nat-langchain[openai]==1.9.0
+nvidia-nat-opentelemetry==1.9.0
 
-# NeMo Guardrails middleware. This constrains nemoguardrails to >=0.11,<0.22,
-# which is why the pin below is 0.21.0 and not the current release. Three
-# streaming rail defects in 0.21 are fixed in 0.23.0 and are worked around from
+# Required by NAT's SQLAlchemy asyncio use (the execution and job stores), and
+# not declared by anything that survives the extras split above. SQLAlchemy is
+# still installed -- langchain-classic depends on it -- but it only pulls
+# greenlet under platform markers that the 1.8 dependency set happened to
+# satisfy through langchain-community. Without this the agent fails at workflow
+# initialisation with "The SQLAlchemy asyncio module requires that the Python
+# 'greenlet' library is installed", which is a startup failure rather than
+# anything a test would catch. Named as the extra rather than as `greenlet`
+# directly, so the reason travels with the requirement.
+sqlalchemy[asyncio]
+
+# NeMo Guardrails middleware. This still constrains nemoguardrails to
+# >=0.11,<0.22 in 1.9.0 -- the requirement is byte-identical to 1.8.0's -- which
+# is why the pin below is 0.21.0 and not the current release. Three streaming
+# rail defects in 0.21 are fixed in 0.23.0 and are worked around from
 # application code in nat_streaming_react.guardrails_compat; that module
 # self-disables and can be deleted once this pin allows >=0.23.
-nvidia-nat-security[guardrails]==1.8.0
+nvidia-nat-security[guardrails]==1.9.0
 
 # MCP client integration used to discover the Rust server's tools.
-nvidia-nat-mcp==1.8.0
+nvidia-nat-mcp==1.9.0
 # Local Presidio analyzer/anonymizer dependencies used by the deterministic
 # output masking rail. The sdd extra matches NeMo Guardrails 0.21.0.
 nemoguardrails[sdd,tracing]==0.21.0
-

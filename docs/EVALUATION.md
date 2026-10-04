@@ -155,6 +155,14 @@ Nothing in the core is domain-specific. Override:
 | `EVALUATION_MODEL_PREFIX` | how the deployed agent is grouped in MLflow |
 | `*_EVALUATION_EXPERIMENT` / `*_EVALUATION_DATASET` | per-suite MLflow names |
 | `EVALUATION_SYSTEM_PROMPT_NAME` / `EVALUATION_RAIL_PROMPT_NAME` | prompt-registry names |
+| `EVALUATION_PRINCIPAL` | the identity the harness asserts to the agent (default `evaluation-harness`) |
+
+The harness calls the agent directly rather than through the gateway, so no
+browser login stands behind it, and the agent requires an asserted identity on
+every request. A synthetic principal is used deliberately: an evaluation run is
+not a person, and neither traces nor any audit record should attribute machine
+traffic to someone who was not there. See
+[SECURITY.md](SECURITY.md#the-agent-requires-an-asserted-identity).
 
 Domain vocabulary belongs in the dataset — `required_term_groups`,
 `forbidden_assertions`, `forbidden_strings`, `required_tools`,
