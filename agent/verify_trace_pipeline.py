@@ -14,7 +14,9 @@ without a live model or collector:
 * streamed text is accumulated without buffering the client's stream;
 * credential-bearing headers never reach exported telemetry;
 * the raw gateway identity never reaches exported telemetry, whatever
-  ``OTEL_TRACE_USER_ID`` says — that switch governs only NAT's pseudonym.
+  ``OTEL_TRACE_USER_ID`` says — that switch governs only NAT's pseudonym;
+* FastAPI's native request tracing and OTLP auto-configuration are off, so the
+  agent exports one trace model rather than two.
 """
 
 from __future__ import annotations
@@ -416,6 +418,111 @@ def test_raw_gateway_identity_never_reaches_telemetry() -> None:
             assert processed.attributes["nat.user.id"] == REDACTED
             assert SYNTHETIC_PSEUDONYM not in exported
     print("PASS: raw gateway identity is redacted in both modes; only the pseudonym is switchable")
+
+
+def test_fastapi_native_telemetry_is_switched_off() -> None:
+    """FastAPI's own tracing must not run, or export, beside the agent's.
+
+    A control app proves the check can fail: with telemetry left on, FastAPI
+    traces requests and its lifespan attaches an OTLP exporter to the provider.
+    The same steps against a switched-off app must do neither. An explicit
+    provider is passed through FastAPI's public ``telemetry=`` argument so the
+    process-wide provider is never touched and "enabled" does not depend on
+    what else this script configured.
+    """
+
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+    from opentelemetry.sdk.trace import TracerProvider
+    from opentelemetry.sdk.trace.export import SimpleSpanProcessor
+    from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
+
+    from nat_streaming_react.fastapi_worker import disable_fastapi_native_telemetry
+
+    def app_with_provider():
+        exporter = InMemorySpanExporter()
+        provider = TracerProvider()
+        provider.add_span_processor(SimpleSpanProcessor(exporter))
+        try:
+            app = FastAPI(telemetry={"tracer_provider": provider})
+        except TypeError:
+            return None, None, None
+        app.get("/health")(lambda: {"status": "ok"})
+        return app, provider, exporter
+
+    def span_processors(provider) -> int:
+        # SDK-private, but the only place an attached processor is visible.
+        return len(provider._active_span_processor._span_processors)
+
+    # Pinned for the whole test, unreachable on purpose: only *whether* an
+    # exporter is attached matters, and inside the agent container the ambient
+    # value is the real collector, which must never receive these test spans.
+    with _pinned_env(OTEL_EXPORTER_OTLP_TRACES_ENDPOINT="http://127.0.0.1:9/v1/traces"):
+        control, _, control_spans = app_with_provider()
+        if control is None:
+            print("PASS: this FastAPI has no native telemetry to disable")
+            return
+        assert control._native_telemetry.enabled() is True, "precondition: FastAPI traces by default"
+        # Not a context manager, so no lifespan runs and no exporter is
+        # attached: these spans reach only memory.
+        TestClient(control).get("/health")
+        assert control_spans.get_finished_spans(), "precondition: FastAPI traces a health probe"
+
+        control, control_provider, _ = app_with_provider()
+        before = span_processors(control_provider)
+        with TestClient(control):  # runs lifespan startup and shutdown
+            pass
+        assert span_processors(control_provider) == before + 1, (
+            "precondition: FastAPI's lifespan attaches its own OTLP exporter"
+        )
+
+        app, provider, exporter = app_with_provider()
+        assert disable_fastapi_native_telemetry(app), "FastAPI moved its telemetry switch"
+        assert app._native_telemetry.enabled() is False, "FastAPI would still trace requests"
+        before = span_processors(provider)
+        with TestClient(app) as client:
+            for _ in range(3):
+                assert client.get("/health").status_code == 200
+        assert exporter.get_finished_spans() == (), (
+            f"FastAPI still traced requests: {[s.name for s in exporter.get_finished_spans()]}"
+        )
+        assert span_processors(provider) == before, "FastAPI still attached a second exporter"
+    print("PASS: FastAPI native request tracing and exporter auto-configuration are off")
+
+
+def test_worker_owns_the_trace_pipeline() -> None:
+    """The shipped worker disables FastAPI telemetry and nothing else.
+
+    Built from the real ``config.yml``: the worker's app must have FastAPI's
+    native telemetry off, while the configuration still selects the
+    ``agent_otlp`` exporter for NAT spans and OpenTelemetry tracing for
+    Guardrails — the one pipeline this application intends.
+    """
+
+    from nat.runtime.loader import load_config
+    from opentelemetry import trace
+
+    from nat_streaming_react.fastapi_worker import AuthenticatedFastApiFrontEndPluginWorker
+
+    os.environ.setdefault("MCP_API_KEY", "verify-only-not-used")
+    # The worker reads its config path from the environment, as `nat serve` sets it.
+    with _pinned_env(NAT_GATEWAY_API_KEY="verify-only-not-used", NAT_CONFIG_FILE=str(CONFIG_PATH)):
+        config = load_config(str(CONFIG_PATH))
+        provider_before = trace.get_tracer_provider()
+        app = AuthenticatedFastApiFrontEndPluginWorker(config).build_app()
+
+    if hasattr(app, "_native_telemetry"):
+        assert app._telemetry["tracing"] is False, "the worker leaves FastAPI request tracing on"
+        assert app._telemetry["auto_configure"] is False, "the worker lets FastAPI add an exporter"
+        assert app._native_telemetry.enabled() is False
+    assert trace.get_tracer_provider() is provider_before, "the worker replaced the global provider"
+
+    exporters = config.general.telemetry.tracing
+    assert [type(e).__name__ for e in exporters.values()] == ["AgentOtlpTelemetryExporter"], exporters
+    guardrails = config.middleware["workflow_guardrails"].guardrails
+    assert guardrails.tracing.enabled is True
+    assert [adapter.name for adapter in guardrails.tracing.adapters] == ["OpenTelemetry"]
+    print("PASS: the worker disables FastAPI telemetry; NAT and Guardrails tracing stay configured")
 
 
 def test_user_attribution_is_off_by_default() -> None:
@@ -1020,6 +1127,8 @@ def main() -> None:
     test_user_attribution_is_exported_when_enabled()
     test_user_attribution_reads_its_environment_switch()
     test_raw_gateway_identity_never_reaches_telemetry()
+    test_fastapi_native_telemetry_is_switched_off()
+    test_worker_owns_the_trace_pipeline()
     test_streaming_output_block_records_released_refusal_not_raw_secret()
     test_streaming_benign_scalars_are_preserved_in_the_recorded_answer()
     test_concurrent_streaming_requests_do_not_mix_captured_answers()

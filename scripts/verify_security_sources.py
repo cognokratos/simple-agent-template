@@ -182,6 +182,12 @@ def main() -> None:
         re.search(r"^\}\) \| IDENTITY_HEADERS$", trace_processor, re.MULTILINE) is not None,
         "SENSITIVE_HEADERS no longer includes the raw gateway identity headers",
     )
+    # One trace model: FastAPI's native request tracing would otherwise add a
+    # trace per health probe and a second OTLP exporter to the global provider.
+    require(
+        "        disable_fastapi_native_telemetry(app)\n" in worker,
+        "the NAT worker no longer disables FastAPI's native telemetry",
+    )
 
     mcp = text("mcp-server/src/main.rs")
     require("MCP_API_KEY" in mcp, "MCP API-key environment variable missing")
