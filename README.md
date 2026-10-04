@@ -1,7 +1,23 @@
-# Secured agent template
+# Production AI Agent Template
 
-A working, secured, observable, evaluated LLM agent you can fork and point at
-your own domain.
+A hands-on reference architecture for software engineers learning how to build
+**secure, observable and evaluated AI agents**. It is also a real template you
+can fork and point at your own domain.
+
+> Agentic AI is software engineering around a probabilistic decision-making
+> component. The LLM is an untrusted decision maker: security and authorization
+> are enforced deterministically, outside the model.
+
+| I want to… | Go to |
+| --- | --- |
+| Run it | [Quick start](#quick-start) |
+| Learn agentic AI engineering | [Learning path](docs/LEARNING-PATH.md) |
+| See one request end to end | [Follow one request](docs/tutorials/REQUEST-WALKTHROUGH.md) |
+| Understand the architecture | [Architecture](docs/ARCHITECTURE.md) |
+| Build my own agent | [Extending the template](docs/EXTENDING.md) · [Labs](docs/tutorials/README.md) |
+| Study the security model | [Security](docs/SECURITY.md) · [Trust boundaries](docs/concepts/07-security-and-trust-boundaries.md) |
+| Learn evaluation | [Evaluation](docs/EVALUATION.md) · [Concept](docs/concepts/05-evaluation.md) |
+| Debug agent execution | [Observability](docs/OBSERVABILITY.md) · [Lab: traces](docs/tutorials/06-debug-with-traces.md) |
 
 ```text
 Browser / assistant-ui
@@ -26,7 +42,24 @@ The sample application triages customer-support tickets for a fictional online
 shop and is **read-only** by default. Everything that is not the sample is
 meant to be reused unchanged — see [docs/EXTENDING.md](docs/EXTENDING.md).
 
-## Start
+## Three ways to use this repository
+
+| Path | Question | Start with |
+| --- | --- | --- |
+| **LEARN** | "Teach me how production AI agents work." | [Learning path](docs/LEARNING-PATH.md) → [concepts](docs/README.md#learn-teach-me-how-production-ai-agents-work) → [labs](docs/tutorials/README.md) |
+| **BUILD** | "Help me adapt this template to my domain." | [EXTENDING.md](docs/EXTENDING.md) → [Lab 10](docs/tutorials/10-build-your-own-domain-agent.md) → [challenges](docs/CHALLENGES.md) |
+| **REFERENCE** | "Tell me precisely how this implementation works." | [Reference manual](docs/README.md#reference-tell-me-precisely-how-this-implementation-works) |
+
+## Quick start
+
+**Resources.** The full stack runs several services at once: assistant-ui,
+the gateway, Keycloak, PostgreSQL, the MCP server, the agent with its
+guardrails, the OpenTelemetry Collector and MLflow. Presidio's PII analyzer,
+used by output masking, has a large memory footprint of its own. On a Docker VM
+of about 8 GB, there may not be enough headroom to run MLflow and PII masking
+together for every exercise. If you see truncated streams, agent restarts or
+`exit 137` during masking, read
+[LIMITATIONS.md — resource requirements](docs/LIMITATIONS.md#resource-requirements).
 
 ```bash
 make env          # create .env from .env.example
@@ -70,22 +103,14 @@ applied by the MCP server in one transaction, and recorded in `ticket_audit`.
 | **Observability** | One trace per request covering the agent run *and* the guardrail decisions, with readable question/answer and credential redaction |
 | **Evaluation** | Four MLflow suites with deterministic scorers, latency distributions, and provenance linking every result to the agent that produced it |
 | **Approvals** | An optional, opt-in signed-approval boundary for state-changing actions — off by default |
+| **Learning layer** | A [learning path](docs/LEARNING-PATH.md), eight concept pages, an [end-to-end request walkthrough](docs/tutorials/REQUEST-WALKTHROUGH.md), ten [labs](docs/tutorials/README.md) and [challenges](docs/CHALLENGES.md), all grounded in this code and checked by `make docs-check` |
 
 ## Documentation
 
-| Document | For |
-| --- | --- |
-| [ARCHITECTURE.md](docs/ARCHITECTURE.md) | The request path, trust boundaries, network segmentation, where the model is and is not trusted |
-| [SECURITY.md](docs/SECURITY.md) | Each control, why it exists, and how to check it |
-| [CONFIGURATION.md](docs/CONFIGURATION.md) | Every setting |
-| [GUARDRAILS.md](docs/GUARDRAILS.md) | Input and output rails, and what the pinned Guardrails release actually does |
-| [OBSERVABILITY.md](docs/OBSERVABILITY.md) | The trace pipeline, content capture policy, and what redaction does not cover |
-| [EVALUATION.md](docs/EVALUATION.md) | The suites, the scoring methodology, and provenance |
-| [APPROVALS.md](docs/APPROVALS.md) | The optional human-approval boundary |
-| [VERIFICATION.md](docs/VERIFICATION.md) | What you can check, what it needs, what it proves |
-| [EXTENDING.md](docs/EXTENDING.md) | Building a domain application on this |
-| [LIMITATIONS.md](docs/LIMITATIONS.md) | Known gaps, untested behaviour, and production prerequisites |
-| [TEST-SCENARIOS.md](docs/TEST-SCENARIOS.md) | Prompts to type, and what should happen |
+The full map, organised by the three paths above, is in
+[docs/README.md](docs/README.md). The existing reference-document structure is
+preserved, and the learning material links into it. A few reference documents
+were corrected where the educational review exposed drift.
 
 ## Verify it
 
@@ -94,6 +119,7 @@ make static-check   # no Docker, no cluster, no model
 make test           # everything, with the cluster up
 make security-test  # authentication and topology boundaries
 make eval-all       # the evaluation suites; needs a model
+make docs-check     # documentation links, anchors and make targets (part of static-check)
 ```
 
 `make help` lists every target.
@@ -109,6 +135,7 @@ make eval-all       # the evaluation suites; needs a model
 | `evaluation/` | MLflow suites, deterministic scorers, provenance |
 | `db/`, `keycloak/`, `observability/` | Schema and seed data, realm generation, collector config |
 | `scripts/` | Checks that run without the cluster, and trace tooling |
+| `docs/` | [Learning path](docs/LEARNING-PATH.md), [concepts](docs/concepts/), [labs](docs/tutorials/), and the reference manual |
 
 ## Notes
 

@@ -312,6 +312,8 @@ workflow:
   middleware:
     - workflow_guardrails
   verbose: true
+  # AGENT-CONCEPT: the ReAct loop is bounded by configuration, not by the
+  # model deciding to stop. See docs/concepts/01-agents-and-agent-loops.md.
   max_tool_calls: 20
   max_history: 20
   retry_agent_response_parsing_errors: true

@@ -186,6 +186,9 @@ pub async fn execute(
     }
 }
 
+// DETERMINISTIC-CONTROL: authorization of a state change happens here, against
+// the row locked inside the mutation transaction, never in the model or the UI.
+// See docs/concepts/08-human-in-the-loop.md.
 /// Backend policy, re-checked after the human approved.
 ///
 /// The model's recommendation is advice and the human's selection is a request;

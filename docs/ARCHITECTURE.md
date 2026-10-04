@@ -4,6 +4,56 @@ A template for a secured, observable, evaluated LLM agent. The sample
 application triages customer-support tickets; everything that is not the
 sample is meant to be reused unchanged.
 
+## Overview
+
+```mermaid
+flowchart TB
+    B([Browser])
+
+    subgraph HOST [Published on loopback]
+        UI["assistant-ui<br/>Next.js :3000"]
+        KC["Keycloak<br/>OIDC :8082"]
+        ML[("MLflow :5000<br/>traces, experiments,<br/>prompt registry")]
+        OC["OpenTelemetry<br/>Collector :4318"]
+    end
+
+    subgraph PRIVATE [No published ports]
+        GW["Rust gateway / BFF<br/>OIDC+PKCE, session, CSRF,<br/>schema, identity headers"]
+        subgraph AG [NAT agent]
+            AUTH["service-key + identity<br/>middleware"]
+            GR["NeMo Guardrails<br/>input / output rails"]
+            RT["ReAct runtime<br/>(bounded loop)"]
+        end
+        MCP["Rust MCP server<br/>2 read-only tools<br/>(+ optional approval verifier)"]
+        DB[("PostgreSQL<br/>authoritative state,<br/>append-only audit")]
+        EV["evaluator<br/>(profile: evaluation)"]
+    end
+
+    LLM{{"LLM endpoint<br/>OpenAI-compatible<br/>(agent + guard model)"}}
+
+    B -->|"cookie + CSRF"| UI
+    B -.->|login redirect| KC
+    UI -->|gateway_net| GW
+    GW -->|auth_net| KC
+    GW -->|"agent_net · Bearer AGENT_API_KEY<br/>+ x-authenticated-*"| AUTH
+    EV -->|"agent_net · Bearer AGENT_API_KEY<br/>+ synthetic principal"| AUTH
+    AUTH --> GR --> RT
+    RT <-->|prompts, tool calls| LLM
+    GR <-->|self-check| LLM
+    RT -->|"mcp_net · Bearer MCP_API_KEY"| MCP
+    MCP -->|"data_net · parameterized SQL"| DB
+    AG -.->|"telemetry_net · OTLP"| OC -.-> ML
+    EV -.->|results, provenance| ML
+
+    classDef prob fill:#fde68a,stroke:#b45309,color:#000
+    class LLM prob
+```
+
+The LLM (yellow) is the only probabilistic component. It is reached only from
+inside the agent, sees no credentials or identity, and can affect state only
+through the MCP tools. The sections below give the same picture as text, with
+the question each boundary answers.
+
 ## The request path
 
 ```

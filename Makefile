@@ -307,8 +307,12 @@ trace-test: verify-trace-pipeline ## Verify observability end to end against MLf
 traces: ## Print the span tree of the most recent MLflow traces
 	python3 scripts/inspect_mlflow_traces.py --limit $${LIMIT:-3}
 
-static-check: verify-stream-adapter eval-test-host security-config-test ## Offline checks needing no Docker, cluster or model (python3 + node only)
+static-check: verify-stream-adapter eval-test-host security-config-test docs-check ## Offline checks needing no Docker, cluster or model (python3 + node only)
 	@echo "Static checks passed."
+
+docs-check: ## Verify documentation links, heading anchors and referenced make targets
+	python3 scripts/verify_docs_test.py
+	python3 scripts/verify_docs.py
 
 inspector: ## Start the optional loopback-only MCP Inspector (development profile)
 	$(COMPOSE) --profile dev up -d --build mcp-inspector

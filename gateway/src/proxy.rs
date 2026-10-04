@@ -252,6 +252,9 @@ fn header_safe(value: &str) -> Cow<'_, str> {
     Cow::Owned(encoded)
 }
 
+// SECURITY-BOUNDARY: the only place user identity enters the agent path. Built
+// from the validated session, never from browser headers or conversation text.
+// See docs/concepts/07-security-and-trust-boundaries.md.
 fn identity_headers(
     mut request: reqwest::RequestBuilder,
     user: &UserIdentity,

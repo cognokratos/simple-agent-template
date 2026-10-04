@@ -156,8 +156,8 @@ a human can authorize is a security property of the deployment.
 ## Verifying it
 
 ```
-make verify-approvals        # 29 agent-side checks, offline
-make verify-approvals-rust   # 25 MCP-side checks
+make verify-approvals        # agent-side approval checks, offline
+make verify-approvals-rust   # MCP-side approval and policy tests
 ```
 
 Between them: forged and tampered tokens, expiry, the lifetime ceiling and its
