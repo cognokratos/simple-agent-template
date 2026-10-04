@@ -126,8 +126,10 @@ previous helper silently omitted a header it could not encode, so a user whose
 Keycloak display name contained an accent reached the agent with identity
 headers missing — a security-relevant field disappearing with no error anywhere.
 
-`x-authenticated-email` is redacted from telemetry; see
-[OBSERVABILITY.md](OBSERVABILITY.md).
+NAT copies these into span metadata. The user id, username and email are
+redacted from exported telemetry in every mode; per-user attribution, when
+enabled, is NAT's pseudonym and nothing else. See
+[OBSERVABILITY.md](OBSERVABILITY.md#redaction-and-what-it-does-not-cover).
 
 ### The agent requires an asserted identity
 

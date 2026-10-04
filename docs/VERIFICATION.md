@@ -13,7 +13,7 @@ make static-check
 | `npm run verify:nat-wire` | Scalar SSE chunks (`"100"`, `"true"`, dates) survive the wire contract |
 | evaluator unit tests | Parser, scorers and provenance (`evaluation/tests/`) |
 | `verify_security_config.py` | Resolved Compose topology: ports, network membership, credential agreement |
-| `verify_security_sources.py` | Source wiring: gateway routes and properties, the patch scripts stay deleted, the guardrail event-name contract, no credential in `/version`, no workflow input interpolated into a shell command |
+| `verify_security_sources.py` | Source wiring: gateway routes and properties, the patch scripts stay deleted, the guardrail event-name contract, every gateway identity header has a telemetry decision, FastAPI native telemetry stays off, no credential in `/version`, no workflow input interpolated into a shell command |
 | `docs-check` (`verify_docs.py`) | Every relative Markdown link and heading anchor resolves, and every `make <target>` named in the docs exists. `verify_docs_test.py` plants broken references to prove the checker fails on them. |
 
 Needs only `python3`, `node` and the Docker CLI (for `docker compose config` —
@@ -49,11 +49,12 @@ make test         # everything below, in order
 
 | Target | Needs | Proves |
 | --- | --- | --- |
+| `make verify-llm-config` | cluster | The LLM client builds; an empty optional parameter is omitted and a set one (`none` included) is sent verbatim. Each case pins its own input, so the result does not depend on the caller's `.env` |
 | `make verify-mcp` | cluster | MCP refuses a missing key and accepts the agent's |
 | `make verify-input-guardrails` | cluster | Decision precedence, forged assistant history, strict boolean parsing |
 | `make verify-output-guardrails` | cluster | Config invariants, secret patterns, real Presidio masking |
 | `make verify-rails` | cluster | The real NeMo runtime: blocking, split credentials, reuse, concurrency |
-| `make verify-trace-pipeline` | cluster | Trace context, bounds, redaction, error capture |
+| `make verify-trace-pipeline` | cluster | Trace context, bounds, redaction (raw identity in both `OTEL_TRACE_USER_ID` modes), error capture, FastAPI native telemetry off |
 | `make verify-approvals` | cluster | The approval boundary, agent side |
 | `make network-test` | cluster | Runtime east-west reachability |
 | `make auth-test` | cluster | Every authentication boundary end to end |

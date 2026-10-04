@@ -151,6 +151,44 @@ def main() -> None:
         "config.yml no longer tells NAT which header carries the asserted identity",
     )
 
+    # NAT copies inbound headers into exported span metadata, so every identity
+    # header the gateway mints needs an explicit telemetry decision: redacted
+    # (IDENTITY_HEADERS) or deliberately kept (RETAINED_GATEWAY_HEADERS). A new
+    # x-authenticated-* header in the gateway fails here until it gets one,
+    # rather than leaking into traces by default.
+    minted = set(re.findall(r'"(x-authenticated-[a-z-]+)"', proxy))
+    require(bool(minted), "no x-authenticated-* headers found in gateway/src/proxy.rs")
+    trace_processor = text("agent/src/nat_streaming_react/observability/trace_processor.py")
+
+    def header_set(name: str) -> set[str]:
+        match = re.search(
+            rf"^{name}: frozenset\[str\] = frozenset\(\{{(.*?)\}}\)",
+            trace_processor,
+            re.MULTILINE | re.DOTALL,
+        )
+        require(match is not None, f"trace_processor.{name} is missing")
+        return set(re.findall(r'"([a-z0-9-]+)"', match.group(1)))
+
+    redacted = header_set("IDENTITY_HEADERS")
+    retained = header_set("RETAINED_GATEWAY_HEADERS")
+    require(not redacted & retained, f"headers both redacted and retained: {sorted(redacted & retained)}")
+    undecided = minted - redacted - retained
+    require(not undecided, f"gateway identity header(s) with no telemetry decision: {sorted(undecided)}")
+    require(
+        retained <= minted,
+        f"RETAINED_GATEWAY_HEADERS names headers the gateway does not send: {sorted(retained - minted)}",
+    )
+    require(
+        re.search(r"^\}\) \| IDENTITY_HEADERS$", trace_processor, re.MULTILINE) is not None,
+        "SENSITIVE_HEADERS no longer includes the raw gateway identity headers",
+    )
+    # One trace model: FastAPI's native request tracing would otherwise add a
+    # trace per health probe and a second OTLP exporter to the global provider.
+    require(
+        "        disable_fastapi_native_telemetry(app)\n" in worker,
+        "the NAT worker no longer disables FastAPI's native telemetry",
+    )
+
     mcp = text("mcp-server/src/main.rs")
     require("MCP_API_KEY" in mcp, "MCP API-key environment variable missing")
     require("constant_time_eq" in mcp, "MCP key comparison is not constant time")

@@ -12,7 +12,8 @@ Export path, all standard OpenTelemetry from here on::
     NAT intermediate steps
         -> NAT Span
         -> WorkflowContentProcessor          (readable question/answer, bounded)
-        -> SensitiveHeaderRedactionProcessor (credential deny-list)
+        -> SensitiveHeaderRedactionProcessor (credential and raw-identity deny-list)
+        -> UserIdentityProcessor             (pseudonymous user.id, OTEL_TRACE_USER_ID)
         -> SpanToOtelProcessor / batching    (NAT built-ins, untouched)
         -> OTLP/HTTP
         -> OpenTelemetry Collector

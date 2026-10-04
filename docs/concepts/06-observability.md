@@ -79,7 +79,8 @@ data store with a retention and access problem. Decisions this repository makes:
 | Data | Default | Why |
 | --- | --- | --- |
 | Readable question and *released* answer on the root span | on (`NAT_TRACE_CAPTURE_CONTENT`) | The answer is captured where the output rail releases it, so a masked or blocked answer never leaks into the root span |
-| Credential headers (`authorization`, `cookie`, `x-api-key`, `x-csrf-token`, `x-authenticated-email`, ...) | redacted | `SensitiveHeaderRedactionProcessor` in [`trace_processor.py`](../../agent/src/nat_streaming_react/observability/trace_processor.py) |
+| Credential headers (`authorization`, `cookie`, `x-api-key`, `x-csrf-token`, ...) | redacted | `SensitiveHeaderRedactionProcessor` in [`trace_processor.py`](../../agent/src/nat_streaming_react/observability/trace_processor.py) |
+| Raw gateway identity (`x-authenticated-user-id`, `-username`, `-email`) | redacted, whatever `OTEL_TRACE_USER_ID` says | NAT copies request headers into span metadata; attribution is the pseudonym below, never the raw subject |
 | Per-user identifier | **off** (`OTEL_TRACE_USER_ID=false`) | A stable pseudonym turns a trace corpus into a per-person history |
 | Pre-mask guardrail output | **off** (`GUARDRAILS_TRACE_CAPTURE_RAW_OUTPUT=false`) | It contains exactly what the rails exist to stop |
 | Raw tool results in tool spans | **recorded** | Not covered by output rails. Use synthetic data, or add tool-span redaction before real PII reaches a shared backend. |

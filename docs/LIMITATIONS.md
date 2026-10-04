@@ -59,7 +59,9 @@ them from a corpus into a per-person record, and whether that is acceptable
 depends on the trace store's access controls and retention. The value is a
 stable `uuid5` pseudonym rather than the Keycloak subject, which is a weaker
 disclosure but not anonymity: it is the same value for the same person on every
-request. `UserIdentityProcessor` in `observability/trace_processor.py`.
+request. `UserIdentityProcessor` in `observability/trace_processor.py`. The raw
+gateway identity headers NAT copies into span metadata are redacted in both
+modes, so the switch governs the only per-user identifier a trace can carry.
 
 **Sessions are in memory.** One gateway instance, and a restart logs everyone
 out.
