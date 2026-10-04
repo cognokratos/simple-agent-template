@@ -92,12 +92,22 @@ error, rather than one replacing the other.
 
 ## Redaction, and what it does not cover
 
-`SensitiveHeaderRedactionProcessor` removes credential-bearing headers from span
-metadata: `authorization`, `proxy-authorization`, `cookie`, `set-cookie`,
-`x-api-key`, `api-key`, `x-auth-token`, `x-csrf-token`, and
-`x-authenticated-email`. The subject id and roles stay visible, because they are
-what makes a trace attributable; an email address adds nothing a trace needs and
-follows the span into whatever backend stores it.
+NAT copies every inbound request header into span metadata (`nat.metadata`).
+`SensitiveHeaderRedactionProcessor` removes two kinds of header from it, on
+every span and whatever any switch says:
+
+* credentials: `authorization`, `proxy-authorization`, `cookie`, `set-cookie`,
+  `x-api-key`, `api-key`, `x-auth-token`, `x-csrf-token`;
+* the raw gateway identity: `x-authenticated-user-id` (the Keycloak subject),
+  `x-authenticated-username` and `x-authenticated-email`.
+
+Per-user attribution is a separate, explicit field governed by
+`OTEL_TRACE_USER_ID` (below). Without this redaction the raw subject would be
+exported beside it on every request, and turning attribution off would remove
+only the pseudonym. `x-authenticated-roles` and `x-request-id` are kept: roles
+are a handful of shared values that explain an authorization outcome, and the
+request id joins a trace to its request. `make static-check` fails if the
+gateway starts minting an `x-authenticated-*` header that is in neither list.
 
 This is a **header deny-list and nothing more**. It does not make spans free of
 sensitive data:
@@ -120,7 +130,8 @@ NAT 1.9 attributes every span to the authenticated user, writing two keys:
 set — backends such as MLflow and Langfuse group traces by it).
 
 `UserIdentityProcessor` decides whether either leaves this process.
-**Off unless `OTEL_TRACE_USER_ID=true`.**
+**Off unless `OTEL_TRACE_USER_ID=true`.** This is the only per-user identifier a
+span can carry: the raw gateway headers are redacted in both modes (above).
 
 What the value is matters to that decision. With
 `general.front_end.identity_header` configured, NAT does not put the gateway's
@@ -140,6 +151,24 @@ When off, `user.id` is **dropped** rather than masked — a literal placeholder
 would become a user in those backends' UIs — and `nat.user.id` is set to
 `[redacted]`, which keeps "not exported by policy" distinguishable from NAT's
 own `"unknown"`, meaning no identity was resolved at all.
+
+## One trace model
+
+This application owns its tracing: NAT spans through the `agent_otlp` exporter,
+Guardrails spans through the process-wide provider from `otel_setup`, joined by
+`WorkflowTraceContextMiddleware`. FastAPI 0.142, resolved transitively, would
+add a second model whenever a global tracer provider exists: a trace per HTTP
+request — a `GET /health` probe every few seconds included — and, at startup, a
+second OTLP exporter on the same provider, so every Guardrails span is exported
+twice. The probe traces crowd the workflow traces out of the newest few, which
+is what `make trace-test` inspects.
+
+NAT offers no way to pass FastAPI's `telemetry=` argument, so
+`disable_fastapi_native_telemetry` in `fastapi_worker.py` switches FastAPI's
+tracing, metrics, logs and exporter auto-configuration off on the built app
+before the server starts. It touches neither the global provider nor NAT's
+exporter. It relies on a FastAPI-private attribute; `make verify-trace-pipeline`
+fails if that moves.
 
 ## Configuration
 
