@@ -12,12 +12,15 @@ without a live model or collector:
 * trace content is bounded and truncation is signalled;
 * a failed run records a meaningful error state;
 * streamed text is accumulated without buffering the client's stream;
-* credential-bearing headers never reach exported telemetry.
+* credential-bearing headers never reach exported telemetry;
+* the raw gateway identity never reaches exported telemetry, whatever
+  ``OTEL_TRACE_USER_ID`` says — that switch governs only NAT's pseudonym.
 """
 
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import datetime
 import json
 import os
@@ -35,8 +38,10 @@ from opentelemetry import trace as otel_trace
 
 from nat_streaming_react.observability import trace_content
 from nat_streaming_react.observability.trace_context import start_request_trace
+from nat_streaming_react.observability.trace_processor import IDENTITY_HEADERS
 from nat_streaming_react.observability.trace_processor import OTEL_USER_ID_KEY
 from nat_streaming_react.observability.trace_processor import REDACTED
+from nat_streaming_react.observability.trace_processor import RETAINED_GATEWAY_HEADERS
 from nat_streaming_react.observability.trace_processor import SensitiveHeaderRedactionProcessor
 from nat_streaming_react.observability.trace_processor import USER_ID_ENV
 from nat_streaming_react.observability.trace_processor import UserIdentityProcessor
@@ -287,7 +292,6 @@ def test_credentials_never_reach_telemetry() -> None:
                     "cookie": "session=abc",
                     "x-api-key": "another-secret",
                     "x-request-id": "req-1",
-                    "x-authenticated-user-id": "support-rep-1",
                 }
             }
         }
@@ -302,9 +306,116 @@ def test_credentials_never_reach_telemetry() -> None:
     assert headers["x-api-key"] == REDACTED
     # Correlation identifiers must survive: they are what links a trace to a request.
     assert headers["x-request-id"] == "req-1"
-    assert headers["x-authenticated-user-id"] == "support-rep-1"
     assert "super-secret-agent-key" not in processed.attributes["nat.metadata"]
     print("PASS: credential headers are redacted, correlation identifiers survive")
+
+
+#: Synthetic values only. The pseudonym stands in for NAT's uuid5 of the subject.
+SYNTHETIC_SUBJECT = "0b9d7c1e-synthetic-keycloak-subject"
+SYNTHETIC_USERNAME = "synthetic.support.rep"
+SYNTHETIC_EMAIL = "synthetic.rep@example.invalid"
+SYNTHETIC_PSEUDONYM = "5f0c6a52-6d0e-5b7a-9c1f-synthetic0001"
+
+
+def _gateway_request_span() -> Span:
+    """A workflow span carrying every header ``gateway/src/proxy.rs`` mints."""
+
+    metadata = {
+        "provided_metadata": {
+            "request_attributes": {
+                "headers": {
+                    # Mixed case on purpose: header names are case-insensitive.
+                    "X-Authenticated-User-Id": SYNTHETIC_SUBJECT,
+                    "x-authenticated-username": SYNTHETIC_USERNAME,
+                    "x-authenticated-email": SYNTHETIC_EMAIL,
+                    "x-authenticated-roles": "support",
+                    "x-request-id": "req-identity-1",
+                }
+            }
+        }
+    }
+    span = workflow_span(**{
+        "nat.metadata": json.dumps(metadata),
+        "nat.user.id": SYNTHETIC_PSEUDONYM,
+    })
+    span.set_attribute(OTEL_USER_ID_KEY, SYNTHETIC_PSEUDONYM)
+    return span
+
+
+async def _through_exporter_processors(span: Span) -> Span:
+    """Run a span through the processors the shipped exporter actually installs.
+
+    Built through the registered ``agent_otlp`` factory and looked up by the
+    names it registers them under, so this proves the wiring and not only each
+    processor in isolation. Nothing is exported: only the NAT-Span stages run,
+    and the endpoint is never contacted.
+    """
+
+    from nat_streaming_react.observability.otlp_exporter import AgentOtlpTelemetryExporter
+    from nat_streaming_react.observability.otlp_exporter import agent_otlp_exporter
+
+    config = AgentOtlpTelemetryExporter(endpoint="http://127.0.0.1:9/v1/traces", project="verify")
+    async with agent_otlp_exporter(config, None) as exporter:
+        for name in ("workflow_content", "sensitive_header_redaction", "user_identity"):
+            processor = exporter.get_processor_by_name(name)
+            assert processor is not None, f"the agent_otlp exporter no longer installs {name!r}"
+            span = await processor.process(span)
+    return span
+
+
+@contextlib.contextmanager
+def _pinned_env(**values: str):
+    """Set environment variables for one scenario and restore them afterwards."""
+
+    previous = {name: os.environ.get(name) for name in values}
+    os.environ.update(values)
+    try:
+        yield
+    finally:
+        for name, value in previous.items():
+            if value is None:
+                os.environ.pop(name, None)
+            else:
+                os.environ[name] = value
+
+
+def test_raw_gateway_identity_never_reaches_telemetry() -> None:
+    """OTEL_TRACE_USER_ID governs NAT's pseudonym; the raw identity never leaves.
+
+    NAT copies the request's headers into ``nat.metadata``. Before this check,
+    a span exported with attribution *off* still carried the Keycloak subject
+    and username there, which made the switch cosmetic.
+    """
+
+    raw_values = (SYNTHETIC_SUBJECT, SYNTHETIC_USERNAME, SYNTHETIC_EMAIL)
+    for switch, enabled in (("false", False), ("true", True)):
+        with _pinned_env(**{USER_ID_ENV: switch}):
+            processed = asyncio.run(_through_exporter_processors(_gateway_request_span()))
+        exported = json.dumps(processed.attributes, default=str)
+        headers = json.loads(processed.attributes["nat.metadata"])[
+            "provided_metadata"]["request_attributes"]["headers"]
+        lowered = {name.lower(): value for name, value in headers.items()}
+
+        for name in IDENTITY_HEADERS:
+            assert lowered[name] == REDACTED, (switch, name, lowered[name])
+        for value in raw_values:
+            assert value not in exported, f"OTEL_TRACE_USER_ID={switch}: {value!r} was exported"
+        # Not identity, and each is needed: the request id joins a trace to its
+        # request, the roles explain an authorization outcome.
+        assert lowered["x-request-id"] == "req-identity-1"
+        for name in RETAINED_GATEWAY_HEADERS:
+            assert lowered[name] == "support", name
+
+        if enabled:
+            # The intended attribution field, and only that.
+            assert processed.attributes[OTEL_USER_ID_KEY] == SYNTHETIC_PSEUDONYM
+            assert processed.attributes["nat.user.id"] == SYNTHETIC_PSEUDONYM
+        else:
+            # No usable per-user identifier of any kind.
+            assert OTEL_USER_ID_KEY not in processed.attributes
+            assert processed.attributes["nat.user.id"] == REDACTED
+            assert SYNTHETIC_PSEUDONYM not in exported
+    print("PASS: raw gateway identity is redacted in both modes; only the pseudonym is switchable")
 
 
 def test_user_attribution_is_off_by_default() -> None:
@@ -908,6 +1019,7 @@ def main() -> None:
     test_user_attribution_is_off_by_default()
     test_user_attribution_is_exported_when_enabled()
     test_user_attribution_reads_its_environment_switch()
+    test_raw_gateway_identity_never_reaches_telemetry()
     test_streaming_output_block_records_released_refusal_not_raw_secret()
     test_streaming_benign_scalars_are_preserved_in_the_recorded_answer()
     test_concurrent_streaming_requests_do_not_mix_captured_answers()

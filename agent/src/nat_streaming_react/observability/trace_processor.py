@@ -20,7 +20,8 @@ Two processors live here:
     into span metadata. The front-end worker already strips ``Authorization``
     from the ASGI scope before NAT can see it, so this is the second layer: an
     explicit deny-list applied to every span, on the principle that a credential
-    must get past two independent controls to be exported.
+    must get past two independent controls to be exported. The same deny-list
+    removes the raw gateway identity, which no earlier layer strips.
 
     This is a header deny-list and nothing more. It does **not** make spans free
     of sensitive data: request and response content is governed separately by
@@ -50,12 +51,33 @@ WORKFLOW_START_EVENT = "WORKFLOW_START"
 
 REDACTED = "[redacted]"
 
-#: Header names never recorded in telemetry, whatever their value.
+#: Gateway-minted headers that name the person behind a request
+#: (``identity_headers`` in ``gateway/src/proxy.rs``): the Keycloak subject,
+#: the username and the optional email address.
 #:
-#: Credentials, plus the one identity header that carries personal data. The
-#: user's subject id and roles stay visible because they are what makes a trace
-#: attributable; an email address adds nothing a trace needs and follows the
-#: span into whatever backend stores it.
+#: NAT copies every inbound header into span metadata, so without this the raw
+#: identity is exported on every request and ``OTEL_TRACE_USER_ID`` only governs
+#: a pseudonym sitting next to it. Redacted whatever that switch says: when
+#: attribution is on, it is carried by NAT's pseudonym on ``user.id`` (see
+#: ``UserIdentityProcessor``), never by the raw header.
+IDENTITY_HEADERS: frozenset[str] = frozenset({
+    "x-authenticated-user-id",
+    "x-authenticated-username",
+    "x-authenticated-email",
+})
+
+#: Gateway-minted headers deliberately left in span metadata. Roles are a
+#: handful of shared values rather than a person, and they explain an
+#: authorization outcome during triage. ``scripts/verify_security_sources.py``
+#: requires every ``x-authenticated-*`` header the gateway sends to be in
+#: exactly one of these two sets, so a new one cannot leak by default.
+RETAINED_GATEWAY_HEADERS: frozenset[str] = frozenset({
+    "x-authenticated-roles",
+})
+
+#: Header names never recorded in telemetry, whatever their value: credentials,
+#: and the raw gateway identity. ``x-request-id`` is deliberately absent — it is
+#: what joins a trace to the request that produced it.
 SENSITIVE_HEADERS: frozenset[str] = frozenset({
     "authorization",
     "proxy-authorization",
@@ -65,8 +87,7 @@ SENSITIVE_HEADERS: frozenset[str] = frozenset({
     "api-key",
     "x-auth-token",
     "x-csrf-token",
-    "x-authenticated-email",
-})
+}) | IDENTITY_HEADERS
 
 
 class WorkflowContentProcessor(Processor[Span, Span]):
@@ -163,6 +184,10 @@ class UserIdentityProcessor(Processor[Span, Span]):
 
     Set ``OTEL_TRACE_USER_ID=true`` to export it — worth doing where the trace
     backend is access-controlled and attribution genuinely helps triage.
+
+    This switch governs the pseudonym only. The raw gateway headers NAT also
+    copies into span metadata are removed in both modes, by
+    ``SensitiveHeaderRedactionProcessor`` (see ``IDENTITY_HEADERS``).
     """
 
     def __init__(self, span_prefix: str = "nat", enabled: bool | None = None) -> None:
@@ -188,7 +213,7 @@ class UserIdentityProcessor(Processor[Span, Span]):
 
 
 class SensitiveHeaderRedactionProcessor(Processor[Span, Span]):
-    """Remove credential-bearing headers from span metadata before export.
+    """Remove credential and raw identity headers from span metadata before export.
 
     NAT serializes span metadata to a JSON string attribute (``nat.metadata``),
     so redaction parses it, walks the structure and re-serializes. A value that
