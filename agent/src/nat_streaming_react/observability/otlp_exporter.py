@@ -71,6 +71,7 @@ async def agent_otlp_exporter(config: AgentOtlpTelemetryExporter, builder: Build
     from nat.plugins.opentelemetry.otel_span_exporter import get_opentelemetry_sdk_version
 
     from nat_streaming_react.observability.trace_processor import SensitiveHeaderRedactionProcessor
+    from nat_streaming_react.observability.trace_processor import UserIdentityProcessor
     from nat_streaming_react.observability.trace_processor import WorkflowContentProcessor
 
     resource_attributes = {
@@ -99,8 +100,8 @@ async def agent_otlp_exporter(config: AgentOtlpTelemetryExporter, builder: Build
     if span_prefix != DEFAULT_SPAN_PREFIX:
         logger.info("Using NAT span attribute prefix %r", span_prefix)
 
-    # Position 0/1: both must run while the item is still a NAT Span, before
-    # SpanToOtelProcessor converts it.
+    # Positions 0-2: all three must run while the item is still a NAT Span,
+    # before SpanToOtelProcessor converts it.
     exporter.add_processor(
         WorkflowContentProcessor(span_prefix=span_prefix),
         name="workflow_content",
@@ -110,6 +111,13 @@ async def agent_otlp_exporter(config: AgentOtlpTelemetryExporter, builder: Build
         SensitiveHeaderRedactionProcessor(span_prefix=span_prefix),
         name="sensitive_header_redaction",
         position=1,
+    )
+    # NAT 1.9 attributes every span to a user. Whether that leaves this process
+    # is a deployment decision; see UserIdentityProcessor.
+    exporter.add_processor(
+        UserIdentityProcessor(span_prefix=span_prefix),
+        name="user_identity",
+        position=2,
     )
     logger.info("Agent OTLP telemetry exporter ready (endpoint=%s)", config.endpoint)
 

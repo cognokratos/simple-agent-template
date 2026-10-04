@@ -124,6 +124,13 @@ changes.
 | `GATEWAY_MAX_STREAMS_PER_SESSION` | `4` | |
 | `GATEWAY_UPSTREAM_TIMEOUT_SECONDS` | `10` | Non-streaming calls only |
 | `HITL_APPROVAL_SECRET` | **unset** | Unset keeps the stack read-only; see [APPROVALS.md](APPROVALS.md) |
+| `EVALUATION_PRINCIPAL` | `evaluation-harness` | Identity the evaluation harness asserts to the agent. Every direct caller must assert one; see [SECURITY.md](SECURITY.md#the-agent-requires-an-asserted-identity) |
+
+The agent's trusted identity header is set in `agent/config.yml`
+(`general.front_end.identity_header`) rather than by environment variable,
+because it is a property of the deployment's trust boundary rather than a knob:
+changing it means changing which header the agent believes, and that only makes
+sense together with the proxy that mints it.
 
 Guardrail and telemetry settings are in [GUARDRAILS.md](GUARDRAILS.md) and
 [OBSERVABILITY.md](OBSERVABILITY.md). Evaluation bindings are in

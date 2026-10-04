@@ -79,6 +79,8 @@ from nat.data_models.interactive import HumanResponseText
 from nat.data_models.interactive import MultipleChoiceOption
 from pydantic import BaseModel, Field
 
+from nat_streaming_react.interaction_guard import IDENTITY_HEADER
+
 # Do not enable postponed annotations in this module. NeMo Agent Toolkit 1.8
 # introspects the nested tool callable with typing.get_type_hints during startup;
 # keeping the request models as concrete runtime annotations avoids losing them
@@ -217,10 +219,17 @@ def _identity() -> tuple[str, str]:
 
     Never supplied by the model: the browser and the LLM must not be able to
     choose the identity that ends up in the append-only audit trail.
+
+    The actor check below is now a second layer rather than the only one:
+    ``fastapi_worker.RequireIdentityHeaderMiddleware`` answers 401 to a request
+    whose identity header is missing, empty or repeated, so any workflow that
+    reaches this function has already been vouched for. The check stays because
+    this function must not depend on middleware configured elsewhere in order to
+    avoid binding an approval token to a null actor.
     """
 
     headers = Context.get().metadata.headers
-    actor_id = headers.get("x-authenticated-user-id") if headers is not None else None
+    actor_id = headers.get(IDENTITY_HEADER) if headers is not None else None
     request_id = headers.get("x-request-id") if headers is not None else None
     if not actor_id or not request_id:
         raise ValueError(

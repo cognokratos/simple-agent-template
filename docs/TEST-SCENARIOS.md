@@ -370,7 +370,16 @@ Expected:
 - `/auth/login` redirects to the configured Keycloak realm;
 - unauthenticated internal `POST /api/chat` returns `401`;
 - a direct NAT request without `AGENT_API_KEY` returns `401`;
+- a direct NAT request **with** the key but asserting no identity returns `401`;
+- a direct NAT request with the key and a *repeated* identity header returns
+  `401` — a repeated header is ambiguous, not a list;
+- a direct NAT request with the key and one well-formed identity is accepted;
 - a direct MCP request without `MCP_API_KEY` returns `401`.
+
+The three identity cases are separate assertions on purpose: they are what
+distinguishes "the caller is the gateway" (the service credential) from "and
+this is who it is acting for" (the identity header). See
+[SECURITY.md](SECURITY.md#the-agent-requires-an-asserted-identity).
 
 Then run:
 
@@ -415,11 +424,14 @@ For loopback-only diagnostics:
 make debug-up
 ```
 
-Direct NAT requests then require:
+Direct NAT requests then require both a credential and an asserted identity:
 
 ```http
 Authorization: Bearer ${AGENT_API_KEY}
+x-authenticated-user-id: some-principal
 ```
+
+Omitting the second returns `401` from NAT itself, before the workflow runs.
 
 Direct MCP requests require:
 

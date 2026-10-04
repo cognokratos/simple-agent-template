@@ -91,10 +91,71 @@ which dispatch path the middleware uses for output evaluation as a whole (see
 `PERSON` and `ORGANIZATION` are deliberately absent from the entity list: names
 are part of the ticket-triage workflow, and masking them would destroy the answer.
 
+## What the LLM verdict actually is
+
+The self-check prompt demands `Yes` or `No`, and `output_parser: is_content_safe`
+turns that into a decision. That parser's real behaviour in nemoguardrails 0.21
+is asserted by `verify_input_guardrails.py` rather than assumed, because the LLM
+half of the input rail rests entirely on it:
+
+* it normalises the response, keeps the **first two tokens**, and matches them
+  against `safe`, `unsafe`, `yes`, `no` — token membership, not substring;
+* **anything it does not recognise is unsafe.** An empty response, a refusal, a
+  reply in another language and `Maybe` all block. This is the property that
+  matters, and it is the opposite of the default NAT's own content-safety
+  middleware used until 1.9, which returned "safe" on any parse failure;
+* the four keywords are tested in the order above, so a response whose first two
+  tokens contain the bare word `safe` parses as safe even when negated —
+  **`Not safe` parses as safe.**
+
+That last one is pinned as a known hazard. Three things keep it unreachable
+here: the prompt demands "exactly Yes or No and nothing else", `max_tokens: 4`
+bounds the reply to roughly one word, and the deterministic critical-pattern
+layer blocks the high-risk categories without consulting the model at all. If
+any of those is relaxed, this parser stops being safe to rely on alone.
+
+## Input length bound
+
+The user text is measured before the guard model is asked anything. Over
+`GUARDRAILS_INPUT_MAX_CHARS` (32,000 by default) the request is refused.
+
+Refused, never truncated. A classifier shown a prefix decides about the prefix,
+so truncating would let 32k of benign text followed by the real request be
+classified on the benign part alone. The bound also stops the cheapest possible
+request from being the most expensive one to serve: the guard model runs on
+every request, ahead of all other work.
+
+`max_history: 20` in the workflow bounds the number of turns, not their length,
+so it is not a substitute. This mirrors what NAT 1.9 added to its own
+content-safety middleware (`max_content_length`), which this template does not
+otherwise use — see below.
+
+## NAT's own defense middleware: assessed, not adopted
+
+NAT ships a `defense` middleware family (`content_safety_guard`, `pii_defense`,
+`output_verifier_tools`, `pre_tool_verifier`) that overlaps these rails. 1.9
+improved two of them — the content guard became fail-closed with exact verdict
+parsing and a bounded input, and `output_verifier_tools` gained `fail_closed`.
+Each was assessed against what is already here:
+
+| Component | Verdict |
+| --- | --- |
+| `content_safety_guard` | **Not adopted yet.** Its 1.9 fixes (fail-closed, exact verdicts, bounded input) are improvements this template already had by other means — the rail above re-raises on guard-model error and now bounds its input. Adopting it would require a real guard model returning `Safe`/`Unsafe`/`Controversial` (Nemoguard, Qwen Guard) rather than the general instruct model the self-check prompt targets. Worth doing together with the dedicated guard model that [LIMITATIONS.md](LIMITATIONS.md) already lists under "before production", not before it. |
+| `pii_defense` | **Not adopted.** Tempting, because it honours `score_threshold` — which the pinned NeMo masking action ignores, and which is this template's one documented masking gap. But it joins buffered chunks with `str(chunk)`, the exact defect `text_guardrails` exists to correct, and on `redirection` it yields a bare string in place of a `ChatResponseChunk`, which breaks the SSE wire format. It also buffers without any ceiling, where `GUARDRAILS_PII_MAX_BUFFER_CHARS` refuses rather than releasing partially-masked text. Revisit if NAT fixes chunk handling. |
+| `output_verifier_tools` | **Not applicable.** It asks an LLM whether a tool result is correct. The tools here are parameterized SQL reads whose correctness is not in question; the risk this template guards is disclosure, which the regex and masking rails cover. |
+| `pre_tool_verifier` | **Not adopted.** It screens tool *inputs* for injection using an LLM. Tool inputs here are a status filter and a ticket id, validated by the MCP server's schema, and the read-only deployment has no mutation to protect. The injection risk is in ticket *content* flowing back to the model, which is addressed in the system prompt's untrusted-data rule rather than by re-classifying tool arguments. |
+
+The common reason three of these do not fit is structural rather than
+incidental: they are *function* middleware acting on individual tool calls,
+while the rails here act at the workflow's input and output boundary, which is
+where "what the user asked" and "what the user received" are actually defined.
+
 ## Compatibility with the pinned release
 
-`nvidia-nat-security[guardrails]==1.8.0` constrains `nemoguardrails` to
-`>=0.11,<0.22`, so the pin is 0.21.0. That release has three defects on the
+`nvidia-nat-security[guardrails]==1.9.0` constrains `nemoguardrails` to
+`>=0.11,<0.22`, so the pin is 0.21.0. **The 1.9 upgrade did not change this** —
+the requirement is byte-identical to 1.8.0's, and so is
+`nemo_guardrails_middleware.py` itself. That release has three defects on the
 streaming path, all fixed upstream in 0.23.0:
 
 1. `detect_regex_pattern` is declared with no `output_mapping`, so NeMo's
@@ -132,6 +193,8 @@ Guardrails pin to `>=0.23` and `requirements.txt` is upgraded.
 | `GUARDRAILS_INPUT_DETERMINISTIC_FALLBACK` | `true` | Deterministic critical-pattern blocking |
 | `GUARDRAILS_INPUT_READ_ONLY_ALLOW_OVERRIDE` | `true` | Allow templates may correct an LLM false positive |
 | `GUARDRAILS_INPUT_BLOCK_MESSAGE` | a refusal | What a blocked user sees |
+| `GUARDRAILS_INPUT_MAX_CHARS` | `32000` | Ceiling on the user text handed to the guard model; a longer message is refused, never truncated. Floor of 256. |
+| `GUARDRAILS_INPUT_OVERSIZE_MESSAGE` | a refusal | What a user over that bound sees |
 | `GUARDRAILS_RAIL_POOL_SIZE` | `4` | Concurrent rail evaluations before queueing |
 | `GUARDRAILS_TRACE_CAPTURE_CONTENT` | `true` | Prompt/answer text on guardrail spans |
 | `GUARDRAILS_TRACE_CAPTURE_RAW_OUTPUT` | `false` | See below |

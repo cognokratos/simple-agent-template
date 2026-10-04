@@ -57,6 +57,35 @@ Both hooks are ordinary method overrides:
   ``ResponderIdentityMiddleware``, a pure-ASGI middleware in this package that
   stashes it in a contextvar for the duration of that request.
 
+Relationship to NAT 1.9's ``identity_header``
+---------------------------------------------
+``agent/config.yml`` sets ``general.front_end.identity_header`` to the same
+header this module reads, so NAT resolves it into ``Context.user_id``. What
+guarantees the *owner* side of the comparison below is never null is
+``fastapi_worker.RequireIdentityHeaderMiddleware``, which answers 401 to a
+request carrying no unambiguous identity — NAT's own refusal does not reach the
+client on the workflow routes, for the reasons given there.
+
+Both sides of the comparison remain the **raw** header value rather than NAT's
+``Context.user_id``, for two reasons:
+
+* ``Context.user_id`` is not the gateway's identifier. NAT derives it as
+  ``uuid5(namespace, "trusted-header:<header>\\x1f<value>")`` — a stable
+  pseudonym, not the value the gateway sent. Comparing raw values is exactly
+  equivalent (the pseudonym is a pure function of the raw value) and does not
+  require reproducing a derivation that is NAT's private business.
+* The interaction-response route never enters ``SessionManager.session()``,
+  which is the only place NAT populates ``Context.user_id``. The responder side
+  has no NAT-resolved identity to read, so it must parse the header regardless;
+  deriving the owner differently would only make the two sides disagree.
+
+What this module does take from NAT 1.9 is its *parsing rule*:
+``ResponderIdentityMiddleware`` now requires the header to occur exactly once,
+matching ``UserManager._get_identity_header``. Accepting the first of several
+occurrences would let an intermediary that can append a header decide who the
+responder is, and would leave the two sides of an approval disagreeing about
+the same request.
+
 Fail-closed, with one deliberate exception
 ------------------------------------------
 An interaction this guard never saw created (NAT's own OAuth consent flow, for
@@ -105,6 +134,28 @@ class InteractionAuthorizationError(Exception):
     """A response was not authorized for the interaction it targets."""
 
 
+def _sole_identity_header(scope: dict[str, Any]) -> str | None:
+    """The identity header's value, or ``None`` unless it occurs exactly once.
+
+    The same rule NAT 1.9 applies in ``UserManager._get_identity_header``: a
+    repeated header is ambiguous, not a list to take the first element of.
+    Ambiguity resolves to "no identity", which the caller treats as unauthorized
+    for any interaction with a recorded owner.
+    """
+
+    target = IDENTITY_HEADER.encode("ascii")
+    values = [value for name, value in scope.get("headers", ()) if name.lower() == target]
+    if len(values) != 1:
+        if values:
+            logger.warning(
+                "Ignoring %s: header occurred %d times on one request",
+                IDENTITY_HEADER,
+                len(values),
+            )
+        return None
+    return values[0].decode("latin-1").strip() or None
+
+
 class ResponderIdentityMiddleware:
     """Record the authenticated caller for the duration of one request.
 
@@ -125,11 +176,7 @@ class ResponderIdentityMiddleware:
             await self.app(scope, receive, send)
             return
 
-        identity: str | None = None
-        for name, value in scope.get("headers", ()):
-            if name.lower() == IDENTITY_HEADER.encode("ascii"):
-                identity = value.decode("latin-1").strip() or None
-                break
+        identity: str | None = _sole_identity_header(scope)
 
         token = _responder.set(identity)
         try:
@@ -143,6 +190,13 @@ def _prompt_actor() -> str | None:
 
     Read from NAT's request metadata, which the workflow task inherits from the
     request that started it, so it survives the interaction pause.
+
+    The raw header rather than ``Context.user_id``: see this module's docstring
+    for why the two sides of the ownership comparison both use the raw value.
+    ``metadata.headers`` is a flat mapping and so cannot express a repeated
+    header, but it does not need to — with ``identity_header`` configured, NAT
+    has already refused any request that carried the header more than once, so a
+    value reaching here occurred exactly once.
     """
 
     try:

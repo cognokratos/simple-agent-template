@@ -51,7 +51,7 @@ from nat_streaming_react.llm_config import prune_empty_params
 from nat_streaming_react.observability import trace_content
 
 logger = logging.getLogger(__name__)
-tracer = trace.get_tracer("nat_streaming_react.guardrails", "0.1.9")
+tracer = trace.get_tracer("nat_streaming_react.guardrails", "0.2.0")
 
 
 class TextGuardrailsMiddlewareConfig(
@@ -455,6 +455,40 @@ def _pii_buffer_limit() -> int:
         return _DEFAULT_PII_MAX_BUFFER_CHARS
 
 
+#: Upper bound on the user text handed to the guard model, in characters.
+#:
+#: The output side has had a bound since the PII buffer was introduced; this is
+#: the input side of the same argument, and matches what NAT 1.9 added to its
+#: own content-safety middleware (`max_content_length`, 32k, refusing rather
+#: than truncating).
+#:
+#: Two distinct reasons, neither of which is memory:
+#:
+#: * **Truncating would be unsound.** A classifier that sees a prefix decides
+#:   about the prefix. Feed it 32k of benign text with the actual request at the
+#:   end and a truncating guard returns "safe" about text the workflow never
+#:   sees in isolation. Refusing is the only answer that stays true.
+#: * **Cost and latency are attacker-controlled otherwise.** The guard model is
+#:   invoked on every request, before any other work; an unbounded input makes
+#:   the cheapest possible request the most expensive one to serve.
+#:
+#: Sized well above any real support question. `max_history: 20` in the workflow
+#: bounds the number of turns but says nothing about their length, so it is not
+#: a substitute.
+_DEFAULT_INPUT_MAX_CHARS = 32_000
+
+
+def _input_limit() -> int:
+    try:
+        return max(int(os.getenv("GUARDRAILS_INPUT_MAX_CHARS", str(_DEFAULT_INPUT_MAX_CHARS))), 256)
+    except ValueError:
+        logger.warning(
+            "GUARDRAILS_INPUT_MAX_CHARS is not an integer; using %d",
+            _DEFAULT_INPUT_MAX_CHARS,
+        )
+        return _DEFAULT_INPUT_MAX_CHARS
+
+
 def _truncate(value: str) -> str:
     limit = _trace_limit()
     if len(value) <= limit:
@@ -693,6 +727,52 @@ class TextGuardrailsMiddleware(GuardrailsMiddleware):
                 },
             )
             return None
+
+        # Bounded before the guard model is asked anything. Refused, never
+        # truncated: a verdict about the first N characters is not a verdict
+        # about the request. See _DEFAULT_INPUT_MAX_CHARS.
+        limit = _input_limit()
+        if len(text) > limit:
+            refusal = os.getenv(
+                "GUARDRAILS_INPUT_OVERSIZE_MESSAGE",
+                "That message is too long for me to review safely. "
+                "Please shorten it and try again.",
+            )
+            with tracer.start_as_current_span("guardrail.input.self_check") as span:
+                _set_common_guardrail_attributes(
+                    span,
+                    stage="input",
+                    name="self check input",
+                )
+                span.set_attribute("guardrail.type", "input_length_limit")
+                span.set_attribute("guardrail.outcome", "blocked")
+                span.set_attribute("guardrail.blocked", True)
+                span.set_attribute("guardrail.final.blocked", True)
+                span.set_attribute("guardrail.decision_source", "deterministic_input_limit")
+                span.set_attribute("guardrail.input.length", len(text))
+                span.set_attribute("guardrail.input.limit", limit)
+                span.set_attribute("guardrail.input.sha256", _sha256(text))
+                span.set_status(Status(StatusCode.OK))
+            _emit_nat_evaluation_event(
+                "guardrail_input_self_check_decision",
+                {"user_message_present": True},
+                {
+                    "stage": "input",
+                    "outcome": "blocked",
+                    "blocked": True,
+                    "decision_source": "deterministic_input_limit",
+                    "input_length": len(text),
+                    "input_limit": limit,
+                },
+            )
+            logger.warning(
+                "Refused a %d-character user message: over the %d-character guard limit",
+                len(text),
+                limit,
+            )
+            context.output = refusal
+            trace_content.record(run_id, answer=refusal)
+            return context
 
         async with self.rails_pool.acquire() as rails:
             result = await self._check_input(context, value, text, rails)

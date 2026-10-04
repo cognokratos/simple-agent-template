@@ -96,7 +96,12 @@ def agent_identity(timeout: float = 10.0) -> dict[str, Any]:
     url = _version_url()
     request = urllib.request.Request(
         url,
-        headers={"Authorization": f"Bearer {os.getenv('AGENT_API_KEY', '')}"},
+        headers={
+            "Authorization": f"Bearer {os.getenv('AGENT_API_KEY', '')}",
+            # Every non-health route requires an asserted identity, not only the
+            # workflow. Same synthetic principal the suites run under.
+            "x-authenticated-user-id": os.getenv("EVALUATION_PRINCIPAL", "").strip() or "evaluation-harness",
+        },
         method="GET",
     )
     try:

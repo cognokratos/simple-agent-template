@@ -260,7 +260,16 @@ services:
       # directly by the agent process, so it must reach this container's
       # environment, not just docs/.env.example.
       GUARDRAILS_PII_MAX_BUFFER_CHARS: ${GUARDRAILS_PII_MAX_BUFFER_CHARS:-200000}
+      # Ceiling on the user text handed to the guard model. Over this the
+      # request is refused, never truncated: a classifier shown a prefix
+      # decides about the prefix. See docs/GUARDRAILS.md#input-length-bound.
+      GUARDRAILS_INPUT_MAX_CHARS: ${GUARDRAILS_INPUT_MAX_CHARS:-32000}
       NAT_TRACE_CAPTURE_CONTENT: ${NAT_TRACE_CAPTURE_CONTENT:-true}
+      # NAT 1.9 attributes every span to the authenticated user. Off by
+      # default: traces already carry the question and the answer, and the
+      # identifier is what turns them into a per-person record. See
+      # docs/OBSERVABILITY.md#per-user-attribution.
+      OTEL_TRACE_USER_ID: ${OTEL_TRACE_USER_ID:-false}
       OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT: ${OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT:-true}
     depends_on:
       mcp-server:
@@ -374,6 +383,11 @@ services:
       MLFLOW_ENABLE_ASYNC_TRACE_LOGGING: ${MLFLOW_ENABLE_ASYNC_TRACE_LOGGING:-false}
       EVALUATION_HTTP_TIMEOUT_SECONDS: ${EVALUATION_HTTP_TIMEOUT_SECONDS:-360}
       EVALUATION_HTTP_MAX_ATTEMPTS: ${EVALUATION_HTTP_MAX_ATTEMPTS:-4}
+      # The harness calls the agent directly, with no browser login behind it.
+      # Since NAT 1.9 the agent requires an asserted identity on every request
+      # (general.front_end.identity_header), so the harness names itself. A
+      # synthetic principal deliberately: an evaluation run is not a person.
+      EVALUATION_PRINCIPAL: ${EVALUATION_PRINCIPAL:-evaluation-harness}
       # The tool names the harness recognises as workflow tool calls. A domain
       # application overrides this instead of editing the harness.
       EVALUATION_TOOL_NAMES: ${EVALUATION_TOOL_NAMES:-search_tickets,get_ticket}

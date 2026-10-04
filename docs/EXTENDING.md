@@ -25,6 +25,28 @@ Everything else, and in particular:
 * the evaluation harness, scorers and provenance;
 * the Compose topology and its checks.
 
+## What each local module compensates for
+
+None of these are preferences. Each exists because NAT or NeMo Guardrails does
+something specific that this deployment cannot use as shipped, and each names
+the upstream change that would let it be deleted. Checked against NAT 1.9.0:
+**every one still applies**, which is why upgrading from 1.8 removed none of
+them.
+
+| Module | Upstream behaviour it compensates for | Delete when |
+| --- | --- | --- |
+| `register.py` | NAT's ReAct `_stream_fn` buffers tokens until it sees the literal `Final Answer:`. With native tool calling the model returns a normal assistant message instead, so the fallback emits the entire answer as one chunk — no streaming. | The ReAct stream handles native tool calling without the marker |
+| `text_guardrails.py` | NAT's `GuardrailsMiddleware` converts each streamed item with `str(chunk)`. For a `ChatResponseChunk` that serialises the whole Pydantic object instead of the assistant text, so the rails see JSON rather than prose. | The middleware extracts chat content rather than stringifying the chunk |
+| `guardrails_compat.py` | Three streaming-rail defects in nemoguardrails 0.21 (see [GUARDRAILS.md](GUARDRAILS.md)). Fixed upstream in 0.23.0, which the `nvidia-nat-security[guardrails]` pin forbids. | That pin allows `>=0.23` |
+| `interaction_guard.py` | NAT's interaction-response route authorizes on knowledge of two UUIDs. `ExecutionRecord` carries no owner, so any authenticated caller can answer anyone's approval prompt, with any choice the schema permits. | `ExecutionStore` records an owner and the route checks it |
+| `llm_config.py` | NAT's YAML interpolation cannot express *absence*. An optional pass-through parameter such as `reasoning_effort` must be present for one provider and entirely absent for another; `${VAR:-}` always produces a string. | A configured-empty extra is omitted rather than forwarded |
+| `observability/` | NAT exposes no public way to supply the workflow root span id or read the span-attribute prefix, so Guardrails spans would form a second trace. Three private attributes, each listed with its own condition in [OBSERVABILITY.md](OBSERVABILITY.md). | Those three have public equivalents |
+| `fastapi_worker.py` | Partly not a workaround — `runner_class` is a supported extension point, and the service-credential layer exists because NAT *trusts* gateway-injected identity headers. `RequireIdentityHeaderMiddleware` **is** a workaround: NAT 1.9's `identity_header` raises `IdentityHeaderError`, but its interactive runner (used unconditionally for the workflow routes) catches it into a 200 response body, so the refusal never reaches the client. | The credential layer: never. The identity layer: when NAT's refusal produces a real 401 on the workflow routes |
+
+Before assuming a module is obsolete after an upgrade, check the actual
+behaviour rather than the release notes: for 1.9, four of the relevant upstream
+files were byte-identical to 1.8.
+
 ## Recommended sequence
 
 1. **Fork and rename.** Set `COMPOSE_PROJECT_NAME` so both stacks coexist.

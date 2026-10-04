@@ -130,10 +130,25 @@ def main() -> None:
         "StaticServiceKeyMiddleware" in worker and "WorkflowTraceContextMiddleware" in worker,
         "the NAT worker does not install both the auth and trace middleware",
     )
+    # Two questions, two layers: "is this the gateway" and "who is it acting
+    # for". NAT 1.9's own identity_header refusal does not reach the client on
+    # the workflow routes (its interactive runner swallows the error into a 200
+    # response body), so this middleware is what makes the second one real.
+    require(
+        "RequireIdentityHeaderMiddleware" in worker,
+        "the NAT worker does not require an asserted identity on non-health routes",
+    )
+    agent_config = text("agent/config.yml")
     require(
         "nat_streaming_react.fastapi_worker.AuthenticatedFastApiFrontEndPluginWorker"
-        in text("agent/config.yml"),
+        in agent_config,
         "config.yml does not select the authenticated NAT front-end worker",
+    )
+    # Not the enforcement point, but what populates Context.user_id, and so
+    # what the per-user span attribution switch governs.
+    require(
+        "identity_header: x-authenticated-user-id" in agent_config,
+        "config.yml no longer tells NAT which header carries the asserted identity",
     )
 
     mcp = text("mcp-server/src/main.rs")

@@ -36,6 +36,27 @@ action — the effective floor is Guardrails' hardcoded 0.4. Both are asserted b
 credential-bearing headers. A secret inside a tool result or a model answer is
 not reached by it. See [OBSERVABILITY.md](OBSERVABILITY.md).
 
+**NAT's own `identity_header` refusal is advisory on the workflow routes.**
+Configured, NAT 1.9 raises `IdentityHeaderError` for a missing, empty or
+repeated identity header and registers a handler that would answer `401`. That
+handler is not reached: `add_generate_routes` serves the workflow path and its
+`/stream` and `/full` variants through the interactive runner unconditionally,
+and that runner acquires the session in a background task wrapped in a blanket
+`except Exception`, so the caller gets `200` with a `WORKFLOW_ERROR` in the
+stream. `RequireIdentityHeaderMiddleware` in `fastapi_worker.py` is what
+actually enforces the requirement, and `make auth-test` asserts it. See
+[SECURITY.md](SECURITY.md#the-agent-requires-an-asserted-identity).
+
+**Per-user trace attribution is off by default.** NAT 1.9 stamps every span with
+the authenticated user (`user.id` and `nat.user.id`). That is genuinely useful
+for triage, and it is withheld unless `OTEL_TRACE_USER_ID=true`, because the
+traces already carry the question and the answer — the identifier is what turns
+them from a corpus into a per-person record, and whether that is acceptable
+depends on the trace store's access controls and retention. The value is a
+stable `uuid5` pseudonym rather than the Keycloak subject, which is a weaker
+disclosure but not anonymity: it is the same value for the same person on every
+request. `UserIdentityProcessor` in `observability/trace_processor.py`.
+
 **Sessions are in memory.** One gateway instance, and a restart logs everyone
 out.
 
@@ -56,20 +77,40 @@ Observed: on a 7.7 GB Docker VM with MLflow at 2 GB and an unrelated stack
 running, the masking half was OOM-killed while the configuration, pattern and
 wiring halves passed. The same script passed in full on the host.
 
+**This is not confined to the verification script.** Any live request whose
+answer reaches the `mask sensitive data on output` flow loads the same analyzer,
+so on a VM without that headroom the agent process is SIGKILLed mid-stream while
+masking. It leaves no Python-level error — the client sees the intermediate-step
+events, then a truncated stream (`curl: (18)`), and the container restarts with
+`RestartCount` incremented, `OOMKilled=false` and exit code 0, none of which name
+memory as the cause. `make trace-test` fails as "no streamed data chunks were
+returned".
+
+Measured on the same 7.7 GB VM: with MLflow running the request was killed every
+time; stopping MLflow alone (freeing ~2 GB) made the same request return its
+masked answer with no restart. If `make trace-test` fails that way, check
+`docker inspect <agent> --format '{{.RestartCount}}'` across the request before
+looking for a fault in the agent.
+
 ## Dependency constraints
 
-`nvidia-nat-security[guardrails]==1.8.0` pins `nemoguardrails>=0.11,<0.22`, so
+`nvidia-nat-security[guardrails]==1.9.0` pins `nemoguardrails>=0.11,<0.22`, so
 0.23.0 — which fixes three streaming rail defects — cannot be installed.
 `guardrails_compat.py` works around them from application code and self-disables
 once the installed release is correct. Delete it when the pin allows `>=0.23`.
 
+**The 1.9 upgrade did not relax this.** The requirement is byte-identical to
+1.8.0's. So are `nemo_guardrails_middleware.py`, `execution_store.py`,
+`routes/execution.py` and `nat/llm/openai_llm.py`, and the ReAct `_stream_fn`
+still buffers until it sees `Final Answer:`. Every workaround in
+`agent/src/nat_streaming_react/` therefore still has a reason to exist after the
+upgrade; none became deletable. See [EXTENDING.md](EXTENDING.md) for the
+per-module removal conditions.
+
 The observability package relies on three private NAT attributes, each listed
 with its removal condition in `observability/__init__.py` and
 [OBSERVABILITY.md](OBSERVABILITY.md). This is **not** a purely public-API
-implementation.
-
-`nvidia-nat[langchain]` pulls the full NAT LangChain dependency set, because
-NAT 1.8's supported `react_agent` lives there and exposes no OpenAI-only extra.
+implementation, and all three are still private in 1.9.
 
 ## Before production
 

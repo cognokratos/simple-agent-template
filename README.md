@@ -123,10 +123,12 @@ it replaced. Where private NAT attributes are still relied on, they are named
 with their removal conditions in
 [OBSERVABILITY.md](docs/OBSERVABILITY.md).
 
-**Dependency trade-off.** NAT 1.8's supported `react_agent` lives in the NAT
-LangChain plugin and exposes no OpenAI-only extra, so this installs the full
-LangChain dependency set. The expensive layer is cached, and the compiler needed
-by `annoy` stays in the builder stage.
+**Dependencies.** NAT's supported `react_agent` lives in the NAT LangChain
+plugin. 1.9 split that plugin's provider integrations into optional extras, so
+this installs `nvidia-nat-langchain[openai]` rather than the complete set —
+29 fewer packages than 1.8 required, including boto3, the OCI SDK, LiteLLM,
+Milvus and HuggingFace. The compiler needed by `annoy` stays in the builder
+stage.
 
 **Licensing.** Source files under `agent/src/` and `gateway/Cargo.toml` declare
 Apache-2.0. There is no root `LICENSE` file; see

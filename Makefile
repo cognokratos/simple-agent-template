@@ -138,7 +138,8 @@ print-provenance: ## Print the resolved source identity
 version: ## Print the running agent's own provenance from its authenticated /version
 	@$(COMPOSE) exec -T agent python -c "import json,os,urllib.request; \
 	req=urllib.request.Request('http://127.0.0.1:8000/version', \
-	headers={'Authorization':'Bearer '+os.environ['NAT_GATEWAY_API_KEY']}); \
+	headers={'Authorization':'Bearer '+os.environ['NAT_GATEWAY_API_KEY'], \
+	'x-authenticated-user-id':'make-version'}); \
 	print(json.dumps(json.load(urllib.request.urlopen(req, timeout=10)), indent=2))"
 
 config: ## Render and validate the normal Docker Compose configuration
@@ -383,8 +384,12 @@ auth-test: ## Smoke-test Keycloak discovery and every authentication boundary
 	[[ "$$unknown_status" == 404 ]] || { echo "Gateway exposed an unexpected path with status $$unknown_status"; exit 1; }; \
 	agent_status=$$($(COMPOSE) exec -T gateway curl -sS -o /dev/null -w '%{http_code}' -X POST -H 'content-type: application/json' -d '{"messages":[]}' http://agent:8000/v1/workflow/full); \
 	[[ "$$agent_status" == 401 ]] || { echo "Agent without API key returned $$agent_status, expected 401"; exit 1; }; \
-	authenticated_agent_status=$$($(COMPOSE) exec -T gateway sh -lc 'curl -sS -o /dev/null -w "%{http_code}" -X POST -H "Authorization: Bearer $$AGENT_API_KEY" -H "content-type: application/json" -d "{\"messages\":[]}" http://agent:8000/v1/workflow/full'); \
-	[[ "$$authenticated_agent_status" != 401 ]] || { echo "Agent rejected the configured API key"; exit 1; }; \
+	keyed_anonymous_status=$$($(COMPOSE) exec -T gateway sh -lc 'curl -sS -o /dev/null -w "%{http_code}" -X POST -H "Authorization: Bearer $$AGENT_API_KEY" -H "content-type: application/json" -d "{\"messages\":[]}" http://agent:8000/v1/workflow/full'); \
+	[[ "$$keyed_anonymous_status" == 401 ]] || { echo "Agent accepted the service key with no asserted identity (returned $$keyed_anonymous_status, expected 401)"; exit 1; }; \
+	duplicate_identity_status=$$($(COMPOSE) exec -T gateway sh -lc 'curl -sS -o /dev/null -w "%{http_code}" -X POST -H "Authorization: Bearer $$AGENT_API_KEY" -H "x-authenticated-user-id: auth-test-rep" -H "x-authenticated-user-id: someone-else" -H "content-type: application/json" -d "{\"messages\":[]}" http://agent:8000/v1/workflow/full'); \
+	[[ "$$duplicate_identity_status" == 401 ]] || { echo "Agent accepted an ambiguous repeated identity header (returned $$duplicate_identity_status, expected 401)"; exit 1; }; \
+	authenticated_agent_status=$$($(COMPOSE) exec -T gateway sh -lc 'curl -sS -o /dev/null -w "%{http_code}" -X POST -H "Authorization: Bearer $$AGENT_API_KEY" -H "x-authenticated-user-id: auth-test-rep" -H "content-type: application/json" -d "{\"messages\":[]}" http://agent:8000/v1/workflow/full'); \
+	[[ "$$authenticated_agent_status" != 401 ]] || { echo "Agent rejected the configured API key with an asserted identity"; exit 1; }; \
 	if $(COMPOSE) exec -T gateway curl -sS -o /dev/null --max-time 5 http://mcp-server:8080/health 2>/dev/null; then \
 		echo "gateway can reach MCP; it must not share mcp_net"; exit 1; \
 	fi; \
