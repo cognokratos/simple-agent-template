@@ -43,9 +43,11 @@ Concepts, one page per stage, written for software engineers:
 | [TEST-SCENARIOS.md](TEST-SCENARIOS.md) | Prompts to type, and what should happen |
 | [EXTRACTION-CHECKLIST.md](EXTRACTION-CHECKLIST.md) | What was taken from the originating example application, and what was left behind |
 
-The reference documents describe the implementation precisely and are the
-source of truth. The learning material links into them rather than restating
-them. Where the two disagree, the reference wins. Please report the drift.
+The implementation, its configuration and the executable checks are
+authoritative. The reference documents are the canonical description of that
+implementation, and the learning material links into them rather than
+duplicating them. If any documentation disagrees with the implementation, that
+is documentation drift: fix the documentation.
 
 ## Code annotations
 

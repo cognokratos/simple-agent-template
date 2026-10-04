@@ -116,9 +116,11 @@ changes.
 
 Engineering responses, roughly in order of reliability:
 
-1. **Move deterministic logic out of the model.** If "highest priority, then
-   oldest" is the business rule, compute it in SQL (`ORDER BY` a priority rank)
-   and return it from a tool. The model then explains the ranking instead of
+1. **Move deterministic logic out of the model.** Use the model for decisions
+   that benefit from interpretation, and ordinary code for decisions that can
+   be specified deterministically. If "highest priority, then oldest" is the
+   business rule, compute it in SQL (`ORDER BY` a priority rank) and return it
+   from a tool. The model then explains the ranking instead of
    performing it. This is the same move as the fan-out fix in
    [concept 2](02-tools-and-mcp.md#when-agent-problems-are-api-design-problems).
 2. **Evaluate the decision, not just the grounding.** There is no evaluation case

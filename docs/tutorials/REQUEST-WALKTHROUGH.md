@@ -270,7 +270,7 @@ request timeout on this route). The UI route parses `intermediate_data:` into
 tool cards (`tool-input-available` / `tool-output-available`) and `data:` into
 answer text, using the wire helpers in [`ui/lib/nat-wire.ts`](../../ui/lib/nat-wire.ts).
 The page renders Markdown with `react-markdown` **without** raw HTML, so a model
-answer cannot inject markup.
+answer cannot inject raw HTML.
 
 ## 16. OpenTelemetry records the execution
 
@@ -313,8 +313,8 @@ latency budget, from both runs:
 
 The remainder is at least two agent-model calls: one to choose the tool, one to
 write the answer. The agent model's calls did not appear as separately named
-spans in these traces. Their time shows only inside `<workflow>`. Agent latency
-is model latency.
+spans in these traces. Their time shows only inside `<workflow>`. In these runs,
+agent latency was model latency.
 
 Open it yourself: `make open-mlflow` → **Experiments → Default → Traces**. See
 [lab 06](06-debug-with-traces.md).

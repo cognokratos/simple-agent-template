@@ -63,8 +63,8 @@ under 3 s combined, so most of the remaining ~14.7 s was the agent model. A warm
 repeat on commit `af29ce0` had the same shape: 12.8 s total, 0.24 s input rail,
 and still ~12.5 s of agent model. A
 one-tool ReAct turn makes at least two model calls: one to choose the tool, one to
-write the answer. Agent latency is almost
-always model latency, and the fix is fewer model round trips, not faster SQL.
+write the answer. In these runs, agent latency was model latency, so the
+fix is fewer model round trips, not faster SQL.
 
 In this observed trace, the agent model's own calls did **not** appear as
 separately named spans. Their time shows up only inside `<workflow>`. The

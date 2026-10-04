@@ -43,17 +43,30 @@ reference manual (the precise how).
 
 The whole path rests on one split:
 
+> **Use the model for decisions that benefit from interpretation; use ordinary
+> code for decisions that can be specified deterministically.**
+
 | Probabilistic: the model | Deterministic: the code around it |
 | --- | --- |
-| interpreting the request | authentication |
-| reasoning and planning | authorization |
-| tool selection | the allowed capability surface |
-| natural-language generation | policy enforcement |
-| recommendations | approval validation |
-| | database constraints |
+| interpreting intent | authentication |
+| choosing tools where the request is ambiguous | authorization |
+| synthesizing information from tool results | validation of inputs and tool arguments |
+| handling natural-language ambiguity | business rules |
+| recommendations and explanations | sorting and ranking when the rule is explicit |
+| | state transitions |
+| | approval verification |
+| | persistence constraints |
 | | audit records |
+| | the allowed capability surface |
 | | evaluation assertions |
 | | network boundaries |
+
+Lab 04 shows what happens when this line is drawn in the wrong place. Asked
+"which ticket should we handle first?", the default model, in one set of
+runs, picked a `high` ticket over an `urgent` one, working from grounded data. If "highest priority,
+then oldest" is the rule, it can be written as an `ORDER BY`, and handing that
+decision to the model adds risk without adding value. Let the model explain
+the ranking; let code compute it.
 
 ---
 

@@ -52,6 +52,15 @@ meant to be reused unchanged — see [docs/EXTENDING.md](docs/EXTENDING.md).
 
 ## Quick start
 
+**Resources.** The full stack runs several services at once: assistant-ui,
+the gateway, Keycloak, PostgreSQL, the MCP server, the agent with its
+guardrails, the OpenTelemetry Collector and MLflow. Presidio's PII analyzer,
+used by output masking, has a large memory footprint of its own. On a Docker VM
+of about 8 GB, there may not be enough headroom to run MLflow and PII masking
+together for every exercise. If you see truncated streams, agent restarts or
+`exit 137` during masking, read
+[LIMITATIONS.md — resource requirements](docs/LIMITATIONS.md#resource-requirements).
+
 ```bash
 make env          # create .env from .env.example
 make pull-models  # no-op unless LLM_BASE_URL is an Ollama endpoint
@@ -99,10 +108,9 @@ applied by the MCP server in one transaction, and recorded in `ticket_audit`.
 ## Documentation
 
 The full map, organised by the three paths above, is in
-[docs/README.md](docs/README.md). The reference manual (architecture, security,
-configuration, guardrails, observability, evaluation, approvals, verification,
-limitations, test scenarios) is unchanged, and the learning material links into
-it.
+[docs/README.md](docs/README.md). The existing reference-document structure is
+preserved, and the learning material links into it. A few reference documents
+were corrected where the educational review exposed drift.
 
 ## Verify it
 

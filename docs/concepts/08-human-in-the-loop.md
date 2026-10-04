@@ -105,8 +105,9 @@ The friction sits on *changing* state, not on declining the model's advice. See
 A human click is an *input*, not a *proof*. Without the token binding, a valid
 approval for TKT-1003 could be replayed, applied to TKT-1004, applied after the
 ticket had already changed, or edited between approval and execution. Each
-binding in the token removes one of those. `make verify-approvals` (29 checks)
-and `make verify-approvals-rust` (25 checks) exercise each one, including a
+binding in the token removes one of those. The agent-side approval checks
+(`make verify-approvals`) and the MCP approval tests (`make verify-approvals-rust`)
+exercise each one, including a
 Python-minted token verified by the Rust verifier.
 
 ## Go deeper

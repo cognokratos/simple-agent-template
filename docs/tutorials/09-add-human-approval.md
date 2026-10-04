@@ -127,8 +127,8 @@ metric exists for.
 **C. Run the boundary tests.**
 
 ```bash
-make verify-approvals        # agent side: binding, replay, ownership, offered choices (29 checks)
-make verify-approvals-rust   # MCP side: signature, binding, lifetime, policy (25 tests)
+make verify-approvals        # agent side: binding, replay, ownership, offered choices
+make verify-approvals-rust   # MCP side: signature, binding, lifetime, policy
 ```
 
 They cover what is hard to do by hand: forged and tampered tokens, expiry,

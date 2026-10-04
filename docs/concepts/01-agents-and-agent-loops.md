@@ -157,9 +157,11 @@ request to a probabilistic component, and the evaluation suites exist because
 
 If the sequence of steps is known in advance, write it as code. An agent pays
 for flexibility with latency, cost and non-determinism. That trade is worth it
-when the *path* depends on interpreting natural language ("which ticket should we
-handle first?"). It is not worth it for "every night, export open tickets to
-CSV". See [ANTI-PATTERNS.md](ANTI-PATTERNS.md#overusing-agents-for-deterministic-workflows).
+when the *path* depends on interpreting natural language ("what's going on with
+this customer's orders?"). It is not worth it for "every night, export open tickets to
+CSV", and not for any single decision with an explicit rule, such as ranking
+tickets by priority ([concept 3](03-grounding-and-authoritative-state.md#grounded-is-not-the-same-as-correct)).
+See [ANTI-PATTERNS.md](ANTI-PATTERNS.md#overusing-agents-for-deterministic-workflows).
 
 ## Go deeper
 

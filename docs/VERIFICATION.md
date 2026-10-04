@@ -14,9 +14,14 @@ make static-check
 | evaluator unit tests | Parser, scorers and provenance (`evaluation/tests/`) |
 | `verify_security_config.py` | Resolved Compose topology: ports, network membership, credential agreement |
 | `verify_security_sources.py` | Source wiring: gateway routes and properties, the patch scripts stay deleted, the guardrail event-name contract, no credential in `/version`, no workflow input interpolated into a shell command |
+| `docs-check` (`verify_docs.py`) | Every relative Markdown link and heading anchor resolves, and every `make <target>` named in the docs exists. `verify_docs_test.py` plants broken references to prove the checker fails on them. |
 
 Needs only `python3`, `node` and the Docker CLI (for `docker compose config` —
 no daemon interaction, no containers).
+
+`docs-check` verifies references, not content. It does not check that the docs
+are semantically correct, that runtime or model-dependent claims still hold, or
+that external URLs resolve.
 
 ## With the Rust toolchain
 
@@ -26,10 +31,10 @@ cd mcp-server && cargo test && cargo clippy --all-targets -- -D warnings
 make verify-approvals-rust
 ```
 
-53 gateway tests: cookies, CSRF, session generation discipline, PKCE, issuer
+The gateway test suite covers cookies, CSRF, session generation discipline, PKCE, issuer
 selection, message validation, identity-header encoding, routing and hardening.
 
-25 MCP tests: approval signature, binding, lifetime, payload digest, the action
+The MCP test suite covers approval signature, binding, lifetime, payload digest, the action
 registry and every transition rule, plus the cross-language check that a
 Python-minted token is accepted.
 
