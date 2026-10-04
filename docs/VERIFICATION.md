@@ -11,7 +11,7 @@ make static-check
 | Step | Proves |
 | --- | --- |
 | `npm run verify:nat-wire` | Scalar SSE chunks (`"100"`, `"true"`, dates) survive the wire contract |
-| evaluator unit tests | Parser, scorers and provenance, 54 cases |
+| evaluator unit tests | Parser, scorers and provenance (`evaluation/tests/`) |
 | `verify_security_config.py` | Resolved Compose topology: ports, network membership, credential agreement |
 | `verify_security_sources.py` | Source wiring: gateway routes and properties, the patch scripts stay deleted, the guardrail event-name contract, no credential in `/version`, no workflow input interpolated into a shell command |
 

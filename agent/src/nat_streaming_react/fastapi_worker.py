@@ -243,6 +243,7 @@ class AuthenticatedFastApiFrontEndPluginWorker(FastApiFrontEndPluginWorker):
         # ends up innermost and only ever sees authenticated requests.
         app.add_middleware(ResponderIdentityMiddleware)
 
+        # OBSERVABILITY: see docs/concepts/06-observability.md.
         # Establish one trace context per request before NAT builds any span, so
         # NAT's workflow root and every Guardrails span share a trace. Added
         # first, so it ends up *inside* the authentication layer below: an

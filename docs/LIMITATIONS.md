@@ -25,9 +25,13 @@ user turns, because doing so made one refusal poison the rest of a conversation.
 The same caller can send that text as the latest turn, where the full rail does
 screen it. See [GUARDRAILS.md](GUARDRAILS.md).
 
-**PII masking does not apply to streamed text.** On the streaming path NeMo uses
-an action's result only to decide blocked/not-blocked. Credential protection is
-the regex rail's job; masking takes effect on the non-streaming path. The
+**PII masking costs streaming.** NeMo's streaming rail runner can only use an
+action's result to decide blocked/not-blocked, never to rewrite text, so while
+`mask sensitive data on output` is enabled the middleware buffers the complete
+answer, masks it once and only then releases it
+(`TextGuardrailsMiddleware._stream_with_buffered_masking`; see
+[GUARDRAILS.md](GUARDRAILS.md)). Answers are masked, but no longer stream token
+by token, and one over `GUARDRAILS_PII_MAX_BUFFER_CHARS` is refused. The
 configured `score_threshold` is also not honoured by the pinned release's masking
 action — the effective floor is Guardrails' hardcoded 0.4. Both are asserted by
 `verify_output_guardrails.py` so they cannot drift unnoticed.
