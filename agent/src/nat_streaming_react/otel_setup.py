@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: Apache-2.0
+# SPDX-License-Identifier: MIT
 """Configure the process-wide OpenTelemetry SDK used by Guardrails child spans.
 
 NAT exports the canonical workflow/tool tree through its own exporter. The

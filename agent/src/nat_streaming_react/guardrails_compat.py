@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: Apache-2.0
+# SPDX-License-Identifier: MIT
 """Application-side compatibility layer for the NeMo Guardrails output rails.
 
 Why this exists

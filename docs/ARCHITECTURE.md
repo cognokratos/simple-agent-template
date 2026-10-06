@@ -137,6 +137,13 @@ choose:
 * **what reaches the client** — output rails run between the model and the
   stream.
 
+The agent **runtime** is trusted, unlike the model. It holds the service
+credential for the MCP server (`MCP_API_KEY`) and, when approvals are enabled,
+the approval signing secret (`HITL_APPROVAL_SECRET`). Neither enters the model's
+context or a tool argument. A compromise of the runtime is therefore a different
+and more serious failure than a manipulated model; see
+[APPROVALS.md — the trust model](APPROVALS.md#the-trust-model).
+
 Text that arrives *through a tool result* is data, never instruction. That is a
 property the evaluation suite measures rather than asserts: see the `injection`
 suite in [EVALUATION.md](EVALUATION.md).

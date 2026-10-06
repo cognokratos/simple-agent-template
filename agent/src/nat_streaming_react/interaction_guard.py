@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: Apache-2.0
+# SPDX-License-Identifier: MIT
 """Authorization for human-in-the-loop interaction responses.
 
 The gap this closes

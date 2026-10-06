@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: Apache-2.0
+# SPDX-License-Identifier: MIT
 """What this agent actually is, so an evaluation result can name it.
 
 An evaluation artifact that records its dataset, its metrics and its latency but

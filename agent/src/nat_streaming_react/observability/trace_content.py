@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: Apache-2.0
+# SPDX-License-Identifier: MIT
 """The question and the answer, captured where they are actually readable.
 
 NAT records the workflow's raw boundary values on the root span: the whole

@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: Apache-2.0
+# SPDX-License-Identifier: MIT
 """NAT telemetry processors: normalize the root span, redact credentials.
 
 ``nat.observability.processor.Processor`` is NAT's supported hook for

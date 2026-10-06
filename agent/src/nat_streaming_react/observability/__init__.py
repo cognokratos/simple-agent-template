@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: Apache-2.0
+# SPDX-License-Identifier: MIT
 """Observability owned by this application, layered on NAT's extension points.
 
 * ``trace_context``  — W3C trace context at the HTTP boundary; makes NAT's

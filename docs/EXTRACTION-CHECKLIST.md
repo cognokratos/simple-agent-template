@@ -168,7 +168,7 @@ Status: **done** · **adapted** (taken, but changed materially) · **deferred**
 | Known limitations and untested behaviour | `docs/LIMITATIONS.md` | done |
 | How a domain application builds on this | `docs/EXTENDING.md` | done |
 | Policy/state/audit reusable patterns | `docs/EXTENDING.md` | adapted — interfaces and the template's concrete implementation, not a policy framework |
-| MIT root `LICENSE` | — | **rejected** — the repository declares Apache-2.0 in `gateway/Cargo.toml` and in Python SPDX headers, which the source leaves in place while adding a conflicting MIT file. Reported in `docs/LIMITATIONS.md#licensing` rather than resolved unilaterally |
+| MIT root `LICENSE` | `LICENSE`, `THIRD_PARTY_NOTICES.md` | **adopted later, deliberately** — rejected at extraction because the source added an MIT file while leaving conflicting Apache-2.0 declarations. Resolved by the owner afterwards: original files and metadata moved to MIT together, and the NVIDIA-derived files keep Apache-2.0 as listed exceptions (`docs/LIMITATIONS.md#licensing`) |
 | ETF datasets, schema, tools, prompts, diagrams | — | rejected — domain |
 
 ## Deferred

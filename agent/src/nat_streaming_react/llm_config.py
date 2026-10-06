@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: Apache-2.0
+# SPDX-License-Identifier: MIT
 """An LLM provider whose optional pass-through parameters can be *omitted*.
 
 The problem

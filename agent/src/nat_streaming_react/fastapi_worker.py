@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: Apache-2.0
+# SPDX-License-Identifier: MIT
 """Authenticated NAT FastAPI front-end worker.
 
 NAT's FastAPI front end exposes a configuration extension point for exactly

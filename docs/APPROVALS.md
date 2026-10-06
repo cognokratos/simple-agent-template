@@ -42,8 +42,8 @@ what was approved.
 | --- | --- | --- |
 | **Gateway** | shape, size, encoding, UUID form, protocol-level confirm/cancel consistency | which choices are legitimate — it cannot know, for an arbitrary application |
 | **Interaction guard** | the responder owns the execution; the submitted id **and** value, together, are one *this* prompt actually offered as a pair; the response type matches the prompt type | anything about the resulting mutation |
-| **Agent** | mints a token binding action, resource, actor, request, authoritative state, exact payload | nothing about current state — that has moved by the time it is applied |
-| **MCP server** | signature, every binding, lifetime ceiling, re-derived state under a row lock, transition policy, single use | — |
+| **Agent** | mints a token binding action, resource, actor, request, the current state as the model reported it, exact payload | nothing about current state — that has moved by the time it is applied |
+| **MCP server** | signature, every binding, lifetime ceiling, re-derived state under a row lock, transition policy, single use | that a human actually made the choice: any token signed with `HITL_APPROVAL_SECRET` is accepted as one (see [the trust model](#the-trust-model)) |
 
 ### The gap the interaction guard closes
 
@@ -74,7 +74,7 @@ HMAC-SHA256 over a base64url claim set. Claims:
 | `action`, `resource_id` | what, to which record |
 | `actor_id` | the authenticated human, from the gateway header — never the model |
 | `request_id` | the one authenticated request this approval belongs to |
-| `choice`, `expected_choice` | what the human picked, and the authoritative state they were shown |
+| `choice`, `expected_choice` | what the human picked, and the state they were shown — as the model reported it from `get_ticket` (`current_priority`), not re-read by the approval layer; the MCP server re-derives it and refuses the token if they differ |
 | `override_requested` | recorded, **never trusted**: re-derived at the point of mutation |
 | `rationale` | required for an override |
 | `payload`, `payload_sha256` | application-owned fields, carried inside the signature |
@@ -101,6 +101,34 @@ The minter caps its own TTL at 30 minutes, and the verifier enforces its own
 independent ceiling — the minter is not the trust boundary. Expiry is strict;
 the 60-second skew tolerance applies only to the lifetime ceiling, because
 leniency on expiry would extend the window an approval stays spendable.
+
+## The trust model
+
+The four layers defend against an untrusted **model** and an untrusted
+**browser**. They do not defend against a compromised **agent runtime**:
+
+* The NAT process is a trusted component. It holds `MCP_API_KEY` (to call the
+  MCP server) and, with approvals enabled, `HITL_APPROVAL_SECRET` (to sign
+  tokens). Neither ever enters the model's context or a tool argument; that is
+  what "the model cannot mint a token" means. It does not mean the secrets are
+  outside the agent process.
+* HMAC-SHA256 is symmetric. The MCP server accepts any token signed with the
+  shared secret as a human decision. Code running in the agent container, or
+  anyone who reads its environment, could sign a token for a choice no human
+  made. The re-derivation, policy and single-use checks would still apply: the
+  change would have to be a permitted transition from the real current state,
+  once. The human consent would not.
+* Prompt injection and runtime compromise are different threats. Prompt
+  injection changes what the model *says* and *requests*. The design above
+  contains it. Runtime compromise changes what the trusted code *does*. That is
+  contained only by protecting the secret and the container: segmentation,
+  minimal images, secret management (see
+  [LIMITATIONS.md](LIMITATIONS.md)), and keeping the signer as small as possible.
+
+Moving signing into a separate component (for example, have the gateway or a
+dedicated approval service sign after the human's authenticated response), or
+using an asymmetric key whose private half only that component holds, shrinks
+what an agent-runtime compromise can do. The template does not implement that.
 
 ## Transactional integrity
 

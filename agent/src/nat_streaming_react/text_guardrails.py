@@ -1,5 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES.
 # SPDX-License-Identifier: Apache-2.0
+# Modified from NVIDIA NeMo Agent Toolkit source for this project; see THIRD_PARTY_NOTICES.md.
 """Text-aware and observable NeMo Guardrails middleware for NAT chat streams.
 
 NAT 1.8's generic Guardrails middleware converts every streaming item with
