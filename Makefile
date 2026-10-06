@@ -91,7 +91,7 @@ endif
 	debug-up debug-down ps status wait health logs logs-app logs-agent logs-ui logs-mcp \
 	logs-db logs-gateway logs-keycloak logs-mlflow logs-otel logs-observability build \
 	rebuild-agent rebuild-ui rebuild-mcp rebuild-gateway verify-mcp fixtures \
-	print-provenance version static-check logs-inspector network-test eval-test-host \
+	print-provenance version static-check license-check package-license-check logs-inspector network-test eval-test-host \
 	verify-approvals verify-approvals-rust verify-llm-config \
 	verify-input-guardrails verify-output-guardrails verify-rails verify-guardrails \
 	verify-stream-adapter verify-trace-pipeline trace-test traces \
@@ -307,8 +307,14 @@ trace-test: verify-trace-pipeline ## Verify observability end to end against MLf
 traces: ## Print the span tree of the most recent MLflow traces
 	python3 scripts/inspect_mlflow_traces.py --limit $${LIMIT:-3}
 
-static-check: verify-stream-adapter eval-test-host security-config-test docs-check ## Offline checks needing no Docker, cluster or model (python3 + node only)
+static-check: verify-stream-adapter eval-test-host security-config-test docs-check license-check ## Offline checks needing no Docker, cluster or model (python3 + node only)
 	@echo "Static checks passed."
+
+license-check: ## agent/ licence copies match the repository-root originals (no dependencies)
+	python3 scripts/verify_agent_package_licenses.py
+
+package-license-check: ## Build sdist + wheels of agent/ and check licence texts and notices in each (needs setuptools>=77)
+	python3 scripts/verify_agent_package_licenses.py --build
 
 docs-check: ## Verify documentation links, heading anchors and referenced make targets
 	python3 scripts/verify_docs_test.py

@@ -58,11 +58,29 @@ jobs:
           python3 scripts/verify_docs_test.py
           python3 scripts/verify_docs.py
 
+      - name: Agent licence copies match the repository root
+        run: python3 scripts/verify_agent_package_licenses.py
+
       - name: Evaluation-artifact validation gate
         run: python3 scripts/verify_evaluation_artifacts_test.py
 
       - name: live-evaluation.yml upload condition semantics
         run: python3 scripts/verify_live_evaluation_upload_condition_test.py
+
+  agent-package:
+    name: Agent package licence files
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      # Separate from the dependency-free job above: building a distribution
+      # needs the PEP 517 backend, installed explicitly and pinned.
+      - name: Install the build backend
+        run: python3 -m pip install --quiet "setuptools==84.0.0"
+      - name: sdist, wheel, wheel-from-sdist and install carry the licence texts and notices
+        run: python3 scripts/verify_agent_package_licenses.py --build
 
   rust:
     name: Rust (${{ matrix.crate }})

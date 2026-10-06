@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
+# Apache-2.0 retained: closely follows NVIDIA NeMo Agent Toolkit's OTLP exporter registration; see THIRD_PARTY_NOTICES.md.
 """NAT telemetry exporter for this application's OTLP/MLflow pipeline.
 
 ``register_telemetry_exporter`` is NAT's plugin API for telemetry backends: a

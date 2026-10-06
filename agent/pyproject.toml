@@ -10,6 +10,10 @@ requires-python = ">=3.11,<3.14"
 # Original code is MIT; register.py, text_guardrails.py and
 # observability/otlp_exporter.py keep Apache-2.0 (see THIRD_PARTY_NOTICES.md).
 license = "MIT AND Apache-2.0"
+# Copies of the repository-root licence documents (the authoritative versions),
+# kept here because the package is built from agent/ alone (Docker context).
+# scripts/verify_agent_package_licenses.py fails if a copy drifts.
+license-files = ["LICENSE", "LICENSES/Apache-2.0.txt", "THIRD_PARTY_NOTICES.md"]
 dependencies = []
 
 [tool.setuptools.packages.find]
