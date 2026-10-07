@@ -19,19 +19,11 @@ can fork and point at your own domain.
 | Learn evaluation | [Evaluation](docs/EVALUATION.md) · [Concept](docs/concepts/05-evaluation.md) |
 | Debug agent execution | [Observability](docs/OBSERVABILITY.md) · [Lab: traces](docs/tutorials/06-debug-with-traces.md) |
 
-```text
-Browser / assistant-ui
-    ↓ Keycloak login; opaque HttpOnly BFF session; CSRF
-Rust authentication gateway
-    ↓ static service credential; gateway-minted identity headers
-NeMo Agent Toolkit ReAct workflow      ← NeMo Guardrails input/output rails
-    ↓ static service credential
-Rust MCP server
-    ↓ parameterized SQLx queries
-PostgreSQL
+![simple-agent-template production AI agent architecture](docs/assets/simple-agent-template-architecture.svg)
 
-NAT + Guardrails spans ──OTLP──▶ OpenTelemetry Collector ──▶ MLflow
-```
+The architecture is deliberately asymmetric: deterministic software controls identity,
+authorization, tool access and state, while the LLM remains the single probabilistic
+decision-making component inside those boundaries.
 
 assistant-ui is the only application service reachable from the browser. The
 gateway, NAT, MCP and the database publish no host ports and sit on segmented

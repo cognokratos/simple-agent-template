@@ -1,0 +1,313 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1920" height="1080" viewBox="0 0 1920 1080">
+<defs>
+  <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+    <stop offset="0%" stop-color="#07100C"/>
+    <stop offset="55%" stop-color="#0D1117"/>
+    <stop offset="100%" stop-color="#090D12"/>
+  </linearGradient>
+  <linearGradient id="panel" x1="0" y1="0" x2="0" y2="1">
+    <stop offset="0%" stop-color="#111820"/>
+    <stop offset="100%" stop-color="#0D131A"/>
+  </linearGradient>
+  <linearGradient id="agent" x1="0" y1="0" x2="1" y2="1">
+    <stop offset="0%" stop-color="#10251A"/>
+    <stop offset="100%" stop-color="#0D1B14"/>
+  </linearGradient>
+  <linearGradient id="llm" x1="0" y1="0" x2="1" y2="1">
+    <stop offset="0%" stop-color="#33290B"/>
+    <stop offset="100%" stop-color="#241D08"/>
+  </linearGradient>
+  <filter id="shadow" x="-20%" y="-20%" width="140%" height="150%">
+    <feDropShadow dx="0" dy="8" stdDeviation="12" flood-color="#000" flood-opacity="0.33"/>
+  </filter>
+  <marker id="arrowGray" viewBox="0 0 10 10" refX="8.7" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+    <path d="M0,0 L10,5 L0,10 z" fill="#8B949E"/>
+  </marker>
+  <marker id="arrowGold" viewBox="0 0 10 10" refX="8.7" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+    <path d="M0,0 L10,5 L0,10 z" fill="#D29922"/>
+  </marker>
+  <marker id="arrowBlue" viewBox="0 0 10 10" refX="8.7" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+    <path d="M0,0 L10,5 L0,10 z" fill="#58A6FF"/>
+  </marker>
+  <marker id="arrowPurple" viewBox="0 0 10 10" refX="8.7" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+    <path d="M0,0 L10,5 L0,10 z" fill="#A371F7"/>
+  </marker>
+  <style>.node {filter:url(#shadow);}</style>
+</defs>
+<rect width="100%" height="100%" fill="url(#bg)"/>
+
+<text x="80" y="68" font-family="Inter, Arial, sans-serif" font-size="40" font-weight="780" fill="#F0F6FC" text-anchor="start">
+<tspan x="80" dy="0">simple-agent-template</tspan>
+</text>
+<text x="80" y="106" font-family="Inter, Arial, sans-serif" font-size="20" font-weight="450" fill="#8B949E" text-anchor="start">
+<tspan x="80" dy="0">Production AI agent reference architecture</tspan>
+</text>
+<rect x="1508" y="47" width="320" height="34" rx="17" fill="#11241A" stroke="#2EA043" stroke-width="1.5"/><text x="1668.0" y="70" font-family="Inter, Arial, sans-serif" font-size="15" font-weight="700" fill="#7EE787" text-anchor="middle">
+<tspan x="1668.0" dy="0">DETERMINISTIC CONTROLS AROUND AI</tspan>
+</text>
+<rect x="55" y="150" width="300" height="620" rx="28" fill="url(#panel)" stroke="#24313A" stroke-width="2"/>
+<text x="80" y="190" font-family="Inter, Arial, sans-serif" font-size="16" font-weight="800" fill="#7EE787" text-anchor="start">
+<tspan x="80" dy="0">EDGE</tspan>
+</text>
+<text x="80" y="217" font-family="Inter, Arial, sans-serif" font-size="15" font-weight="450" fill="#8B949E" text-anchor="start">
+<tspan x="80" dy="0">User-facing services</tspan>
+</text>
+<rect x="385" y="150" width="1045" height="620" rx="28" fill="url(#panel)" stroke="#24313A" stroke-width="2"/>
+<text x="410" y="190" font-family="Inter, Arial, sans-serif" font-size="16" font-weight="800" fill="#7EE787" text-anchor="start">
+<tspan x="410" dy="0">PRIVATE APPLICATION PLANE</tspan>
+</text>
+<text x="410" y="217" font-family="Inter, Arial, sans-serif" font-size="15" font-weight="450" fill="#8B949E" text-anchor="start">
+<tspan x="410" dy="0">Gateway · agent · tools · data</tspan>
+</text>
+<rect x="1460" y="150" width="405" height="620" rx="28" fill="url(#panel)" stroke="#24313A" stroke-width="2"/>
+<text x="1485" y="190" font-family="Inter, Arial, sans-serif" font-size="16" font-weight="800" fill="#D2A8FF" text-anchor="start">
+<tspan x="1485" dy="0">EXTERNAL / SUPPORTING</tspan>
+</text>
+<text x="1485" y="217" font-family="Inter, Arial, sans-serif" font-size="15" font-weight="450" fill="#8B949E" text-anchor="start">
+<tspan x="1485" dy="0">Model · telemetry · evaluation</tspan>
+</text>
+<g class="node">
+<rect x="95" y="270" width="220" height="78" rx="20" fill="#0F171F" stroke="#3D4B55" stroke-width="2"/>
+<text x="205" y="305" font-family="Inter, Arial, sans-serif" font-size="24" font-weight="760" fill="#E6EDF3" text-anchor="middle">
+<tspan x="205" dy="0">Browser</tspan>
+</text>
+<text x="205" y="331" font-family="Inter, Arial, sans-serif" font-size="14" font-weight="500" fill="#8B949E" text-anchor="middle">
+<tspan x="205" dy="0">same-origin client</tspan>
+</text>
+</g>
+<g class="node">
+<rect x="95" y="395" width="220" height="115" rx="22" fill="#101821" stroke="#3D4B55" stroke-width="2"/>
+<text x="205" y="431" font-family="Inter, Arial, sans-serif" font-size="24" font-weight="760" fill="#E6EDF3" text-anchor="middle">
+<tspan x="205" dy="0">assistant-ui</tspan>
+</text>
+<text x="205" y="464" font-family="Inter, Arial, sans-serif" font-size="17" font-weight="550" fill="#B6C2CF" text-anchor="middle">
+<tspan x="205" dy="0">Next.js</tspan>
+</text>
+<text x="205" y="490" font-family="Inter, Arial, sans-serif" font-size="14" font-weight="450" fill="#8B949E" text-anchor="middle">
+<tspan x="205" dy="0">:3000 · only app port</tspan>
+</text>
+</g>
+<g class="node">
+<rect x="95" y="590" width="220" height="110" rx="22" fill="#101821" stroke="#3D4B55" stroke-width="2"/>
+<text x="205" y="627" font-family="Inter, Arial, sans-serif" font-size="24" font-weight="760" fill="#E6EDF3" text-anchor="middle">
+<tspan x="205" dy="0">Keycloak</tspan>
+</text>
+<text x="205" y="660" font-family="Inter, Arial, sans-serif" font-size="16" font-weight="550" fill="#B6C2CF" text-anchor="middle">
+<tspan x="205" dy="0">OIDC + PKCE</tspan>
+</text>
+<text x="205" y="684" font-family="Inter, Arial, sans-serif" font-size="14" font-weight="450" fill="#8B949E" text-anchor="middle">
+<tspan x="205" dy="0">:8082</tspan>
+</text>
+</g>
+<g class="node">
+<rect x="435" y="355" width="235" height="175" rx="24" fill="#101821" stroke="#3D4B55" stroke-width="2"/>
+<text x="552" y="392" font-family="Inter, Arial, sans-serif" font-size="24" font-weight="760" fill="#E6EDF3" text-anchor="middle">
+<tspan x="552" dy="0">Rust Gateway / BFF</tspan>
+</text>
+<text x="552" y="430" font-family="Inter, Arial, sans-serif" font-size="16" font-weight="550" fill="#B6C2CF" text-anchor="middle">
+<tspan x="552" dy="0">opaque session · CSRF</tspan>
+</text>
+<text x="552" y="458" font-family="Inter, Arial, sans-serif" font-size="16" font-weight="550" fill="#B6C2CF" text-anchor="middle">
+<tspan x="552" dy="0">schema validation</tspan>
+</text>
+<text x="552" y="486" font-family="Inter, Arial, sans-serif" font-size="16" font-weight="550" fill="#B6C2CF" text-anchor="middle">
+<tspan x="552" dy="0">trusted identity headers</tspan>
+</text>
+</g>
+<g class="node">
+<rect x="735" y="320" width="385" height="245" rx="28" fill="url(#agent)" stroke="#2EA043" stroke-width="2.4"/>
+<text x="760" y="354" font-family="Inter, Arial, sans-serif" font-size="15" font-weight="800" fill="#7EE787" text-anchor="start">
+<tspan x="760" dy="0">NeMo Agent Toolkit</tspan>
+</text>
+<text x="928" y="399" font-family="Inter, Arial, sans-serif" font-size="28" font-weight="790" fill="#E6EDF3" text-anchor="middle">
+<tspan x="928" dy="0">Agent Runtime</tspan>
+</text>
+<rect x="775" y="430" width="305" height="48" rx="15" fill="#11241A" stroke="#2EA043" stroke-width="1.4"/>
+<text x="928" y="460" font-family="Inter, Arial, sans-serif" font-size="16" font-weight="650" fill="#B7F7C4" text-anchor="middle">
+<tspan x="928" dy="0">NeMo Guardrails · input / output</tspan>
+</text>
+<rect x="775" y="493" width="305" height="48" rx="15" fill="#13202A" stroke="#3D4B55" stroke-width="1.4"/>
+<text x="928" y="523" font-family="Inter, Arial, sans-serif" font-size="16" font-weight="650" fill="#D4DEE7" text-anchor="middle">
+<tspan x="928" dy="0">ReAct workflow · bounded loop</tspan>
+</text>
+</g>
+<g class="node">
+<rect x="1175" y="355" width="215" height="175" rx="24" fill="#101821" stroke="#3D4B55" stroke-width="2"/>
+<text x="1282" y="392" font-family="Inter, Arial, sans-serif" font-size="23" font-weight="760" fill="#E6EDF3" text-anchor="middle">
+<tspan x="1282" dy="0">Rust MCP Server</tspan>
+</text>
+<text x="1282" y="429" font-family="Inter, Arial, sans-serif" font-size="16" font-weight="550" fill="#B6C2CF" text-anchor="middle">
+<tspan x="1282" dy="0">typed tools</tspan>
+</text>
+<text x="1282" y="457" font-family="Inter, Arial, sans-serif" font-size="16" font-weight="550" fill="#B6C2CF" text-anchor="middle">
+<tspan x="1282" dy="0">read-only by default</tspan>
+</text>
+<text x="1282" y="485" font-family="Inter, Arial, sans-serif" font-size="15" font-weight="550" fill="#B6C2CF" text-anchor="middle">
+<tspan x="1282" dy="0">signed approvals optional</tspan>
+</text>
+</g>
+<g class="node">
+<rect x="1175" y="600" width="215" height="112" rx="22" fill="#101821" stroke="#3D4B55" stroke-width="2"/>
+<text x="1282" y="639" font-family="Inter, Arial, sans-serif" font-size="24" font-weight="760" fill="#E6EDF3" text-anchor="middle">
+<tspan x="1282" dy="0">PostgreSQL</tspan>
+</text>
+<text x="1282" y="672" font-family="Inter, Arial, sans-serif" font-size="15" font-weight="500" fill="#B6C2CF" text-anchor="middle">
+<tspan x="1282" dy="0">state + append-only audit</tspan>
+</text>
+</g>
+<g class="node">
+<rect x="1510" y="270" width="305" height="142" rx="24" fill="url(#llm)" stroke="#D29922" stroke-width="2.4"/>
+<text x="1662" y="311" font-family="Inter, Arial, sans-serif" font-size="26" font-weight="790" fill="#F2CC60" text-anchor="middle">
+<tspan x="1662" dy="0">LLM Endpoint</tspan>
+</text>
+<text x="1662" y="349" font-family="Inter, Arial, sans-serif" font-size="17" font-weight="550" fill="#E8D9A5" text-anchor="middle">
+<tspan x="1662" dy="0">OpenAI-compatible</tspan>
+</text>
+<text x="1662" y="379" font-family="Inter, Arial, sans-serif" font-size="17" font-weight="550" fill="#E8D9A5" text-anchor="middle">
+<tspan x="1662" dy="0">agent + guard model</tspan>
+</text>
+</g>
+<rect x="1575" y="428" width="176" height="34" rx="17" fill="#2B2209" stroke="#D29922" stroke-width="1.5"/><text x="1663.0" y="451" font-family="Inter, Arial, sans-serif" font-size="15" font-weight="700" fill="#F2CC60" text-anchor="middle">
+<tspan x="1663.0" dy="0">PROBABILISTIC</tspan>
+</text>
+<g class="node">
+<rect x="1510" y="520" width="305" height="92" rx="22" fill="#101821" stroke="#3D4B55" stroke-width="2"/>
+<text x="1662" y="555" font-family="Inter, Arial, sans-serif" font-size="22" font-weight="760" fill="#E6EDF3" text-anchor="middle">
+<tspan x="1662" dy="0">OpenTelemetry</tspan>
+</text>
+<text x="1662" y="585" font-family="Inter, Arial, sans-serif" font-size="15" font-weight="500" fill="#B6C2CF" text-anchor="middle">
+<tspan x="1662" dy="0">Collector · OTLP</tspan>
+</text>
+</g>
+<g class="node">
+<rect x="1510" y="650" width="305" height="92" rx="22" fill="#101821" stroke="#3D4B55" stroke-width="2"/>
+<text x="1662" y="685" font-family="Inter, Arial, sans-serif" font-size="23" font-weight="760" fill="#E6EDF3" text-anchor="middle">
+<tspan x="1662" dy="0">MLflow</tspan>
+</text>
+<text x="1662" y="715" font-family="Inter, Arial, sans-serif" font-size="15" font-weight="500" fill="#B6C2CF" text-anchor="middle">
+<tspan x="1662" dy="0">traces · evals · prompts</tspan>
+</text>
+</g>
+<g class="node">
+<rect x="785" y="625" width="285" height="85" rx="22" fill="#101821" stroke="#3D4B55" stroke-width="2"/>
+<text x="927" y="658" font-family="Inter, Arial, sans-serif" font-size="21" font-weight="760" fill="#E6EDF3" text-anchor="middle">
+<tspan x="927" dy="0">Evaluator</tspan>
+</text>
+<text x="927" y="686" font-family="Inter, Arial, sans-serif" font-size="14" font-weight="500" fill="#B6C2CF" text-anchor="middle">
+<tspan x="927" dy="0">synthetic principal · deterministic scorers</tspan>
+</text>
+</g>
+<line x1="205" y1="348" x2="205" y2="395" stroke="#8B949E" stroke-width="3" marker-end="url(#arrowGray)"/>
+<text x="238" y="378" font-family="Inter, Arial, sans-serif" font-size="13" font-weight="650" fill="#8B949E" text-anchor="start">
+<tspan x="238" dy="0">HTTPS</tspan>
+</text>
+<line x1="315" y1="452" x2="435" y2="452" stroke="#8B949E" stroke-width="3" marker-end="url(#arrowGray)"/>
+<text x="375" y="430" font-family="Inter, Arial, sans-serif" font-size="13" font-weight="650" fill="#AAB6C3" text-anchor="middle">
+<tspan x="375" dy="0">server-side fetch</tspan>
+</text>
+<line x1="670" y1="442" x2="735" y2="442" stroke="#8B949E" stroke-width="3" marker-end="url(#arrowGray)"/>
+<text x="704" y="419" font-family="Inter, Arial, sans-serif" font-size="13" font-weight="650" fill="#AAB6C3" text-anchor="middle">
+<tspan x="704" dy="0">service key</tspan>
+</text>
+<text x="704" y="435" font-family="Inter, Arial, sans-serif" font-size="13" font-weight="650" fill="#AAB6C3" text-anchor="middle">
+<tspan x="704" dy="0">+ identity</tspan>
+</text>
+<line x1="1120" y1="442" x2="1175" y2="442" stroke="#8B949E" stroke-width="3" marker-end="url(#arrowGray)"/>
+<text x="1148" y="419" font-family="Inter, Arial, sans-serif" font-size="13" font-weight="650" fill="#AAB6C3" text-anchor="middle">
+<tspan x="1148" dy="0">MCP</tspan>
+</text>
+<text x="1148" y="435" font-family="Inter, Arial, sans-serif" font-size="13" font-weight="650" fill="#AAB6C3" text-anchor="middle">
+<tspan x="1148" dy="0">API key</tspan>
+</text>
+<line x1="1282" y1="530" x2="1282" y2="600" stroke="#8B949E" stroke-width="3" marker-end="url(#arrowGray)"/>
+<text x="1315" y="570" font-family="Inter, Arial, sans-serif" font-size="13" font-weight="650" fill="#AAB6C3" text-anchor="start">
+<tspan x="1315" dy="0">SQLx</tspan>
+</text>
+<path d="M155 348 L155 565 L205 565 L205 590" fill="none" stroke="#A371F7" stroke-width="2.2" stroke-dasharray="7 6" marker-end="url(#arrowPurple)"/>
+<text x="120" y="470" font-family="Inter, Arial, sans-serif" font-size="13" font-weight="650" fill="#C7A5FF" text-anchor="middle">
+<tspan x="120" dy="0">login redirect</tspan>
+</text>
+<path d="M435 500 C380 530, 355 610, 315 645" fill="none" stroke="#A371F7" stroke-width="2.2" stroke-dasharray="7 6" marker-end="url(#arrowPurple)"/>
+<text x="382" y="580" font-family="Inter, Arial, sans-serif" font-size="13" font-weight="650" fill="#C7A5FF" text-anchor="middle">
+<tspan x="382" dy="0">OIDC backchannel</tspan>
+</text>
+<path d="M1085 320 L1085 255 L1468 255 L1468 315 L1510 315" fill="none" stroke="#D29922" stroke-width="2.8" stroke-dasharray="10 7" marker-end="url(#arrowGold)"/>
+<text x="1277" y="244" font-family="Inter, Arial, sans-serif" font-size="14" font-weight="700" fill="#E3BD4F" text-anchor="middle">
+<tspan x="1277" dy="0">prompts · reasoning · tool choice</tspan>
+</text>
+<path d="M1510 382 L1468 382 L1468 540 L1120 540 L1120 520" fill="none" stroke="#D29922" stroke-width="2.8" stroke-dasharray="10 7" marker-end="url(#arrowGold)"/>
+<text x="1295" y="531" font-family="Inter, Arial, sans-serif" font-size="14" font-weight="700" fill="#E3BD4F" text-anchor="middle">
+<tspan x="1295" dy="0">model output · guard self-check</tspan>
+</text>
+<path d="M927 625 L927 565" fill="none" stroke="#8B949E" stroke-width="2.2" stroke-dasharray="7 6" marker-end="url(#arrowGray)"/>
+<text x="840" y="598" font-family="Inter, Arial, sans-serif" font-size="13" font-weight="650" fill="#AAB6C3" text-anchor="middle">
+<tspan x="840" dy="0">evaluation calls</tspan>
+</text>
+<path d="M1070 690 L1105 690 L1105 752 L1450 752 L1450 696 L1510 696" fill="none" stroke="#8B949E" stroke-width="2.2" stroke-dasharray="7 6" marker-end="url(#arrowGray)"/>
+<path d="M1080 530 L1138 575 L1138 728 L1425 728 L1425 566 L1510 566" fill="none" stroke="#58A6FF" stroke-width="2.4" stroke-dasharray="8 6" marker-end="url(#arrowBlue)"/>
+<text x="1265" y="720" font-family="Inter, Arial, sans-serif" font-size="13" font-weight="700" fill="#79C0FF" text-anchor="middle">
+<tspan x="1265" dy="0">OTLP traces</tspan>
+</text>
+<line x1="1662" y1="612" x2="1662" y2="650" stroke="#58A6FF" stroke-width="2.4" marker-end="url(#arrowBlue)"/>
+<rect x="55" y="805" width="1810" height="205" rx="28" fill="#0C1319" stroke="#24313A" stroke-width="2"/>
+<text x="80" y="843" font-family="Inter, Arial, sans-serif" font-size="16" font-weight="800" fill="#7EE787" text-anchor="start">
+<tspan x="80" dy="0">REQUEST PATH + TRUST GUARANTEES</tspan>
+</text>
+<text x="105" y="886" font-family="Inter, Arial, sans-serif" font-size="15" font-weight="800" fill="#B7F7C4" text-anchor="start">
+<tspan x="105" dy="0">1 · AUTHENTICATE</tspan>
+</text>
+<text x="105" y="920" font-family="Inter, Arial, sans-serif" font-size="16" font-weight="560" fill="#C9D1D9" text-anchor="start">
+<tspan x="105" dy="0">OIDC + PKCE</tspan>
+<tspan x="105" dy="24.8">HttpOnly session · CSRF</tspan>
+</text>
+<text x="450" y="886" font-family="Inter, Arial, sans-serif" font-size="15" font-weight="800" fill="#B7F7C4" text-anchor="start">
+<tspan x="450" dy="0">2 · ESTABLISH IDENTITY</tspan>
+</text>
+<text x="450" y="920" font-family="Inter, Arial, sans-serif" font-size="16" font-weight="560" fill="#C9D1D9" text-anchor="start">
+<tspan x="450" dy="0">Gateway mints identity</tspan>
+<tspan x="450" dy="24.8">model never decides who you are</tspan>
+</text>
+<text x="790" y="886" font-family="Inter, Arial, sans-serif" font-size="15" font-weight="800" fill="#B7F7C4" text-anchor="start">
+<tspan x="790" dy="0">3 · REASON SAFELY</tspan>
+</text>
+<text x="790" y="920" font-family="Inter, Arial, sans-serif" font-size="16" font-weight="560" fill="#C9D1D9" text-anchor="start">
+<tspan x="790" dy="0">Guardrails surround</tspan>
+<tspan x="790" dy="24.8">a bounded ReAct loop</tspan>
+</text>
+<text x="1135" y="886" font-family="Inter, Arial, sans-serif" font-size="15" font-weight="800" fill="#B7F7C4" text-anchor="start">
+<tspan x="1135" dy="0">4 · CALL TYPED TOOLS</tspan>
+</text>
+<text x="1135" y="920" font-family="Inter, Arial, sans-serif" font-size="16" font-weight="560" fill="#C9D1D9" text-anchor="start">
+<tspan x="1135" dy="0">MCP authenticates</tspan>
+<tspan x="1135" dy="24.8">the agent service</tspan>
+</text>
+<text x="1480" y="886" font-family="Inter, Arial, sans-serif" font-size="15" font-weight="800" fill="#B7F7C4" text-anchor="start">
+<tspan x="1480" dy="0">5 · ACCESS STATE</tspan>
+</text>
+<text x="1480" y="920" font-family="Inter, Arial, sans-serif" font-size="16" font-weight="560" fill="#C9D1D9" text-anchor="start">
+<tspan x="1480" dy="0">Parameterized SQL</tspan>
+<tspan x="1480" dy="24.8">append-only audit trail</tspan>
+</text>
+<line x1="400" y1="866" x2="400" y2="982" stroke="#24313A" stroke-width="1.5"/>
+<line x1="740" y1="866" x2="740" y2="982" stroke="#24313A" stroke-width="1.5"/>
+<line x1="1085" y1="866" x2="1085" y2="982" stroke="#24313A" stroke-width="1.5"/>
+<line x1="1430" y1="866" x2="1430" y2="982" stroke="#24313A" stroke-width="1.5"/>
+<text x="55" y="1043" font-family="Inter, Arial, sans-serif" font-size="14" font-weight="800" fill="#8B949E" text-anchor="start">
+<tspan x="55" dy="0">Legend</tspan>
+</text>
+<circle cx="125" cy="1038" r="7" fill="#2EA043"/>
+<text x="142" y="1043" font-family="Inter, Arial, sans-serif" font-size="14" font-weight="550" fill="#B6C2CF" text-anchor="start">
+<tspan x="142" dy="0">deterministic enforcement</tspan>
+</text>
+<circle cx="365" cy="1038" r="7" fill="#D29922"/>
+<text x="382" y="1043" font-family="Inter, Arial, sans-serif" font-size="14" font-weight="550" fill="#B6C2CF" text-anchor="start">
+<tspan x="382" dy="0">probabilistic model</tspan>
+</text>
+<circle cx="555" cy="1038" r="7" fill="#58A6FF"/>
+<text x="572" y="1043" font-family="Inter, Arial, sans-serif" font-size="14" font-weight="550" fill="#B6C2CF" text-anchor="start">
+<tspan x="572" dy="0">telemetry</tspan>
+</text>
+<text x="1865" y="1043" font-family="Inter, Arial, sans-serif" font-size="14" font-weight="600" fill="#5E6A75" text-anchor="end">
+<tspan x="1865" dy="0">CognoKratos · simple-agent-template</tspan>
+</text>
+</svg>
