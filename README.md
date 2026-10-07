@@ -8,6 +8,26 @@ can fork and point at your own domain.
 > component. The LLM is an untrusted decision maker: security and authorization
 > are enforced deterministically, outside the model.
 
+## Where this fits in CognoKratos
+
+This repository is **Part I — Production Agent Engineering** in the current
+[CognoKratos curriculum](https://github.com/cognokratos/.github/blob/main/CURRICULUM.md):
+an open-source, community-built curriculum for engineers learning how to build
+autonomous systems that can exercise real capabilities without surrendering
+security, verifiability or human control.
+
+This is the foundation lab. It teaches how to treat the model as one
+probabilistic component inside a larger trust architecture: identity, tool
+capabilities, deterministic controls, evaluation, observability and controlled
+mutation all live outside the model.
+
+> **Core lesson:** Intelligence does not imply authority.
+
+The repository is a laboratory, not a claim that there is one correct
+architecture. Read the [CognoKratos foundation](https://github.com/cognokratos/.github/blob/main/FOUNDATION.md),
+follow the structured synthesis in the [CognoKratos Book](https://book.cognokratos.com/part-1/introduction.html),
+or help [challenge and extend the curriculum](https://github.com/cognokratos/.github/blob/main/CONTRIBUTING.md).
+
 | I want to… | Go to |
 | --- | --- |
 | Run it | [Quick start](#quick-start) |
@@ -103,6 +123,16 @@ The full map, organised by the three paths above, is in
 [docs/README.md](docs/README.md). The existing reference-document structure is
 preserved, and the learning material links into it. A few reference documents
 were corrected where the educational review exposed drift.
+
+## Contribute to the curriculum
+
+CognoKratos contributions are not limited to feature work. A useful contribution
+can be a reproducible failure, a stronger threat model, an adversarial test, an
+alternative architecture, a new lab or a better explanation of a trade-off.
+Reference architectures are propositions to inspect and challenge.
+
+See the organization-level [contribution model](https://github.com/cognokratos/.github/blob/main/CONTRIBUTING.md)
+for how project improvements can feed back into the living curriculum.
 
 ## Verify it
 
