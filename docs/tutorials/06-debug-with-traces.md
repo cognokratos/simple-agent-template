@@ -124,6 +124,27 @@ flowchart LR
     SDK --> COL
 ```
 
+## On the Rig implementation
+
+The same trace, from one tracing model: Rig adopts the request's root span, so
+its `chat` (one per model call) and `execute_tool` spans sit directly under
+`support-tickets-agent.invoke`, with `tool.policy` and `tickets_mcp__<tool>`
+inside `execute_tool`, and the rails beside them
+([OBSERVABILITY.md](../OBSERVABILITY.md#on-the-rig-implementation)). Because the
+model calls are their own spans, the latency split between "the model" and
+"everything else" is read directly off the trace. For **Break it**:
+
+* **A** works the same (`NAT_TRACE_CAPTURE_CONTENT` keeps its name);
+* **B** adds `enduser.pseudonym` to the root span instead of `user.id`;
+* also try raising `AGENT_RUST_LOG` to `rig=trace` and compare the container log
+  with the exported trace: Rig's raw provider request appears in the former and
+  never in the latter, because the export filter is fixed in code.
+
+`make verify-trace-pipeline` on `rust-agent` runs the production tracing layer
+against an in-memory exporter and asserts one trace per request, `traceparent`
+propagation, and that no credential, raw identity or approval token reaches a
+span.
+
 ## What you learned
 
 * A trace shows the agent's chosen path, the guardrail decisions and the latency

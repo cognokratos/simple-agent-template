@@ -21,16 +21,16 @@ of timed spans, so the shape of the agent's decision appears directly.
 | Concept | Implementation in this repo |
 | --- | --- |
 | Tracing standard | OpenTelemetry (OTLP/HTTP) |
-| Span source: agent | NAT intermediate steps → NAT spans → `agent_otlp` exporter ([`otlp_exporter.py`](../../agent/src/nat_streaming_react/observability/otlp_exporter.py)) |
+| Span source: agent | NAT intermediate steps → NAT spans → `agent_otlp` exporter ([`otlp_exporter.py`](https://github.com/cognokratos/simple-agent-template/blob/main/agent/src/nat_streaming_react/observability/otlp_exporter.py)) |
 | Span source: guardrails | NeMo Guardrails, through the process-wide OTel SDK |
 | Collector | OpenTelemetry Collector ([`observability/otel-collector.yml`](../../observability/otel-collector.yml)) |
 | Trace store and UI | MLflow |
 
 ## One request, one trace
 
-NAT and NeMo Guardrails emit spans through two different exporters. Left alone,
+On the NAT implementation, NAT and NeMo Guardrails emit spans through two different exporters. Left alone,
 they produce two unrelated traces per request.
-[`trace_context.py`](../../agent/src/nat_streaming_react/observability/trace_context.py)
+[`trace_context.py`](https://github.com/cognokratos/simple-agent-template/blob/main/agent/src/nat_streaming_react/observability/trace_context.py)
 establishes one `(trace_id, root_span_id)` at the HTTP boundary, before either
 sees the request, so both join the same tree. This took some engineering. The
 reasons, and the private NAT attributes it relies on, are documented in
@@ -79,7 +79,7 @@ data store with a retention and access problem. Decisions this repository makes:
 | Data | Default | Why |
 | --- | --- | --- |
 | Readable question and *released* answer on the root span | on (`NAT_TRACE_CAPTURE_CONTENT`) | The answer is captured where the output rail releases it, so a masked or blocked answer never leaks into the root span |
-| Credential headers (`authorization`, `cookie`, `x-api-key`, `x-csrf-token`, ...) | redacted | `SensitiveHeaderRedactionProcessor` in [`trace_processor.py`](../../agent/src/nat_streaming_react/observability/trace_processor.py) |
+| Credential headers (`authorization`, `cookie`, `x-api-key`, `x-csrf-token`, ...) | redacted | `SensitiveHeaderRedactionProcessor` in [`trace_processor.py`](https://github.com/cognokratos/simple-agent-template/blob/main/agent/src/nat_streaming_react/observability/trace_processor.py) |
 | Raw gateway identity (`x-authenticated-user-id`, `-username`, `-email`) | redacted, whatever `OTEL_TRACE_USER_ID` says | NAT copies request headers into span metadata; attribution is the pseudonym below, never the raw subject |
 | Per-user identifier | **off** (`OTEL_TRACE_USER_ID=false`) | A stable pseudonym turns a trace corpus into a per-person history |
 | Pre-mask guardrail output | **off** (`GUARDRAILS_TRACE_CAPTURE_RAW_OUTPUT=false`) | It contains exactly what the rails exist to stop |
@@ -99,6 +99,19 @@ The last row is the honest gap. Header redaction is not content redaction. See
 * `make trace-test` ([`scripts/verify_traces_e2e.py`](../../scripts/verify_traces_e2e.py))
   sends real requests and asserts on the resulting trace shape: one tree,
   guardrail spans present, readable I/O, no credentials.
+
+## On the Rig implementation
+
+The goal — one trace per request with the decisions in it — is the same; the
+mechanism is much simpler. The Rig agent uses one tracing model in one
+process: Rust `tracing` spans exported by `tracing-opentelemetry`
+([`telemetry/mod.rs`](https://github.com/cognokratos/simple-agent-template/blob/rust-agent/agent/src/telemetry/mod.rs)). The workflow route opens the root
+span and Rig adopts it, so Rig's own `chat` and `execute_tool` spans,
+`tool.policy`, the MCP call and the rails all nest under it with no
+private-attribute workaround. Raw identity headers are never recorded, tool
+results appear redacted, and the export filter is fixed in code because Rig
+logs whole provider requests at TRACE.
+→ [OBSERVABILITY.md](../OBSERVABILITY.md#on-the-rig-implementation)
 
 ## Go deeper
 

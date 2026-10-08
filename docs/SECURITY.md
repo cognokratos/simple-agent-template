@@ -67,12 +67,15 @@ role revoked in Keycloak stayed in effect.
 
 | From | To | Variable | Notes |
 | --- | --- | --- | --- |
-| gateway | NAT | `AGENT_API_KEY` → `NAT_GATEWAY_API_KEY` | Constant-time compare; stripped from the ASGI scope after validation so NAT session metadata and telemetry never see it |
-| evaluator | NAT | `AGENT_API_KEY` | Same endpoint, bypassing the browser path |
-| NAT | MCP | `MCP_API_KEY` | Constant-time compare; removed from the request before RMCP logging |
+| gateway | agent | `AGENT_API_KEY` → `NAT_GATEWAY_API_KEY` | Constant-time compare, then removed before anything downstream sees it: NAT strips it from the ASGI scope so its session metadata and telemetry never see it; the Rig agent removes the header in its auth middleware before any handler, log or span |
+| evaluator | agent | `AGENT_API_KEY` | Same endpoint, bypassing the browser path |
+| agent | MCP | `MCP_API_KEY` | Constant-time compare; removed from the request before RMCP logging |
 
-`make security-config-test` asserts the gateway, evaluator and NAT agree on
-`AGENT_API_KEY`, and NAT and MCP on `MCP_API_KEY`, from the *resolved* Compose
+Both agents read the same variable names, including the historical
+`NAT_GATEWAY_API_KEY`, so the two branches' configurations compare line for line.
+
+`make security-config-test` asserts the gateway, evaluator and agent agree on
+`AGENT_API_KEY`, and the agent and MCP on `MCP_API_KEY`, from the *resolved* Compose
 configuration.
 
 ## Request validation
@@ -126,12 +129,23 @@ previous helper silently omitted a header it could not encode, so a user whose
 Keycloak display name contained an accent reached the agent with identity
 headers missing — a security-relevant field disappearing with no error anywhere.
 
-NAT copies these into span metadata. The user id, username and email are
-redacted from exported telemetry in every mode; per-user attribution, when
-enabled, is NAT's pseudonym and nothing else. See
+Neither agent exports the raw identity. NAT copies these headers into span
+metadata and `main` redacts the user id, username and email from exported
+telemetry in every mode; the Rig agent never records them, keeping only the
+roles (`IDENTITY_HEADERS` / `RETAINED_GATEWAY_HEADERS` in
+[`identity.rs`](https://github.com/cognokratos/simple-agent-template/blob/rust-agent/agent/src/identity.rs)). Per-user attribution, when enabled,
+is a pseudonym and nothing else. See
 [OBSERVABILITY.md](OBSERVABILITY.md#redaction-and-what-it-does-not-cover).
 
 ### The agent requires an asserted identity
+
+Both agents answer two questions, in this order, on every route except
+liveness: *is this the gateway?* (the service credential) and *who is it acting
+for?* (exactly one non-empty `x-authenticated-user-id`, otherwise `401`).
+`make auth-test` asserts the same four statuses against either agent. How each
+gets there differs.
+
+#### On the NAT implementation
 
 Two layers, because NAT's own one does not reach the client.
 
@@ -179,11 +193,44 @@ complementary layers over the same question, and `make auth-test` asserts each
 independently — no key, key without identity, key with a repeated identity, and
 key with a well-formed identity.
 
+#### On the Rig implementation
+
+[`api/auth.rs`](https://github.com/cognokratos/simple-agent-template/blob/rust-agent/agent/src/api/auth.rs) is the service's own Axum middleware,
+so there is no framework refusal to work around: the service key, then exactly
+one bounded identity header, then at most one `x-request-id` (a repeated one is
+`400`, because an approval token is bound to it). Only then is a
+[`TrustedCaller`](https://github.com/cognokratos/simple-agent-template/blob/rust-agent/agent/src/identity.rs) attached to the request. It has no
+public constructor, so no other code path — and nothing the model produces — can
+create one; it is never rendered into the prompt, and an MCP tool whose schema
+declares `user_id`, `actor_id`, `approval_token` or similar is refused at startup
+([`mcp/schema.rs`](https://github.com/cognokratos/simple-agent-template/blob/rust-agent/agent/src/mcp/schema.rs)).
+
+#### Every caller names itself
+
 Every direct caller therefore names itself. The gateway mints the header from
 the validated session; the evaluation harness and the end-to-end trace check
 assert a synthetic principal (`EVALUATION_PRINCIPAL`, default
 `evaluation-harness`), because an evaluation run is not a person and should not
-be recorded as one.
+be recorded as one. The harness sends no `x-request-id`, so neither agent can
+bind an approval to its requests.
+
+## Tool authority
+
+The model proposes tool calls; deterministic software decides which run.
+
+* **NAT:** the callable tools are those NAT is configured with (the MCP
+  `include:` list, plus the approval function when enabled), and arguments are
+  parsed into models derived from the published schemas.
+* **Rig:** every proposed call passes Rig's dispatch hook
+  ([`hooks.rs`](https://github.com/cognokratos/simple-agent-template/blob/rust-agent/agent/src/agent/hooks.rs)), which asks one pure function,
+  [`ToolPolicy::decide`](https://github.com/cognokratos/simple-agent-template/blob/rust-agent/agent/src/guardrails/tools.rs): closed registry,
+  JSON-object arguments matching the published schema exactly (unknown fields
+  refused, nothing coerced), at most `max_tool_calls` per request, and the
+  state-changing tool only into the approval gate. The executors re-check.
+
+In both, the MCP server re-validates every call and remains the authority on
+mutations, re-checked against the locked row after the human answers
+([APPROVALS.md](APPROVALS.md)).
 
 ## Verifying it
 

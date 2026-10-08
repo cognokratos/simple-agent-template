@@ -239,6 +239,22 @@ flowchart LR
 
 One model round trip now answers what used to need a fan-out.
 
+## On the Rig implementation
+
+The MCP side of this lab is identical. On the agent side, add
+`search_ticket_events` to `tools.mcp.include` (and, if you want, a description
+under `tools.mcp.overrides`), then `make rebuild-agent`. Differences to observe:
+
+* the startup log lists the new tool in `discovered MCP tools`;
+* in the trace, the tool span `tickets_mcp__search_ticket_events` sits under
+  Rig's `execute_tool` span, beside a `tool.policy` span;
+* **Break it A′** fails closed the same way, with
+  `tool "search_ticket_events" is in tools.mcp.include but the MCP server does not offer it`;
+* the Rig agent also refuses to start if the new tool's schema uses a JSON
+  Schema keyword it does not enforce, or declares an argument such as
+  `user_id` — try adding `requester: String` and then `user_id: String` to
+  `SearchTicketEventsArgs` and compare.
+
 ## What you learned
 
 * A tool has three owners: the server implements it, the agent config grants

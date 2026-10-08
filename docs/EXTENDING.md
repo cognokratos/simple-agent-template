@@ -9,7 +9,8 @@ what is meant to be inherited unchanged.
 | --- | --- |
 | `db/init.sql` | your schema and seed data |
 | `mcp-server/src/main.rs` tool functions | your read-only tools |
-| `agent/config.yml` — `system_prompt`, `tool_names`, `include`, rail prompts, allow templates | your prompt and tool surface |
+| NAT (`main`): `agent/config.yml` — `system_prompt`, `tool_names`, `include`, rail prompts, allow templates | your prompt and tool surface |
+| Rig (`rust-agent`): `agent/config.yml` — `workflow.system_prompt`, `tools.mcp.include` and `overrides`, rail prompt, output patterns and PII entities; `agent/src/guardrails/input.rs` — `CRITICAL_PATTERNS`, `ALLOW_TEMPLATES` | the same, in the Rig agent's layout |
 | `evaluation/datasets/*.json` | your cases |
 | `db/*_test_fixtures.sql` | your guardrail and injection fixtures |
 | `ui/app/page.tsx` welcome copy | your examples |
@@ -20,7 +21,8 @@ Everything else, and in particular:
 
 * the gateway, entirely — OIDC, sessions, CSRF, proxying, stream limits;
 * `fastapi_worker.py`, `interaction_guard.py`, `llm_config.py`,
-  `guardrails_compat.py`, `observability/`, `provenance.py`;
+  `guardrails_compat.py`, `observability/`, `provenance.py` (NAT); on Rig, the
+  agent crate apart from the sample tables above;
 * the approval token format and both verifiers;
 * the evaluation harness, scorers and provenance;
 * the Compose topology and its checks.
@@ -47,15 +49,38 @@ Before assuming a module is obsolete after an upgrade, check the actual
 behaviour rather than the release notes: for 1.9, four of the relevant upstream
 files were byte-identical to 1.8.
 
+### On the Rig implementation: what the agent modules are for
+
+The Rig agent on `rust-agent` has no such workarounds: nothing patches, wraps or
+reaches into Rig's internals, and no private Rig API is used. Each module is a
+deliberate part of the design, and the NAT module it corresponds to is noted:
+
+| Module (`agent/src/`) | What it is | NAT counterpart |
+| --- | --- | --- |
+| [`agent/execution.rs`](https://github.com/cognokratos/simple-agent-template/blob/rust-agent/agent/src/agent/execution.rs), [`agent/builder.rs`](https://github.com/cognokratos/simple-agent-template/blob/rust-agent/agent/src/agent/builder.rs) | the request lifecycle; a per-request Rig agent whose tools close over the trusted scope | `register.py` |
+| [`agent/hooks.rs`](https://github.com/cognokratos/simple-agent-template/blob/rust-agent/agent/src/agent/hooks.rs), [`guardrails/tools.rs`](https://github.com/cognokratos/simple-agent-template/blob/rust-agent/agent/src/guardrails/tools.rs), [`mcp/schema.rs`](https://github.com/cognokratos/simple-agent-template/blob/rust-agent/agent/src/mcp/schema.rs) | deterministic tool policy at Rig's dispatch hook; strict schemas | none: tools were NAT configuration |
+| [`guardrails/input.rs`](https://github.com/cognokratos/simple-agent-template/blob/rust-agent/agent/src/guardrails/input.rs), [`agent/input_rail.rs`](https://github.com/cognokratos/simple-agent-template/blob/rust-agent/agent/src/agent/input_rail.rs) | input policy rules and their runner | `text_guardrails.py` (input) |
+| [`guardrails/output.rs`](https://github.com/cognokratos/simple-agent-template/blob/rust-agent/agent/src/guardrails/output.rs), [`guardrails/pii.rs`](https://github.com/cognokratos/simple-agent-template/blob/rust-agent/agent/src/guardrails/pii.rs) | streaming output policy | `text_guardrails.py` (output), `guardrails_compat.py` |
+| [`approval/pending.rs`](https://github.com/cognokratos/simple-agent-template/blob/rust-agent/agent/src/approval/pending.rs) | interaction registry with ownership and offered-choice checks built in | `interaction_guard.py` |
+| [`api/auth.rs`](https://github.com/cognokratos/simple-agent-template/blob/rust-agent/agent/src/api/auth.rs), [`identity.rs`](https://github.com/cognokratos/simple-agent-template/blob/rust-agent/agent/src/identity.rs) | service key and asserted identity, in that order | `fastapi_worker.py` |
+| [`config.rs`](https://github.com/cognokratos/simple-agent-template/blob/rust-agent/agent/src/config.rs), [`agent/model.rs`](https://github.com/cognokratos/simple-agent-template/blob/rust-agent/agent/src/agent/model.rs) | typed, fail-fast configuration; empty means omitted | `llm_config.py` |
+| [`telemetry/`](https://github.com/cognokratos/simple-agent-template/tree/rust-agent/agent/src/telemetry) | one tracing model, fixed export filter, provenance | `observability/`, `provenance.py` |
+
+What `rust-agent` tracks upstream instead is Rig's public API, which moves
+between minor versions ([RUST-BRANCH-MAINTENANCE.md](RUST-BRANCH-MAINTENANCE.md#upgrading-rig)).
+
 ## Recommended sequence
 
 1. **Fork and rename.** Set `COMPOSE_PROJECT_NAME` so both stacks coexist.
    Rename the crates and the Keycloak realm/client if you want them branded;
    nothing depends on the names beyond the defaults in `docker-compose.yml`.
 2. **Replace the schema and the MCP tools.** Keep them read-only at first.
-3. **Rewrite the prompt and the tool list** in `agent/config.yml`.
+3. **Rewrite the prompt and the tool list** in `agent/config.yml`. (Rig: the
+   file is baked into the image — `make rebuild-agent`; a tool schema outside
+   the subset the agent enforces stops startup with the reason.)
 4. **Rewrite the guardrail input policy.** The self-check prompt and the
-   `_CRITICAL_INPUT_PATTERNS` are domain judgements. The read-only allow
+   critical patterns (NAT: `_CRITICAL_INPUT_PATTERNS`; Rig: `CRITICAL_PATTERNS`
+   in `agent/src/guardrails/input.rs`) are domain judgements. The read-only allow
    templates exist to correct LLM false positives on *your* common queries —
    anchor them to the complete message, as the samples are.
 5. **Point the evaluator at your tools:** `EVALUATION_TOOL_NAMES`, new datasets,
@@ -73,10 +98,17 @@ Four edits, and nothing in the token format or verification changes:
    ```
    and extend `apply_policy` / `apply` for it. The registry is a fixed list on
    purpose: what a human can authorize is a security property, not configuration.
-2. **Agent** — a request model and a `@register_function` in `approval.py`,
-   following `ticket_set_priority_approval`. Prompt, collect a rationale when the
-   choice differs from the authoritative state, mint, apply.
-3. **Config** — declare the function and add it to `tool_names`.
+2. **Agent** — prompt, collect a rationale when the choice differs from the
+   authoritative state, mint, apply:
+   * NAT: a request model and a `@register_function` in `approval.py`,
+     following `ticket_set_priority_approval`;
+   * Rig: a proposal schema and a gate in `agent/src/approval/` (as `mod.rs` and
+     `gate.rs` do), registered as a `ToolSpec` with
+     `ToolEffect::MutationRequiringApproval` in `agent/src/services.rs` and as a
+     tool in `agent/src/agent/builder.rs`; the tool policy then routes it into
+     the gate and nowhere else.
+3. **Config** — NAT: declare the function and add it to `tool_names`; Rig:
+   declare it under `tools.approval` (and in `ApprovalToolsConfig`).
 4. **Schema** — whatever the mutation and its audit record need.
 
 The UI needs no change: the approval card renders whatever options the prompt

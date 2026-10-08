@@ -3,6 +3,12 @@
 What was taken from `example/etf-research-agent` into this template, where it
 landed, and what was deliberately left behind. Kept so omissions are reviewable.
 
+This is a history of the canonical NAT implementation on `main`. The agent
+destinations it names (`fastapi_worker.py`, `text_guardrails.py`,
+`approval.py`, the `verify_*.py` scripts, …) are NAT files; where each property
+lives in the Rig agent on `rust-agent` is in
+[EXTENDING.md](EXTENDING.md#on-the-rig-implementation-what-the-agent-modules-are-for).
+
 Source ref: `origin/example/etf-research-agent` @ `7f4c329`, one commit ahead of
 `a0667e6`, 136 changed files.
 

@@ -31,7 +31,7 @@ assistant-ui (Next.js)            publishes :3000
 Rust gateway (BFF)                publishes nothing
   │  service credential + gateway-minted identity headers
   ▼
-NAT (NeMo Agent Toolkit)          publishes nothing
+Agent runtime                     publishes nothing
   │  service credential
   ▼
 Rust MCP server                   publishes nothing
@@ -43,9 +43,38 @@ PostgreSQL                        publishes nothing
 Alongside it:
 
 ```
-NAT  ──OTLP──▶  OpenTelemetry Collector  ──▶  MLflow
-evaluator ──▶  NAT (service credential, bypassing the browser path)
+agent  ──OTLP──▶  OpenTelemetry Collector  ──▶  MLflow
+evaluator ──▶  agent (service credential, bypassing the browser path)
 ```
+
+## One architecture, two agent runtimes
+
+The request path above is the architecture. The agent box in it has two
+implementations, and every boundary on this page is the same for both:
+
+```text
+Architecture                NAT implementation (main)          Rig implementation (rust-agent)
+
+Browser                     assistant-ui                       assistant-ui
+  ↓                           ↓                                  ↓
+Gateway                     Rust gateway                       Rust gateway
+  ↓                           ↓                                  ↓
+Agent runtime               FastAPI worker (auth, identity)    Axum router (auth, identity)
+                            NeMo Guardrails input rail         explicit input policy
+                            NAT ReAct loop on LangGraph        Rig agent loop
+                            (tools from configuration)         + tool-policy hook
+                            NeMo regex rail + Presidio         streaming output policy
+  ↓                           ↓                                  ↓
+MCP                         Rust MCP server                    Rust MCP server
+  ↓                           ↓                                  ↓
+Database                    PostgreSQL                         PostgreSQL
+```
+
+The agent satisfies the same [agent-service contract](AGENT-SERVICE-CONTRACT.md)
+either way, which is why nothing around it changes. NAT is the canonical
+implementation; the Rig one exists to make the agent runtime's machinery
+explicit for comparison. What differs inside the box — and where one is
+stricter or narrower than the other — is in [NAT-VS-RIG.md](NAT-VS-RIG.md).
 
 ## What each boundary is for
 
@@ -53,14 +82,15 @@ evaluator ──▶  NAT (service credential, bypassing the browser path)
 | --- | --- | --- |
 | browser → UI | Is this a real, logged-in user, on our origin? | Keycloak OIDC session cookie, `SameSite`, CSRF double-submit |
 | UI → gateway | — | Server-side call; the UI is a proxy, not a trust boundary |
-| gateway → NAT | Is this caller the gateway? | Static service credential, constant-time compared |
-| gateway → NAT | Who is the user? | Gateway-minted `x-authenticated-*` headers |
-| NAT → MCP | Is this caller the agent? | Static service credential |
+| gateway → agent | Is this caller the gateway? | Static service credential, constant-time compared |
+| gateway → agent | Who is the user? | Gateway-minted `x-authenticated-*` headers |
+| model → tool call | May this proposed call run? | NAT: only configured tools exist and arguments are parsed by NAT; Rig: one deterministic policy function at Rig's dispatch hook |
+| agent → MCP | Is this caller the agent? | Static service credential |
 | model → state | Did a human authorize this exact change? | Signed approval token (optional feature) |
 
 The two service credentials are not redundant with network isolation. Network
 membership answers *can this packet arrive*; it cannot answer *is this caller
-the gateway*. NAT **trusts** the identity headers it receives — they end up in
+the gateway*. The agent **trusts** the identity headers it receives — they end up in
 audit records and in signed approval tokens — so it must authenticate its
 callers.
 
@@ -73,7 +103,7 @@ Seven Compose networks, each one trust relationship:
 | `edge` | ui, keycloak, mlflow, otel-collector, (mcp-inspector) | The only services that publish host ports |
 | `gateway_net` | ui, gateway | assistant-ui → gateway |
 | `auth_net` | gateway, keycloak, realm-init | OIDC backchannel |
-| `agent_net` | gateway, agent, evaluator | → NAT |
+| `agent_net` | gateway, agent, evaluator | → the agent |
 | `mcp_net` | agent, mcp-server, (mcp-inspector) | → MCP |
 | `data_net` | mcp-server, postgres | The database is reachable from one service |
 | `telemetry_net` | agent, otel-collector, mlflow, evaluator | Trace export |
@@ -119,7 +149,7 @@ suite in [EVALUATION.md](EVALUATION.md).
 | --- | --- |
 | `ui/` | assistant-ui on Next.js. Proxies to the gateway; renders Markdown without raw HTML. |
 | `gateway/` | Rust BFF. OIDC, sessions, CSRF, proxying. Nine modules, see [SECURITY.md](SECURITY.md). |
-| `agent/` | NAT workflow, guardrail middleware, observability, optional approvals. |
+| `agent/` | The agent. NAT workflow, guardrail middleware, observability, optional approvals on `main`; the Rig + Rust service on [`rust-agent`](https://github.com/cognokratos/simple-agent-template/tree/rust-agent/agent). |
 | `mcp-server/` | Rust MCP tools over PostgreSQL, plus the approval verifier. |
 | `evaluation/` | MLflow suites, deterministic scorers, provenance. |
 | `observability/` | OpenTelemetry Collector configuration. |

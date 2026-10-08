@@ -1,0 +1,43 @@
+name: rust-agent drift
+
+# Detection only: is rust-agent still exactly one commit on top of the current
+# main, with byte-identical README.md and docs/? It never rewrites a branch
+# (docs/RUST-BRANCH-MAINTENANCE.md).
+#
+# A push to main makes rust-agent stale by design until it is regenerated, so
+# that run reports drift as a warning and stays green; main's own CI is not
+# involved. The daily run and the run on a push to rust-agent fail while drift
+# remains, which is the signal that the branch still needs regenerating.
+
+on:
+  push:
+    branches: ["main", "rust-agent"]
+  schedule:
+    - cron: "17 6 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: rust-agent-drift-${{ github.ref }}
+
+jobs:
+  drift:
+    name: rust-agent is one commit on main
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Fetch main and rust-agent
+        run: |
+          git fetch --no-tags origin +refs/heads/main:refs/remotes/origin/main
+          git fetch --no-tags origin +refs/heads/rust-agent:refs/remotes/origin/rust-agent || true
+      - name: Compare
+        run: |
+          if [ "$GITHUB_EVENT_NAME" = push ] && [ "$GITHUB_REF" = refs/heads/main ]; then
+            python3 scripts/verify_rust_agent_drift.py --warn-only
+          else
+            python3 scripts/verify_rust_agent_drift.py
+          fi

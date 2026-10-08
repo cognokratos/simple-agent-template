@@ -120,6 +120,31 @@ Unchanged once you revert. You now know which control owns which risk:
 | Injection via tool results | capability surface + `injection` evals | deterministic + measured |
 | Unauthorized actions | not a guardrail concern ([concept 7](../concepts/07-security-and-trust-boundaries.md)) | — |
 
+## On the Rig implementation
+
+The input layers are the same patterns, templates, prompt and parser, so
+scenarios 7–9 and **Break it A–C** behave the same way and record the same
+`decision_source` values ([`guardrails/input.rs`](https://github.com/cognokratos/simple-agent-template/blob/rust-agent/agent/src/guardrails/input.rs)). The
+output side is where the two implementations differ, and it is worth running
+both:
+
+| Scenario | NAT | Rig |
+| --- | --- | --- |
+| 10 (PII) | masked by Presidio; the answer arrives in one piece after buffering | the same markers from deterministic recognisers; the answer still streams |
+| 11 (secret) | refusal; the tool card still shows the raw description | "I can't share the rest of that response because it may contain sensitive information."; the tool card shows the key `[REDACTED]` |
+| **Break it D** | delete the masking flow from `rails.output.flows` | set `guardrails.output.pii_entities: []`; streaming is unchanged, because masking never needed a buffer |
+
+Two extra experiments on `rust-agent`:
+
+* **E. Weaken the window.** Set `HOLDBACK_CHARS` to `4` in
+  [`guardrails/output.rs`](https://github.com/cognokratos/simple-agent-template/blob/rust-agent/agent/src/guardrails/output.rs) and run
+  `make verify-output-guardrails`. Which tests fail, and what would a secret
+  split across fragments now do to a real client?
+* **F. Find what the deterministic detector misses.** Put a phone number in an
+  unusual layout into a fixture ticket and compare the two implementations'
+  answers. That is the [narrowing](../NAT-VS-RIG.md#output-guardrails-and-pii)
+  the Rig agent accepts in exchange for a model-free, streaming output path.
+
 ## What you learned
 
 * Layer deterministic and probabilistic checks, and record which one decided.
@@ -131,7 +156,7 @@ Unchanged once you revert. You now know which control owns which risk:
 
 * [GUARDRAILS.md](../GUARDRAILS.md), including the release defects
   `guardrails_compat.py` works around
-* [`text_guardrails.py`](../../agent/src/nat_streaming_react/text_guardrails.py):
+* [`text_guardrails.py`](https://github.com/cognokratos/simple-agent-template/blob/main/agent/src/nat_streaming_react/text_guardrails.py):
   `_CRITICAL_INPUT_PATTERNS`, `_READ_ONLY_TICKET_TEMPLATES`,
   `_resolve_input_policy`
 * Next: [Lab 08 — Add a state-changing action](08-add-a-state-changing-action.md)

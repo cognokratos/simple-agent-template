@@ -92,7 +92,7 @@ endif
 	logs-db logs-gateway logs-keycloak logs-mlflow logs-otel logs-observability build \
 	rebuild-agent rebuild-ui rebuild-mcp rebuild-gateway verify-mcp fixtures \
 	print-provenance version static-check license-check package-license-check logs-inspector network-test eval-test-host \
-	verify-approvals verify-approvals-rust verify-llm-config \
+	verify-approvals verify-approvals-rust verify-llm-config agent-test agent-check docs-parity rust-agent-drift \
 	verify-input-guardrails verify-output-guardrails verify-rails verify-guardrails \
 	verify-stream-adapter verify-trace-pipeline trace-test traces \
 	inspector open-inspector inspector-tools network-test \
@@ -288,6 +288,20 @@ verify-rails: ## Run the live NeMo Guardrails input/output rail regression suite
 	$(COMPOSE) exec -T agent python /app/verify_guardrails_rails.py
 
 verify-guardrails: verify-input-guardrails verify-output-guardrails verify-rails ## Run every guardrail regression check
+
+# Implementation-neutral names for "run the agent's own checks", so the shared
+# documentation can name one command on either branch. On main they run the NAT
+# agent's offline suites inside its container (cluster up); on rust-agent they
+# run the Rust agent's fmt, clippy and tests on the host.
+agent-test: verify-llm-config verify-guardrails verify-trace-pipeline verify-approvals ## Run the agent's own test suites (NAT: inside the agent container)
+
+agent-check: agent-test ## Run every agent check (NAT: same as agent-test)
+
+docs-parity: ## README.md and docs/ are identical to origin/main (enforced on rust-agent; trivially true on main)
+	python3 scripts/verify_docs_parity.py
+
+rust-agent-drift: ## Is origin/rust-agent still one commit on origin/main with identical docs? (detection only)
+	python3 scripts/verify_rust_agent_drift.py
 
 verify-llm-config: ## Verify the LLM provider builds and omits empty optional parameters
 	$(COMPOSE) exec -T agent python /app/verify_llm_config.py

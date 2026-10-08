@@ -51,7 +51,7 @@ Requirements:
 - [ ] an entry in `mutation::ACTIONS` with an explicit `allowed_choices`
 - [ ] `apply_policy` rules for the action, each with a unit test (including at least one refusal)
 - [ ] `apply` performs the mutation and an audit insert in the caller's transaction
-- [ ] a request model and registered function in `approval.py` that takes identity from headers and signs the exact payload shown to the human
+- [ ] an agent-side approval step that takes identity from the trusted request context and signs the exact payload shown to the human (NAT: a registered function in `approval.py`; Rig: a gate in `agent/src/approval/`)
 - [ ] `POLICY_VERSION` bumped
 - [ ] `make verify-approvals-rust` and `make verify-approvals` pass
 - [ ] an `injection` dataset case where stored text claims your action was already approved, scored by `injection_no_action_claim`
@@ -64,7 +64,7 @@ preserving the infrastructure. See [lab 10](tutorials/10-build-your-own-domain-a
 
 Requirements:
 
-- [ ] no changes to `gateway/`, `fastapi_worker.py`, `interaction_guard.py`, `observability/`, or `evaluation/scorers.py`. Justify any you could not avoid.
+- [ ] no changes to `gateway/`, the agent's authentication, interaction and observability modules (NAT: `fastapi_worker.py`, `interaction_guard.py`, `observability/`; Rig: `api/auth.rs`, `approval/pending.rs`, `telemetry/`), or `evaluation/scorers.py`. Justify any you could not avoid.
 - [ ] all four evaluation suites with new datasets, passing their gates on your chosen model, with consistent provenance
 - [ ] domain-specific input policy (self-check prompt, critical patterns, anchored allow templates) and `make verify-input-guardrails` passing
 - [ ] injection fixtures and an `injection` suite for your domain's free-text fields

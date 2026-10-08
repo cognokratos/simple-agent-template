@@ -4,6 +4,11 @@ Every variable has a working default in `docker-compose.yml`, so `make dev`
 starts without setting any of them. `.env.example` documents the ones that
 matter.
 
+Both agent implementations read the **same variable names**, including the
+historical `NAT_*` ones, so the two branches' configurations compare line by
+line. Where the Rig agent on `rust-agent` reads or interprets something
+differently, [On the Rig implementation](#on-the-rig-implementation) says so.
+
 ## Model endpoint
 
 Any OpenAI-compatible endpoint. The defaults target a local Ollama running
@@ -29,6 +34,13 @@ both directions: changing the primary model below does not change which model
 classifies input, and vice versa.
 
 ### `qwen3:8b` and the prioritization prompt
+
+> **On the Rig implementation** the same model answered this prompt correctly
+> from a single `search_tickets` call in the runs observed, and the evaluation
+> suites passed at their gates. That is an observation from a handful of runs,
+> not evidence that the runtime fixed a model limitation: the model and prompt
+> are the same, but the two clients build different request bodies. What
+> follows was observed with the NAT agent.
 
 In repeated local testing against this support-ticket example, `qwen3:8b`
 answers the single-tool and no-tool demonstration prompts correctly and
@@ -84,6 +96,41 @@ So `agent/src/nat_streaming_react/llm_config.py` registers an
 pydantic records them as set. `TextGuardrailsMiddlewareConfig` applies the same
 rule to the guard model's `extra_body`.
 
+## On the Rig implementation
+
+Behaviour comes from `agent/config.yml`, whose layout differs from NAT's (the
+prompts in it are byte-identical): `workflow.system_prompt`,
+`tools.mcp.include` and `tools.mcp.overrides`, `tools.approval` (commented out
+by default), `guardrails.prompts`, `guardrails.output.secret_patterns` and
+`guardrails.output.pii_entities`. Unknown keys are refused, and the file is
+baked into the image, so edit it and `make rebuild-agent`. Typed parsing is in
+[`config.rs`](https://github.com/cognokratos/simple-agent-template/blob/rust-agent/agent/src/config.rs).
+
+**Fail fast.** Any security-relevant setting that does not parse stops startup:
+a missing credential, a short approval secret, an unrecognised boolean (NAT
+keeps the default and warns), a partially enabled approval feature, a secret
+pattern that does not compile, an unknown PII entity, or an MCP tool schema the
+agent cannot enforce.
+
+**Empty means omitted** is one `Option` there: a set-but-empty
+`LLM_REASONING_EFFORT` becomes `None`, and `reasoning_effort` is sent only when it
+is `Some` ([`agent/model.rs`](https://github.com/cognokratos/simple-agent-template/blob/rust-agent/agent/src/agent/model.rs)). The model client is
+Rig's generic OpenAI dialect on Chat Completions, with strict tool mode off
+(it would mark optional parameters required); verified against Ollama with
+`qwen3:8b`.
+
+| Rig-only setting | Default | Effect |
+| --- | --- | --- |
+| `HITL_INTERACTION_TIMEOUT_SECONDS` | `600` | a pending approval older than this counts as cancelled (floor 5) |
+| `AGENT_TRACE_CAPTURE_MODEL_CONTENT` | `false` | Rig's own prompt/completion span content |
+| `AGENT_CONFIG_PATH`, `AGENT_BIND_ADDRESS` | `/app/config.yml`, `0.0.0.0:8000` | |
+| `AGENT_RUST_LOG` | `tickets_agent=info,warn` | the agent container's `RUST_LOG` (container log only) |
+
+Read by NAT and ignored by Rig: `GUARDRAILS_RAIL_POOL_SIZE` (no rails pool) and
+`HITL_STRICT_INTERACTION_OWNERSHIP` (ownership is always enforced). The trusted
+identity header is a constant in the Rig agent rather than NAT's
+`general.front_end.identity_header`.
+
 ## Project and volume identity
 
 `docker-compose.yml` pins the project name (`tickets-agent` by default) so
@@ -116,8 +163,8 @@ changes.
 
 | Variable | Default | Notes |
 | --- | --- | --- |
-| `MCP_API_KEY` | dev value | NAT → MCP |
-| `AGENT_API_KEY` | dev value | gateway/evaluator → NAT (NAT reads `NAT_GATEWAY_API_KEY`) |
+| `MCP_API_KEY` | dev value | agent → MCP |
+| `AGENT_API_KEY` | dev value | gateway/evaluator → agent (both agents read it as `NAT_GATEWAY_API_KEY`) |
 | `KEYCLOAK_GATEWAY_CLIENT_SECRET` | dev value | |
 | `GATEWAY_COOKIE_SECURE` | `false` | Set `true` behind TLS. Parsed strictly — a typo is an error, not silently `false` |
 | `GATEWAY_SESSION_TTL_SECONDS` | `28800` | |

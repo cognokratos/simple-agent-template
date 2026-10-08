@@ -10,7 +10,7 @@ why it fails, and what this repository does instead.
 | 3 | [Letting the LLM decide whether its own action is permitted](#letting-the-llm-decide-whether-its-own-action-is-permitted) | Signed human approval + `apply_policy` at the point of mutation |
 | 4 | [One omnipotent tool](#one-omnipotent-tool) | Narrow, read-only, parameterized tools |
 | 5 | [Not distinguishing instructions from tool-returned data](#not-distinguishing-instructions-from-tool-returned-data) | Untrusted-data rule + no capability to act on it + `injection` suite |
-| 6 | [Logging credentials or sensitive tool output](#logging-credentials-or-sensitive-tool-output) | Credentials stripped before NAT; header redaction; capture switches |
+| 6 | [Logging credentials or sensitive tool output](#logging-credentials-or-sensitive-tool-output) | Credentials stripped before the agent runtime; header redaction; capture switches |
 | 7 | [Relying only on manual prompt testing](#relying-only-on-manual-prompt-testing) | Four source-controlled evaluation suites |
 | 8 | [Shipping without evaluations](#shipping-without-evaluations) | Gated metrics with provenance |
 | 9 | [State mutation without deterministic policy enforcement](#state-mutation-without-deterministic-policy-enforcement) | `apply_policy`, row lock, re-derived state |
@@ -108,11 +108,13 @@ captures every span attribute by default.
 credentials and customer PII from, and it usually has the weakest access
 controls.
 
-**Instead:** service credentials are stripped from the request *before* NAT sees
-it (`StaticServiceKeyMiddleware`) and before RMCP logs it (`require_api_key`).
-`SensitiveHeaderRedactionProcessor` is a second layer. The per-user identifier
-and pre-mask output are off by default. The remaining gap (raw tool results in
-tool spans) is documented, not hidden. See [concept 6](06-observability.md).
+**Instead:** service credentials are stripped from the request *before* the
+agent runtime sees it (NAT: `StaticServiceKeyMiddleware`; Rig: its auth
+middleware) and before RMCP logs it (`require_api_key`). On NAT,
+`SensitiveHeaderRedactionProcessor` is a second layer, and the remaining gap —
+raw tool results in tool spans — is documented, not hidden; the Rig agent closes
+it by tracing only a redacted copy of tool results. The per-user identifier and
+pre-mask output are off by default in both. See [concept 6](06-observability.md).
 
 ## Relying only on manual prompt testing
 
@@ -189,7 +191,7 @@ that can reach it can claim to be anyone. That includes a compromised neighbour,
 a debug sidecar, or a misconfigured network.
 
 **Instead:** both. Seven segmented networks *and* constant-time service
-credentials on gateway → NAT and NAT → MCP, plus a 401 for a missing or repeated
+credentials on gateway → agent and agent → MCP, plus a 401 for a missing or repeated
 identity header. See
 [SECURITY.md](../SECURITY.md#the-agent-requires-an-asserted-identity).
 

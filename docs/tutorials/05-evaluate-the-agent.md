@@ -129,6 +129,17 @@ flowchart LR
 Every claim about agent quality now has a number, a dataset version and a
 provenance record behind it. Full diagram: [concept 5](../concepts/05-evaluation.md#diagram-f-the-evaluation-pipeline).
 
+## On the Rig implementation
+
+The harness, datasets, scorers and gates are identical, so the same commands
+evaluate the Rig agent. Each result records `provenance.agent.runtime`
+(`rig-rust` on `rust-agent`, `nat` on `main`), and the prompt digest is the same
+on both, so `provenance.consistent` holds for either. Run the suites on both
+branches against the same model and compare them in MLflow by that tag
+([EVALUATION.md](../EVALUATION.md#comparing-runtimes)). The output decision
+event is `guardrail_output_regex_pii_decision` on Rig; the evaluator captures it
+by prefix.
+
 ## What you learned
 
 * Evaluation is a regression suite for behaviour, run against the real system.

@@ -132,6 +132,9 @@ def describe(config_path: Path | None = None, *, refresh: bool = False) -> dict[
     path = config_path or CONFIG_PATH
     identity: dict[str, Any] = {
         "available": False,
+        # Which implementation of the agent-service contract this is. The
+        # rust-agent branch reports "rig-rust"; see docs/NAT-VS-RIG.md.
+        "agent_runtime": "nat",
         # Runtime binding, which the config file only templates. Reported
         # separately from the config digest for exactly that reason: the same
         # config can be pointed at a different model without changing its hash.

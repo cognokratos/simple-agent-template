@@ -94,7 +94,7 @@ make network-test
 ## Why it failed
 
 Two independent checks, in order
-([`fastapi_worker.py`](../../agent/src/nat_streaming_react/fastapi_worker.py)):
+([`fastapi_worker.py`](https://github.com/cognokratos/simple-agent-template/blob/main/agent/src/nat_streaming_react/fastapi_worker.py)):
 `StaticServiceKeyMiddleware` asks *"are you the gateway?"* and
 `RequireIdentityHeaderMiddleware` asks *"who are you acting for?"*. Being on the
 right network answers neither. NAT trusts the identity header it receives, so it
@@ -110,6 +110,21 @@ flowchart LR
 ```
 
 Full version with trust boundaries: [concept 7](../concepts/07-security-and-trust-boundaries.md#diagram-d-trust-boundaries).
+
+## On the Rig implementation
+
+Same commands, same results: `401` with no credential, then
+`{"error":"missing or ambiguous authenticated identity"}` with the credential
+but no identity, and `make auth-test` / `make network-test` pass unchanged.
+The two checks live in the service's own middleware,
+[`api/auth.rs`](https://github.com/cognokratos/simple-agent-template/blob/rust-agent/agent/src/api/auth.rs), rather than around a framework. Two things to
+notice on `rust-agent`:
+
+* `make version` reports `"agent_runtime": "rig-rust"`, the Rig and rmcp
+  versions, and the same `prompt_sha256` as on `main`;
+* the agent image is distroless — there is no shell in it — so in-container
+  checks use the binary itself, for example
+  `docker compose exec agent /usr/local/bin/tickets-agent probe mcp-auth`.
 
 ## What you learned
 

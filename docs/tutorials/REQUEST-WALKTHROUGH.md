@@ -6,6 +6,11 @@ This walkthrough traces that prompt from the browser to PostgreSQL and back,
 through the actual code, and ends at the trace it leaves in MLflow. Read it with
 the source open: code → explanation → runtime behaviour → trace.
 
+Steps 1–17 follow the canonical NAT agent. Steps 1–4 and 9–12 — the browser, UI,
+gateway, MCP server and database — are the same code for the Rig agent on
+`rust-agent`; [the same request on the Rig implementation](#the-same-request-on-the-rig-implementation)
+retraces steps 5–8 and 13–17 there, with its own measured trace.
+
 Every timing and span name below comes from real runs against this repository
 on the default configuration (`qwen3:8b` on a local Ollama, guard model the
 same): a *cold* run, the first request the guard model served, and a *warm*
@@ -127,7 +132,7 @@ carries tool events the UI can render.
 ## 5. The agent authenticates its caller
 
 NAT's FastAPI app is built by `AuthenticatedFastApiFrontEndPluginWorker` in
-[`agent/src/nat_streaming_react/fastapi_worker.py`](../../agent/src/nat_streaming_react/fastapi_worker.py),
+[`agent/src/nat_streaming_react/fastapi_worker.py`](https://github.com/cognokratos/simple-agent-template/blob/main/agent/src/nat_streaming_react/fastapi_worker.py),
 selected by `general.front_end.runner_class` in
 [`agent/config.yml`](../../agent/config.yml). Its pure-ASGI middleware runs
 outermost first:
@@ -136,7 +141,7 @@ outermost first:
 | --- | --- |
 | `StaticServiceKeyMiddleware` | `hmac.compare_digest` on the bearer token; **removes** `Authorization` from the request before NAT, session metadata or telemetry can see it |
 | `RequireIdentityHeaderMiddleware` | Exactly one non-empty `x-authenticated-user-id`, or 401 |
-| `WorkflowTraceContextMiddleware` | Creates the trace id and root span id for this request ([`trace_context.py`](../../agent/src/nat_streaming_react/observability/trace_context.py)) |
+| `WorkflowTraceContextMiddleware` | Creates the trace id and root span id for this request ([`trace_context.py`](https://github.com/cognokratos/simple-agent-template/blob/main/agent/src/nat_streaming_react/observability/trace_context.py)) |
 | `ResponderIdentityMiddleware` | Records the caller for the approval feature's ownership check |
 
 NAT then resolves `x-authenticated-user-id` into `Context.user_id`
@@ -146,7 +151,7 @@ NAT then resolves `x-authenticated-user-id` into `Context.user_id`
 
 The workflow is wrapped by the `text_guardrails` middleware
 (`workflow.middleware: [workflow_guardrails]`). `TextGuardrailsMiddleware.pre_invoke`
-in [`text_guardrails.py`](../../agent/src/nat_streaming_react/text_guardrails.py):
+in [`text_guardrails.py`](https://github.com/cognokratos/simple-agent-template/blob/main/agent/src/nat_streaming_react/text_guardrails.py):
 
 1. extracts the latest user turn and records it as the trace's readable question;
 2. refuses (does not truncate) anything over `GUARDRAILS_INPUT_MAX_CHARS`;
@@ -167,7 +172,7 @@ decision source recorded. → [Concept 4](../concepts/04-guardrails-and-determin
 ## 7. The agent runtime invokes the LLM
 
 `streaming_react_agent_workflow` in
-[`register.py`](../../agent/src/nat_streaming_react/register.py) builds NAT's
+[`register.py`](https://github.com/cognokratos/simple-agent-template/blob/main/agent/src/nat_streaming_react/register.py) builds NAT's
 ReAct graph with the `primary` LLM, the `tickets_mcp` tools and the
 `system_prompt` (whose `{tools}` and `{tool_names}` placeholders NAT fills from
 MCP discovery). Because `use_native_tool_calling: true`, the tool schemas go to
@@ -275,7 +280,7 @@ answer cannot inject raw HTML.
 ## 16. OpenTelemetry records the execution
 
 NAT's spans pass through three processors registered in
-[`otlp_exporter.py`](../../agent/src/nat_streaming_react/observability/otlp_exporter.py):
+[`otlp_exporter.py`](https://github.com/cognokratos/simple-agent-template/blob/main/agent/src/nat_streaming_react/observability/otlp_exporter.py):
 `WorkflowContentProcessor` (readable question and answer),
 `SensitiveHeaderRedactionProcessor` (credential headers) and
 `UserIdentityProcessor` (drops the user id unless `OTEL_TRACE_USER_ID=true`).
@@ -320,6 +325,75 @@ Open it yourself: `make open-mlflow` → **Experiments → Default → Traces**.
 [lab 06](06-debug-with-traces.md).
 
 ---
+
+## The same request on the Rig implementation
+
+Same prompt, same model (`qwen3:8b`, local Ollama), the Rig + Rust agent on
+`rust-agent`. Steps 1–4 and 9–12 are unchanged; this is what replaces the rest.
+
+**5′. The agent authenticates its caller.** An Axum router
+([`api/mod.rs`](https://github.com/cognokratos/simple-agent-template/blob/rust-agent/agent/src/api/mod.rs)) with one middleware,
+[`require_gateway`](https://github.com/cognokratos/simple-agent-template/blob/rust-agent/agent/src/api/auth.rs): the service key (constant time, then
+removed), exactly one identity header, at most one `x-request-id`. Only then is
+a [`TrustedCaller`](https://github.com/cognokratos/simple-agent-template/blob/rust-agent/agent/src/identity.rs) built — a type with no public constructor.
+The workflow handler ([`api/workflow.rs`](https://github.com/cognokratos/simple-agent-template/blob/rust-agent/agent/src/api/workflow.rs)) validates the
+body, keeps the last 20 messages, opens the root span and spawns the run; the
+response is a stream over a channel the run writes into.
+
+**6′. Input guardrails run.** [`input_rail.rs`](https://github.com/cognokratos/simple-agent-template/blob/rust-agent/agent/src/agent/input_rail.rs) applies
+the same length bound, deny patterns and allow templates as pure functions, then
+one classifier call with the same prompt. Here the classifier said `No` and
+`specific_ticket_details` matched: `decision_source = llm_and_deterministic_allow`,
+**2.31 s**.
+
+**7′. The agent runtime invokes the LLM.** [`builder.rs`](https://github.com/cognokratos/simple-agent-template/blob/rust-agent/agent/src/agent/builder.rs)
+builds a Rig agent for this request — model, system prompt with `{tools}`
+filled at startup, one tool per allow-listed MCP tool, each closing over this
+request's scope — and [`execution.rs`](https://github.com/cognokratos/simple-agent-template/blob/rust-agent/agent/src/agent/execution.rs) runs it with a
+model-call budget and the tool-policy hook.
+
+**8′. The model chooses a tool, software decides.** The model returns
+`get_ticket {"ticket_id": "TKT-1001"}` (**2.71 s**). Before Rig runs it, it
+calls `ToolPolicyHook::on_dispatch` ([`hooks.rs`](https://github.com/cognokratos/simple-agent-template/blob/rust-agent/agent/src/agent/hooks.rs)), which
+checks the tool budget and asks [`ToolPolicy::decide`](https://github.com/cognokratos/simple-agent-template/blob/rust-agent/agent/src/guardrails/tools.rs):
+known tool, JSON object, only declared fields of the declared types, read-only —
+`Allow`, in under a millisecond. The executor ([`mcp/tools.rs`](https://github.com/cognokratos/simple-agent-template/blob/rust-agent/agent/src/mcp/tools.rs))
+re-checks and calls MCP through `rig-rmcp`; the call took **0.045 s**. The
+`TOOL_END` event and the span carry a redacted display copy of the result; the
+model gets the raw one.
+
+**13′–14′. The answer streams through the output policy.** Only text fragments
+from Rig's stream are candidates for the client. Each passes the
+[`StreamingOutputGuard`](https://github.com/cognokratos/simple-agent-template/blob/rust-agent/agent/src/guardrails/output.rs): text is released once 320
+more characters have arrived behind it, the held text plus 512 characters of
+look-behind are scanned for secrets, and PII is masked before release. Outcome
+`passed`. The answer turn took **10.53 s**, and the client saw 308 fragments
+as they were released — not one buffered block.
+
+**15′. The result streams back** in the same SSE vocabulary — the UI and the
+gateway cannot tell the agents apart — with `agent_runtime: "rig-rust"` in the
+workflow metadata and `guardrail_output_regex_pii_decision` as the output event.
+
+**16′–17′. One trace.** Every span was created while the root was current, so
+Rig's own `chat` and `execute_tool` spans join it with no workaround:
+
+```text
+support-tickets-agent.invoke                        15.59 s
+  guardrail.input.self_check   llm_and_deterministic_allow   2.31 s
+    guard_model.call → chat  qwen3:8b                2.31 s
+  chat  qwen3:8b             (chooses get_ticket)    2.71 s
+  execute_tool                                       0.05 s
+    tool.policy              allow                  <0.01 s
+    tickets_mcp__get_ticket  ok                      0.05 s
+  chat  qwen3:8b             (writes the answer)    10.53 s
+  guardrail.output.stream    passed                 13.26 s  (overlaps the answer)
+```
+
+Unlike the NAT trace above, the agent model's calls are their own spans, so the
+split is read directly: 15.55 s of 15.6 s was model time. The deterministic
+column of the table below is the same for both runtimes; on Rig it gains one
+row, *8b tool policy — deterministic — Rig dispatch hook*.
+→ [NAT vs Rig](../NAT-VS-RIG.md), [Rust learning extension](../RUST-LEARNING-PATH.md)
 
 ## What to take away
 

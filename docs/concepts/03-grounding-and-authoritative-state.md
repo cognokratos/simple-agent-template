@@ -139,6 +139,16 @@ version, and the harness commit with every evaluation result. It flags when they
 disagree. A score you cannot attribute to a specific configuration is not
 evidence. See [EVALUATION.md — provenance](../EVALUATION.md#provenance).
 
+## On the Rig implementation
+
+Grounding does not depend on the agent runtime: the same MCP tools return the
+same authoritative rows to either agent, and the same deterministic grounding
+scorers judge the answers. The Rig agent passes the grounding suite on the same
+model, and its tool-result events carry the same fields the scorers read. One
+detail differs: the *display copy* of a tool result shown in the UI and the
+trace is redacted on Rig, while the model and the evaluator's grounding data
+come from the raw result. → [EVALUATION.md](../EVALUATION.md#comparing-runtimes)
+
 ## Go deeper
 
 * Lab: [04 — Break the agent](../tutorials/04-break-the-agent.md) (hallucinated

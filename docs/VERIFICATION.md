@@ -2,6 +2,10 @@
 
 What you can check, what it needs, and what it proves.
 
+The commands are the same on both branches. The tables describe the canonical
+NAT implementation; [On the Rig implementation](#on-the-rig-implementation)
+covers what the agent checks run on `rust-agent`.
+
 ## Without Docker, a cluster or a model
 
 ```
@@ -37,6 +41,28 @@ selection, message validation, identity-header encoding, routing and hardening.
 The MCP test suite covers approval signature, binding, lifetime, payload digest, the action
 registry and every transition rule, plus the cross-language check that a
 Python-minted token is accepted.
+
+## On the Rig implementation
+
+The agent's checks need only a Rust toolchain (≥ 1.95), no cluster and no model:
+
+```
+make agent-check     # cargo fmt --check, clippy -D warnings, every agent test
+make docs-parity     # README.md and docs/ identical to origin/main
+```
+
+| Suite | Proves |
+| --- | --- |
+| unit tests (`agent/src`) | config fail-fast, input precedence and NeMo 0.21 verdict parsing, strict schemas, tool policy, the streaming window across every chunk split, PII recognisers on the repository's fixtures, the state machine, the interaction registry, token minting |
+| `against_the_mcp_verifier` | tokens minted by the agent verify against `mcp-server/src/approval.rs` itself, compiled into the test |
+| [`tests/contract.rs`](https://github.com/cognokratos/simple-agent-template/blob/rust-agent/agent/tests/contract.rs) | the [agent-service contract](AGENT-SERVICE-CONTRACT.md) over HTTP |
+| [`tests/agent_loop.rs`](https://github.com/cognokratos/simple-agent-template/blob/rust-agent/agent/tests/agent_loop.rs) | a scripted adversarial model: unknown tools, invented privileged arguments, forged identity, split secrets, endless tool calls, provider and MCP errors, disconnect |
+| [`tests/approvals.rs`](https://github.com/cognokratos/simple-agent-template/blob/rust-agent/agent/tests/approvals.rs) | the whole approval flow and its attacks through the real service |
+| [`tests/observability.rs`](https://github.com/cognokratos/simple-agent-template/blob/rust-agent/agent/tests/observability.rs) | one trace per request with Rig's spans, `traceparent`, no credential, identity or token in any span |
+
+The `verify-*` targets keep their names there and run the matching subsets.
+`make test`, `make security-test`, `make trace-test` and `make eval-all` run
+against the cluster unchanged.
 
 ## With the cluster running
 
@@ -87,7 +113,14 @@ and trace shape.
 
 `.github/workflows/ci.yml` runs the deterministic half on every push and pull
 request: Python, both Rust crates with Clippy, the UI typecheck/contract/build,
-and Compose topology. It reads no secret and works on a fork.
+and Compose topology. It reads no secret and works on a fork. On `rust-agent` it
+also runs the agent crate (fmt, Clippy, tests) and the documentation-parity
+check.
+
+`.github/workflows/rust-agent-drift.yml` checks on every push to `main` or
+`rust-agent`, and daily, that `rust-agent` is still one commit on the current
+`main` with identical documentation. It only reports; see
+[RUST-BRANCH-MAINTENANCE.md](RUST-BRANCH-MAINTENANCE.md#knowing-when-rust-agent-is-stale).
 
 `.github/workflows/live-evaluation.yml` is manual, takes the endpoint per run,
 and reads its key from a named environment that is absent by default.

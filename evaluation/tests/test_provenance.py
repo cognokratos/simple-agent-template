@@ -229,6 +229,36 @@ class ConsistencyTests(unittest.TestCase):
             else:
                 os.environ["EVALUATION_MODEL_PREFIX"] = previous
 
+    def test_the_runtime_is_recorded_for_both_implementations(self) -> None:
+        self.assertEqual(provenance.agent_runtime({"available": True, "agent_runtime": "rig-rust"}), "rig-rust")
+        # The NAT agent on `main` predates the field.
+        self.assertEqual(provenance.agent_runtime({"available": True}), "nat")
+        self.assertEqual(provenance.agent_runtime({"available": False}), "unknown")
+        tags = provenance.mlflow_tags({"agent": {"available": True, "agent_runtime": "rig-rust"}, "harness": {}})
+        self.assertEqual(tags["provenance.agent.runtime"], "rig-rust")
+
+    @unittest.skipUnless(HAVE_YAML, "PyYAML is only present in the evaluator image")
+    def test_the_rust_config_layout_is_read_and_digested_as_canonical_json(self) -> None:
+        import tempfile
+        from pathlib import Path
+
+        config = (
+            "workflow:\n  system_prompt: |\n    You are helpful.\n"
+            "guardrails:\n  prompts:\n    - task: self_check_input\n      content: |\n        Answer: é\n      max_tokens: 4\n"
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "config.yml"
+            path.write_text(config, encoding="utf-8")
+            prompts = provenance._config_prompts(path)
+        self.assertTrue(prompts["available"])
+        self.assertEqual(prompts["prompt_sha256"], provenance._sha256("You are helpful.\n"))
+        # Pinned: the digest the Rust agent computes for the same prompts
+        # (serde_json over {task, content, max_tokens}, keys sorted, compact).
+        expected = provenance._sha256(
+            '[{"content":"Answer: é\\n","max_tokens":4,"task":"self_check_input"}]'
+        )
+        self.assertEqual(prompts["guardrails_prompts_sha256"], expected)
+
     def test_an_unreachable_agent_is_not_reported_as_consistent(self) -> None:
         """A failed provenance fetch must never read as a clean run."""
         record = {"agent": {"available": False}, "harness": {"git_commit": "abc"}, "checks": {}}

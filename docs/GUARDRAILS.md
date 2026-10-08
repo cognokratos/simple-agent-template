@@ -1,7 +1,13 @@
 # Guardrails
 
-NeMo Guardrails, configured in `agent/config.yml` and driven by
-`agent/src/nat_streaming_react/text_guardrails.py`.
+On the canonical NAT implementation: NeMo Guardrails, configured in
+`agent/config.yml` and driven by `agent/src/nat_streaming_react/text_guardrails.py`.
+
+Most of this page describes the canonical NAT implementation. The Rig
+implementation on `rust-agent` keeps the same input policy, prompt and secret
+patterns but implements them as explicit Rust code, with a different PII
+detector; it is described in [On the Rig implementation](#on-the-rig-implementation)
+below, and compared in [NAT-VS-RIG.md](NAT-VS-RIG.md#input-guardrails).
 
 ## Input rail
 
@@ -186,6 +192,81 @@ shared placeholder, which is the deterministic root cause of that race.
 declares what it needs. Delete the module when `nvidia-nat-security` relaxes its
 Guardrails pin to `>=0.23` and `requirements.txt` is upgraded.
 
+## On the Rig implementation
+
+The same layers, as plain Rust in
+[`agent/src/guardrails/`](https://github.com/cognokratos/simple-agent-template/tree/rust-agent/agent/src/guardrails), run by
+[`input_rail.rs`](https://github.com/cognokratos/simple-agent-template/blob/rust-agent/agent/src/agent/input_rail.rs) and
+[`execution.rs`](https://github.com/cognokratos/simple-agent-template/blob/rust-agent/agent/src/agent/execution.rs). Each is explicit about
+whether its decision is probabilistic.
+
+| Layer | Decides | Kind | Relation to NAT |
+| --- | --- | --- | --- |
+| input | whether the request reaches the agent model | patterns + one **probabilistic** classifier call, combined deterministically | equivalent; fails closed if the classifier is unreachable |
+| tool | whether a proposed tool call runs | deterministic | no NAT counterpart ([SECURITY.md](SECURITY.md#tool-authority)) |
+| output — secrets | whether the rest of the answer is released | deterministic | equivalent |
+| output — PII | which spans are masked | deterministic | **narrower** |
+
+### Input
+
+[`guardrails/input.rs`](https://github.com/cognokratos/simple-agent-template/blob/rust-agent/agent/src/guardrails/input.rs) carries the same
+critical patterns (Python's `re.IGNORECASE | re.DOTALL` is `(?is)`), the same
+anchored allow templates, the same precedence and the same `decision_source`
+strings; the decision event has the same name. The classifier is one model call
+with the `self_check_input` prompt — byte-identical to the NAT one — as a single
+user message at temperature 0.001, and its reply is parsed exactly as NeMo
+0.21's `is_content_safe` does (read from the 0.21 source), including the
+pinned `Not safe` hazard described [above](#what-the-llm-verdict-actually-is).
+The client-supplied-history rule and the input length bound are identical.
+
+### Output: a bounded streaming window
+
+A secret can straddle any chunk boundary. The Rig agent's
+[`StreamingOutputGuard`](https://github.com/cognokratos/simple-agent-template/blob/rust-agent/agent/src/guardrails/output.rs) never releases a
+character until 320 more have arrived behind it, and scans the held text
+together with the last 512 characters already released:
+
+```text
+   released (raw kept as look-behind)    |  held back (not yet sent)
+...............[    512 characters    ]  |  [ … | 320 characters ]
+               \______ scanned on every fragment, secrets and PII ____/
+```
+
+Every pattern's minimal match is far shorter than the hold-back, so a match is
+in view before any of it could be released; the release cut never splits a PII
+entity. A secret match stops the stream: what was held is dropped and a notice
+is sent instead. The limit, stated plainly: a match whose own span exceeds the
+window can be missed — the same class of bound as NeMo's rolling chunk window.
+
+### Output: PII — narrower than Presidio
+
+The same entity list and the same `<ENTITY_TYPE>` replacement, from a
+**different detector**: [`guardrails/pii.rs`](https://github.com/cognokratos/simple-agent-template/blob/rust-agent/agent/src/guardrails/pii.rs) is
+pattern matching tightened with checksums (Luhn for cards, mod-97 for IBANs,
+Base58Check and Bech32 for Bitcoin addresses, area/group/serial rules for SSNs).
+This is **not** Presidio and is not claimed to be. Checksums make it stricter
+for entities that have one; for free-form entities — phone numbers in layouts
+other than international `+CC …` and North American `3-3-4`, and anything
+Presidio finds through context words — it will miss what Presidio would catch.
+What the narrowing buys is a model-free output path: masking runs inside the
+streaming window, so the answer is not buffered whole as it is on NAT, and an
+answer over `GUARDRAILS_PII_MAX_BUFFER_CHARS` is cut with a notice rather than
+refused before release.
+
+### Tool results shown to people
+
+Output rails on NAT protect assistant text only; tool steps reach the UI's tool
+card and the trace unfiltered. The Rig agent redacts secrets and masks PII in
+the *display copy* of every tool result
+(`OutputPolicy::redact_for_display`); the model still receives the raw record.
+
+### What has no counterpart
+
+The NeMo compatibility module and the rails-instance pool described above do
+not exist on `rust-agent`: no rail state is shared between requests, so
+`GUARDRAILS_RAIL_POOL_SIZE` is not read. An unrecognised boolean in a
+guardrail switch **stops startup** there, rather than keeping the default.
+
 ## Configuration
 
 | Variable | Default | Effect |
@@ -215,9 +296,14 @@ text into the trace backend.
 ```
 make verify-input-guardrails    # decision precedence, history forgery, env parsing
 make verify-output-guardrails   # config invariants, patterns, masking behaviour
-make verify-rails               # the real NeMo runtime, blocking and concurrency
+make verify-rails               # the rails end to end
 make verify-guardrails          # all three
 ```
+
+The targets have the same names on both branches. On NAT they run inside the
+agent container; on Rig they run the agent's Rust tests on the host, including
+every two-way split of a secret across chunks and the repository's own
+guardrail fixtures.
 
 `verify-rails` runs the deployed policy against a deterministic fake rail LLM, so
 what is under test is the rail wiring rather than the model. It needs no network.

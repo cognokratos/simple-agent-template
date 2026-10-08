@@ -95,6 +95,21 @@ The same architecture with your domain in the "Replace" box, the same
 deterministic boundaries, and evaluation numbers for *your* agent on *your*
 model.
 
+## On the Rig implementation
+
+The same sequence, with the Rig agent's file layout for the "Replace" box:
+
+| Step | On the Rig implementation |
+| --- | --- |
+| 4. Agent config | `workflow.system_prompt`, `tools.mcp.include`, `tools.mcp.overrides` in `agent/config.yml`; a tool schema the agent cannot enforce stops startup with the reason |
+| 5. Input policy | the `self_check_input` prompt in `agent/config.yml`; `CRITICAL_PATTERNS` and `ALLOW_TEMPLATES` in [`guardrails/input.rs`](https://github.com/cognokratos/simple-agent-template/blob/rust-agent/agent/src/guardrails/input.rs), with their unit tests |
+| 6. Output policy | `guardrails.output.secret_patterns` and `pii_entities`; check whether [`guardrails/pii.rs`](https://github.com/cognokratos/simple-agent-template/blob/rust-agent/agent/src/guardrails/pii.rs) would mask your identifiers or miss your PII |
+| 10. Mutations | a gate in `agent/src/approval/` and a `ToolSpec` in `agent/src/services.rs` ([EXTENDING.md](../EXTENDING.md#adding-an-approval-gated-action)) |
+
+In **Observe**, the infrastructure you should not need to touch on Rig is the
+agent's `api/`, `identity.rs`, `agent/hooks.rs`, `approval/pending.rs`,
+`approval/token.rs` and `telemetry/`.
+
 ## What you learned
 
 * The domain surface is schema, tools, prompts, input policy, fixtures and

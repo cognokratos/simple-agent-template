@@ -61,7 +61,7 @@ sees. The model only supplies the tool name and arguments.
 | Authentication | Keycloak OIDC, Authorization Code + PKCE, run entirely by the gateway ([`gateway/src/oidc.rs`](../../gateway/src/oidc.rs), [`auth.rs`](../../gateway/src/auth.rs)) |
 | Session | Opaque, server-side, generation-checked ([`gateway/src/session.rs`](../../gateway/src/session.rs)) |
 | Identity propagation | Gateway-minted `x-authenticated-*` headers on a freshly built request (`identity_headers` in [`gateway/src/proxy.rs`](../../gateway/src/proxy.rs)) |
-| Service-to-service authentication | Static bearer credentials, constant-time compared: gateway → NAT (`AGENT_API_KEY`), NAT → MCP (`MCP_API_KEY`) |
+| Service-to-service authentication | Static bearer credentials, constant-time compared: gateway → agent (`AGENT_API_KEY`), agent → MCP (`MCP_API_KEY`) |
 | Network boundaries | Seven Compose networks, one per trust relationship ([`docker-compose.yml`](../../docker-compose.yml)) |
 | Capability boundary | The MCP tool list (`include:` in [`agent/config.yml`](../../agent/config.yml)) |
 
@@ -148,9 +148,20 @@ make security-test   # live: network reachability, every auth boundary, MCP keys
 ```
 
 `make network-test` checks that no internal port is published to the host, then
-probes from inside the containers: the gateway can reach NAT, NAT can reach MCP,
+probes from inside the containers: the gateway can reach the agent, the agent can reach MCP,
 and the gateway *cannot* reach MCP. The topology is asserted, not just
 described.
+
+## On the Rig implementation
+
+Every boundary in diagram D is identical on `rust-agent` except the inside of
+the agent box. There the two identity questions are answered by the service's
+own middleware ([`api/auth.rs`](https://github.com/cognokratos/simple-agent-template/blob/rust-agent/agent/src/api/auth.rs)) rather than around a framework,
+and the result is a [`TrustedCaller`](https://github.com/cognokratos/simple-agent-template/blob/rust-agent/agent/src/identity.rs) — a type with no public
+constructor, so neither a prompt nor a tool argument can become an identity.
+One boundary is added explicitly: model → tool call, decided by a pure policy
+function at Rig's dispatch hook ([SECURITY.md](../SECURITY.md#tool-authority)).
+→ [Rust lesson 09](../RUST-LEARNING-PATH.md#09--propagate-trusted-identity-outside-the-prompt)
 
 ## Go deeper
 

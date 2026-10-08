@@ -65,7 +65,7 @@ flowchart LR
 
 Decision precedence for the input rail is deliberately asymmetric
 (`_resolve_input_policy` in
-[`text_guardrails.py`](../../agent/src/nat_streaming_react/text_guardrails.py)):
+[`text_guardrails.py`](https://github.com/cognokratos/simple-agent-template/blob/main/agent/src/nat_streaming_react/text_guardrails.py)):
 
 1. a deterministic **critical-pattern** match always blocks;
 2. otherwise a fully anchored **read-only allow template** can overrule an LLM
@@ -78,10 +78,10 @@ Each decision is recorded on the `guardrail.input.self_check` span as
 `llm_and_deterministic_allow`: the guard model said "allow", and an allow
 template agreed.
 
-| Concept | Implementation in this repo |
+| Concept | On the NAT implementation (`main`) |
 | --- | --- |
 | Guardrail framework | NeMo Guardrails 0.21, configured under `middleware.workflow_guardrails` in [`agent/config.yml`](../../agent/config.yml) |
-| Where rails attach | NAT middleware `text_guardrails`, which wraps the whole workflow ([`text_guardrails.py`](../../agent/src/nat_streaming_react/text_guardrails.py)) |
+| Where rails attach | NAT middleware `text_guardrails`, which wraps the whole workflow ([`text_guardrails.py`](https://github.com/cognokratos/simple-agent-template/blob/main/agent/src/nat_streaming_react/text_guardrails.py)) |
 | LLM input check | `self check input` flow, prompt `self_check_input` |
 | Deterministic input checks | `_CRITICAL_INPUT_PATTERNS`, `_READ_ONLY_TICKET_TEMPLATES` |
 | Deterministic output blocking | `regex_detection.output.patterns` |
@@ -151,13 +151,31 @@ Two details that are easy to miss:
   `GUARDRAILS_INPUT_DETERMINISTIC_FALLBACK` keeps the secure default. It does
   not silently disable the patterns.
 
+## On the Rig implementation
+
+The same layered design as explicit Rust code ([GUARDRAILS.md](../GUARDRAILS.md#on-the-rig-implementation)):
+
+| Control | NAT | Rig | Relation |
+| --- | --- | --- | --- |
+| Input deny patterns, allow templates, precedence | `text_guardrails.py` | [`guardrails/input.rs`](https://github.com/cognokratos/simple-agent-template/blob/rust-agent/agent/src/guardrails/input.rs), pure functions | equivalent |
+| LLM self-check | NeMo `self check input` | one classifier call, parsed as NeMo 0.21 does; fails closed if unreachable | equivalent |
+| Credential blocking in the stream | NeMo regex rail, rolling chunk window | bounded hold-back window ([`guardrails/output.rs`](https://github.com/cognokratos/simple-agent-template/blob/rust-agent/agent/src/guardrails/output.rs)) | equivalent |
+| PII masking | Presidio NER, whole answer buffered | deterministic recognisers in the stream ([`guardrails/pii.rs`](https://github.com/cognokratos/simple-agent-template/blob/rust-agent/agent/src/guardrails/pii.rs)) | **narrower** |
+| Tool-call policy | — | [`guardrails/tools.rs`](https://github.com/cognokratos/simple-agent-template/blob/rust-agent/agent/src/guardrails/tools.rs) at Rig's dispatch hook | stricter |
+
+The lesson is the same on both: the classifier's reply is the only
+probabilistic element, and every layer records which one decided. The
+difference worth studying is PII: a model-based detector catches more and
+forces buffering; a deterministic one streams and misses free-form entities.
+→ [NAT vs Rig](../NAT-VS-RIG.md#output-guardrails-and-pii)
+
 ## Go deeper
 
 * Lab: [07 — Experiment with guardrails](../tutorials/07-experiment-with-guardrails.md),
   [04 — Break the agent](../tutorials/04-break-the-agent.md)
 * Reference: [GUARDRAILS.md](../GUARDRAILS.md),
   [TEST-SCENARIOS.md — input guardrails](../TEST-SCENARIOS.md#input-guardrails-scenarios)
-* Source: [`text_guardrails.py`](../../agent/src/nat_streaming_react/text_guardrails.py),
-  [`guardrails_compat.py`](../../agent/src/nat_streaming_react/guardrails_compat.py),
+* Source: [`text_guardrails.py`](https://github.com/cognokratos/simple-agent-template/blob/main/agent/src/nat_streaming_react/text_guardrails.py),
+  [`guardrails_compat.py`](https://github.com/cognokratos/simple-agent-template/blob/main/agent/src/nat_streaming_react/guardrails_compat.py),
   [`db/injection_test_fixtures.sql`](../../db/injection_test_fixtures.sql)
 * Next concept: [5. Evaluation](05-evaluation.md)

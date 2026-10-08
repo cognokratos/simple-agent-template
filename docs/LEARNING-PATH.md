@@ -15,6 +15,14 @@ Each stage answers one question: *why did we need the next architectural
 component?* Each points to a concept page (the why), a lab (the hands-on), and the
 reference manual (the precise how).
 
+The path is taught on the canonical NeMo Agent Toolkit (NAT) implementation.
+Each stage also says, in one line, how the alternative Rig + Rust
+implementation on
+[`rust-agent`](https://github.com/cognokratos/simple-agent-template/tree/rust-agent)
+realises the same component. When you have finished the path, the optional
+[Rust learning extension](RUST-LEARNING-PATH.md) follows the whole architecture
+through that implementation, to expose what a high-level toolkit does for you.
+
 ## How long things take
 
 | In | You can | Read |
@@ -30,11 +38,11 @@ reference manual (the precise how).
 | Stage | Concept | Component it adds | Failure it addresses |
 | --- | --- | --- | --- |
 | 0 | LLM as a probabilistic component | — | Treating model output as a return value |
-| 1 | Agent and agent loop | NAT ReAct runtime, loop bounds | One model call cannot act on the world |
+| 1 | Agent and agent loop | Agent runtime (NAT ReAct; Rig), loop bounds | One model call cannot act on the world |
 | 2 | Tool calling | Typed tools, native tool calling | Parsing prose into actions; unbounded actions |
 | 3 | MCP and capability boundaries | Rust MCP server, `include:` list | An agent that can do whatever its credentials can |
 | 4 | Grounding | Tools over the system of record | Confident answers from model memory |
-| 5 | Guardrails and untrusted data | NeMo input/output rails, deterministic patterns | Hostile input; leaked secrets and PII |
+| 5 | Guardrails and untrusted data | Input/output rails (NeMo Guardrails; explicit Rust policy), deterministic patterns | Hostile input; leaked secrets and PII |
 | 6 | Evaluation | MLflow suites, deterministic scorers | "It worked when I tried it" |
 | 7 | Observability | OpenTelemetry → MLflow traces | Not knowing what the agent actually did |
 | 8 | Identity and trust boundaries | Keycloak, gateway, service credentials, segmented networks | The model or the browser choosing who the user is |
@@ -101,8 +109,10 @@ let it continue. That something is an **agent runtime**: a loop that asks the
 model for its next action, executes it, and feeds back the result.
 
 **In this repo.** NAT's ReAct graph, wrapped by `streaming_react_agent` in
-[`register.py`](../agent/src/nat_streaming_react/register.py). The loop is
+[`register.py`](https://github.com/cognokratos/simple-agent-template/blob/main/agent/src/nat_streaming_react/register.py). The loop is
 bounded by `max_tool_calls`, `max_history`, retries and timeouts.
+
+**On Rig.** Rig's agent runner, built per request in [`builder.rs`](https://github.com/cognokratos/simple-agent-template/blob/rust-agent/agent/src/agent/builder.rs) and driven in [`execution.rs`](https://github.com/cognokratos/simple-agent-template/blob/rust-agent/agent/src/agent/execution.rs); bounded by a model-call budget and a deterministic tool-call budget. → [Rust lesson 03](RUST-LEARNING-PATH.md#03--understand-the-agent-loop)
 
 **Failure it addresses.** Models that can't act. Bounding the loop addresses its
 own new failure: runaway loops.
@@ -172,6 +182,8 @@ and what comes out, using an LLM classifier backed by deterministic patterns.
 patterns, LLM self-check, anchored allow templates, regex output blocking,
 buffered Presidio masking.
 
+**On Rig.** The same input rules as pure functions plus one classifier call; secret blocking and deterministic PII masking in a bounded streaming window — narrower than Presidio. → [GUARDRAILS.md](GUARDRAILS.md#on-the-rig-implementation)
+
 **Failure it addresses.** Direct prompt injection, harmful requests, credential
 and PII disclosure. It does **not** address indirect injection or authorization.
 Guardrails are not authorization.
@@ -207,6 +219,8 @@ time went.
 (`trace_context.py`), readable question and answer, header redaction, opt-in
 user attribution, exported over OTLP to MLflow.
 
+**On Rig.** One tracing model in one process: Rig's spans nest under the request's root span with no framework workaround. → [OBSERVABILITY.md](OBSERVABILITY.md#on-the-rig-implementation)
+
 **Failure it addresses.** Debugging a runtime-chosen code path from scattered
 logs, and accidentally turning the trace store into a credential or PII store.
 
@@ -222,7 +236,9 @@ must only accept them from the component that minted them.
 
 **In this repo.** Keycloak OIDC + PKCE in the Rust gateway; opaque sessions;
 CSRF; schema re-serialisation; gateway-minted `x-authenticated-*` headers;
-service credentials on gateway → NAT and NAT → MCP; seven segmented networks.
+service credentials on gateway → agent and agent → MCP; seven segmented networks.
+
+**On Rig.** The same checks in the service's own middleware, producing a `TrustedCaller` type the model cannot construct. → [SECURITY.md](SECURITY.md#on-the-rig-implementation)
 
 **Failure it addresses.** Spoofed identity, model-chosen identity, and "it's on a
 private network" as authentication.
@@ -242,6 +258,8 @@ decides. Deterministic code verifies and applies.
 prompt → signed token), `interaction_guard.py` (only the prompted user, only an
 offered choice), `mutation.rs` (nonce, row lock, re-derived state,
 `apply_policy`, apply + append-only audit in one transaction).
+
+**On Rig.** The run suspends on a `PendingTicket`; the interaction registry builds a `VerifiedDecision` only after owner and offer checks; same token, same MCP verifier. → [Rust lessons 11–12](RUST-LEARNING-PATH.md#11--suspend-for-human-approval)
 
 **Failure it addresses.** The model authorizing its own actions; replayed,
 stale or altered approvals; editable audit trails.
@@ -270,10 +288,10 @@ See the full diagram, with trust boundaries, in
 
 | Concept | Implementation in this repo |
 | --- | --- |
-| Agent runtime | NeMo Agent Toolkit (NAT) 1.9 |
+| Agent runtime | NeMo Agent Toolkit (NAT) 1.9 — canonical; Rig 0.44 in Rust on `rust-agent` |
 | Tool interoperability | MCP (streamable HTTP) |
 | Capability implementation | Rust MCP server (`rmcp`, `sqlx`) |
-| Guardrails | NeMo Guardrails 0.21 + application-level deterministic layers |
+| Guardrails | NeMo Guardrails 0.21 + application-level deterministic layers (Rig: explicit Rust policy modules) |
 | Tracing | OpenTelemetry → OpenTelemetry Collector |
 | Experiment tracking, trace store | MLflow |
 | Authentication | Keycloak (OIDC), Rust gateway (BFF) |

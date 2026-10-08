@@ -2,6 +2,11 @@
 
 One trace per request, covering the agent run and the safety decisions together.
 
+The goal is shared by both agent implementations. Most of this page describes
+how the canonical NAT agent reaches it; the Rig agent on `rust-agent` reaches it
+with a different, simpler mechanism, described in
+[On the Rig implementation](#on-the-rig-implementation).
+
 ## The problem this solves
 
 NAT builds its workflow/tool/LLM span tree itself and exports it through its own
@@ -200,10 +205,57 @@ observability rather than a crash. The list is also in
 `observability/__init__.py` as `NAT_PRIVATE_API_DEPENDENCIES`, and
 `scripts/verify_security_sources.py` asserts it stays declared.
 
+## On the Rig implementation
+
+The Rig agent has one tracing model in one process: Rust `tracing` spans,
+exported over OTLP/HTTP to the same collector by `tracing-opentelemetry`
+([`telemetry/mod.rs`](https://github.com/cognokratos/simple-agent-template/blob/rust-agent/agent/src/telemetry/mod.rs)). The workflow route opens
+the root span `support-tickets-agent.invoke` and runs the request inside it
+([`api/workflow.rs`](https://github.com/cognokratos/simple-agent-template/blob/rust-agent/agent/src/api/workflow.rs)), joining an inbound
+`traceparent`. Every span created while it is current is its child — including
+Rig's own, because Rig adopts the current span as its agent span. So the problem
+[above](#the-problem-this-solves) does not arise, and no private framework
+attribute is needed.
+
+Measured on the [request walkthrough](tutorials/REQUEST-WALKTHROUGH.md) prompt:
+
+```text
+support-tickets-agent.invoke                    15.59 s  root: request.id, agent.runtime, input/output, final state
+├─ guardrail.input.self_check                    2.31 s  decision, decision source
+│  └─ guard_model.call → chat                    2.31 s  the classifier call (Rig)
+├─ chat                                          2.71 s  Rig: the turn that proposed get_ticket
+├─ execute_tool                                  0.05 s  Rig: running it
+│  ├─ tool.policy                               <0.01 s  dispatch-hook verdict: allow
+│  └─ tickets_mcp__get_ticket                    0.05 s  MCP call, redacted I/O
+├─ chat                                         10.53 s  Rig: the turn that wrote the answer
+└─ guardrail.output.stream                      13.26 s  overlaps the answer; counts only
+```
+
+With approvals enabled, `approval.gate`, `human_approval.wait` and
+`mcp.approvals.execute` appear under `execute_tool`; the human's answer is its
+own request (`human_approval.respond`). The agent model's calls are separate
+`chat` spans, so model latency is read directly off the trace.
+
+What differs from NAT:
+
+| | NAT | Rig |
+| --- | --- | --- |
+| Readable answer on the root | the released answer | the released answer (masked/cut as sent) |
+| Raw identity headers | copied into span metadata, then redacted | never recorded; roles kept (`enduser.roles`) |
+| Per-user attribution (`OTEL_TRACE_USER_ID=true`) | NAT's `uuid5` pseudonym | `enduser.pseudonym`, a `uuid5` in the Rig agent's namespace — a different value for the same person |
+| Tool results on spans | raw | redacted display copy |
+| Model I/O on spans | recorded by NAT | Rig's `gen_ai.prompt`/`gen_ai.completion` off unless `AGENT_TRACE_CAPTURE_MODEL_CONTENT=true` (pre-rail text) |
+| Framework raw logging | — | Rig logs whole provider requests at TRACE; the OTLP export filter is fixed in code (`EXPORT_FILTER`), so `RUST_LOG` can put it in the container log but never in the trace |
+| Run outcome | inferred | `agent.execution.state` from the explicit state machine |
+
+The same environment variable names apply (`NAT_TRACE_CAPTURE_CONTENT`,
+`NAT_TRACE_CONTENT_MAX_CHARS`, `GUARDRAILS_TRACE_*`, `OTEL_TRACE_USER_ID`), and
+`make trace-test` accepts either runtime's root span.
+
 ## Verifying it
 
 ```
-make verify-trace-pipeline   # offline: context, bounds, redaction, errors
+make verify-trace-pipeline   # offline: context, bounds, redaction, errors (Rig: one trace, traceparent, no secrets)
 make trace-test              # + live: real requests, asserted against MLflow
 make traces                  # print the span tree of recent MLflow traces
 ```

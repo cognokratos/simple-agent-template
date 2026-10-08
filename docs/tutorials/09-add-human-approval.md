@@ -159,6 +159,34 @@ Diagram G in [concept 8](../concepts/08-human-in-the-loop.md#diagram-g-the-appro
    `HITL_ENABLE_INTERACTIVE` from `.env`, then `make up-build`.
 3. `make logs-mcp` should again show that the server is read-only.
 
+## On the Rig implementation
+
+Three switches instead of four, and the agent **refuses to start** with only
+some of them: uncomment `tools.approval` in the Rig agent's `agent/config.yml`
+(declaring the tool is its registration — there is no `workflow.tool_names`),
+set `HITL_APPROVAL_SECRET`, and set `HITL_ENABLE_INTERACTIVE=true`. Optionally
+set `HITL_INTERACTION_TIMEOUT_SECONDS=120`. `make version` then lists
+`ticket_priority_change` in `tools_exposed`.
+
+The card, the audit row and the MCP verification are identical. What to observe
+that differs:
+
+* the run is suspended inside the approval gate on a `PendingTicket`; the trace
+  shows `approval.gate` and `human_approval.wait`;
+* the model's reply is built from a result that says `committed: true` but has
+  no `actor_id` — identity went into the token and the audit row, never the
+  conversation;
+* an unanswered card expires as a cancellation instead of waiting for a
+  disconnect.
+
+**Break it D.** With a card open, copy its `execution_id` and `interaction_id`
+from the stream (browser dev tools) and POST an answer through the gateway as a
+second Keycloak user: `403`, and the card is still pending for you. Then answer
+with an option the card did not offer: `422`. `make verify-approvals` on
+`rust-agent` drives these and more through the real service
+([`tests/approvals.rs`](https://github.com/cognokratos/simple-agent-template/blob/rust-agent/agent/tests/approvals.rs)), and compiles the MCP
+server's verifier into the agent's tests.
+
 ## What you learned
 
 * A safe mutation needs a proposal, a human decision, a binding, a re-check at

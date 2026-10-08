@@ -58,7 +58,7 @@ agent, the agent is an MCP *client*: it asks the server for its tool list
 | --- | --- |
 | Tool interoperability | MCP over streamable HTTP |
 | MCP server (capability implementation) | Rust, [`rmcp`](https://github.com/modelcontextprotocol/rust-sdk), [`mcp-server/src/main.rs`](../../mcp-server/src/main.rs) |
-| MCP client | NAT's `mcp_client` function group `tickets_mcp` in [`agent/config.yml`](../../agent/config.yml) |
+| MCP client | NAT's `mcp_client` function group `tickets_mcp` in [`agent/config.yml`](../../agent/config.yml) (Rig: `rmcp` + `rig-rmcp`, see below) |
 | Which tools the agent may use | `include: [search_tickets, get_ticket]` in that function group |
 | Service-to-service authentication | `Authorization: Bearer ${MCP_API_KEY}`, checked in constant time by `require_api_key` |
 | Persistence | PostgreSQL, reachable **only** from the MCP server (`data_net`) |
@@ -166,6 +166,24 @@ Every tool call costs a model round trip. The defences are layered:
   state is structured data with a single source of truth. If your domain has
   unstructured knowledge (manuals, policies), retrieval becomes another tool with
   the same design concerns.
+
+## On the Rig implementation
+
+The capability boundary is the same Rust MCP server with the same tools; only
+the client differs. The Rig agent discovers tools over `rmcp` 2.2 at startup
+and invokes them through `rig-rmcp` ([`mcp/client.rs`](https://github.com/cognokratos/simple-agent-template/blob/rust-agent/agent/src/mcp/client.rs)), with
+the same allow-list and description overrides from `agent/config.yml`. Two
+things are stricter there:
+
+* a tool whose published schema uses a keyword the agent cannot enforce, or
+  declares an argument such as `user_id` or `approval_token`, **stops startup**
+  ([`mcp/schema.rs`](https://github.com/cognokratos/simple-agent-template/blob/rust-agent/agent/src/mcp/schema.rs));
+* every proposed call passes one deterministic policy function before it runs
+  — closed registry, no unknown arguments, no type coercion
+  ([`guardrails/tools.rs`](https://github.com/cognokratos/simple-agent-template/blob/rust-agent/agent/src/guardrails/tools.rs)).
+
+The MCP server still re-validates every argument and remains authoritative.
+→ [Rust lessons 04–06](../RUST-LEARNING-PATH.md#04--discover-tools-through-mcp)
 
 ## Go deeper
 

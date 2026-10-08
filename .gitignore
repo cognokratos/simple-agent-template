@@ -9,6 +9,7 @@ __pycache__/
 # Rust build output.
 mcp-server/target
 gateway/target
+agent/target
 
 # UI build artifacts. package-lock.json is deliberately NOT ignored: it is what
 # makes `npm ci` reproducible in the Docker build and in CI.

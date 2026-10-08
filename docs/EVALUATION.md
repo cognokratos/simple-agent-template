@@ -101,6 +101,37 @@ a dirty tree on account of the previous run's artifacts.
 `/version` reports digests and model *names*, never prompt text and never a
 credential. `scripts/verify_security_sources.py` asserts that.
 
+Each run is also tagged `provenance.agent.runtime`, from the `agent_runtime`
+field of `/version`: `nat` for the NAT agent on `main`, `rig-rust` for the Rig
+agent on `rust-agent`, and `unknown` when `/version` could not be read (a
+reachable agent that predates the field is recorded as `nat`). The harness
+reads either configuration layout — NAT's
+`middleware.workflow_guardrails.guardrails.prompts` or the Rig agent's
+`guardrails.prompts` — and digests the rail prompts the way that agent reports
+them (sorted YAML for NAT, canonical JSON for Rig, which the Rig agent announces
+as `guardrails_prompts_digest`), so `consistent` means the same thing for both.
+
+## Comparing runtimes
+
+The harness, datasets, scorers, gates and the system prompt are identical for
+the two agent implementations — `prompt_sha256` is the same value — so these
+suites are the fair comparison between NAT and Rig
+([NAT-VS-RIG.md](NAT-VS-RIG.md)):
+
+1. run `make eval-all` on `main` and on `rust-agent` against the same model
+   endpoint;
+2. in MLflow, group or filter the runs by `provenance.agent.runtime`;
+3. compare the gate metrics and the latency distributions, and confirm
+   `provenance.consistent` is `true` for both.
+
+Nothing in the harness is runtime-specific. The one difference a reader may
+notice is an event name: the Rig agent's output decision is
+`guardrail_output_regex_pii_decision` (it does not use Presidio), captured by
+the same `guardrail_output_` prefix as NAT's
+`guardrail_output_regex_presidio_decision`. Observed on `rust-agent` with
+`qwen3:8b` on a local Ollama: all four suites at their gates (1.0), in one run;
+the figures move between runs of the same model.
+
 ## Latency
 
 Reported as a distribution — min, p50, p95, max — not a mean. MLflow aggregates

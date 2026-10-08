@@ -83,6 +83,30 @@ def _canonical_sha256(value: Any) -> str:
     return _sha256(yaml.safe_dump(value, sort_keys=True, default_flow_style=False))
 
 
+def _canonical_json_sha256(value: Any) -> str:
+    """Digest of sorted-key, compact JSON — the form the Rust agent reports.
+
+    The ``rust-agent`` branch's agent digests its rail prompts this way
+    (``guardrails_prompts_digest: "canonical-json"``), because reproducing
+    PyYAML's ``safe_dump`` byte for byte in Rust would be fragile. The same
+    ``prompt_matches_config`` comparison then holds across both runtimes.
+    """
+    return _sha256(json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False))
+
+
+#: What ``agent_runtime`` is recorded as when a reachable agent does not say:
+#: the NAT agent on ``main`` predates the field.
+NAT_RUNTIME = "nat"
+
+
+def agent_runtime(agent: dict[str, Any]) -> str:
+    """Which implementation answered: ``rig-rust``, ``nat``, or ``unknown``."""
+    runtime = agent.get("agent_runtime")
+    if isinstance(runtime, str) and runtime.strip():
+        return runtime.strip()
+    return NAT_RUNTIME if agent.get("available") else "unknown"
+
+
 def _version_url() -> str:
     explicit = os.getenv("AGENT_VERSION_URL")
     if explicit:
@@ -164,16 +188,27 @@ def _config_prompts(path: Path | None = None) -> dict[str, Any]:
         return {"available": False, "error": f"{type(exc).__name__}: {exc}"}
 
     system_prompt = (config.get("workflow") or {}).get("system_prompt")
-    rails = (
+    # Two layouts: NAT's (`middleware.workflow_guardrails.guardrails.prompts`,
+    # on `main`) and the Rust agent's (`guardrails.prompts`, on rust-agent),
+    # each digested the way its agent digests it.
+    nat_rails = (
         ((config.get("middleware") or {}).get("workflow_guardrails") or {}).get("guardrails")
         or {}
     ).get("prompts")
+    rust_rails = (config.get("guardrails") or {}).get("prompts") if not nat_rails else None
+    rails = nat_rails or rust_rails
+    if nat_rails:
+        rails_digest = _canonical_sha256(nat_rails)
+    elif rust_rails:
+        rails_digest = _canonical_json_sha256(rust_rails)
+    else:
+        rails_digest = None
     return {
         "available": isinstance(system_prompt, str),
         "system_prompt": system_prompt,
         "rail_prompts": rails,
         "prompt_sha256": _sha256(system_prompt) if isinstance(system_prompt, str) else None,
-        "guardrails_prompts_sha256": _canonical_sha256(rails) if rails else None,
+        "guardrails_prompts_sha256": rails_digest,
     }
 
 
@@ -292,6 +327,8 @@ def mlflow_tags(record: dict[str, Any]) -> dict[str, str]:
     agent = record.get("agent", {})
     harness = record.get("harness", {})
     tags = {
+        # Which implementation answered: `nat` (main) or `rig-rust` (rust-agent).
+        "provenance.agent.runtime": agent_runtime(agent),
         "provenance.agent.build_commit": str(agent.get("build_commit", "unknown")),
         "provenance.agent.model": str(agent.get("model", "")),
         "provenance.agent.guard_model": str(agent.get("guard_model", "")),

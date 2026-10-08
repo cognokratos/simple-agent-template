@@ -65,7 +65,7 @@ Follow the optional approval implementation in the source, with
 [diagram G](../concepts/08-human-in-the-loop.md#diagram-g-the-approval-flow-in-this-repository)
 open:
 
-1. [`approval.py`](../../agent/src/nat_streaming_react/approval.py),
+1. [`approval.py`](https://github.com/cognokratos/simple-agent-template/blob/main/agent/src/nat_streaming_react/approval.py),
    `ticket_set_priority_approval`: the model's call is a *proposal*. The function
    prompts a human (`_ask_choice`, `_ask_rationale`), takes `actor_id` and
    `request_id` from gateway headers (`_identity`), and mints a token over the
@@ -160,6 +160,25 @@ flowchart LR
 ```
 
 Revert your change when you're done unless you intend to keep the rule.
+
+## On the Rig implementation
+
+Parts 1 and 3 are identical: the naive tool is just as unsafe, and the policy
+rule belongs in `mcp-server/src/mutation.rs` on both branches. Part 2's agent
+step reads differently:
+
+1. [`guardrails/tools.rs`](https://github.com/cognokratos/simple-agent-template/blob/rust-agent/agent/src/guardrails/tools.rs): the model's
+   `ticket_priority_change` call is a *proposal*; the tool policy lets it
+   proceed only into the approval gate, and only when the feature is enabled.
+   Its schema has no field for a decision, an actor or a token, and unknown
+   fields are refused.
+2. [`approval/gate.rs`](https://github.com/cognokratos/simple-agent-template/blob/rust-agent/agent/src/approval/gate.rs): prompts the human, takes `actor_id`
+   and `request_id` from the trusted caller, and mints the same token
+   ([`approval/token.rs`](https://github.com/cognokratos/simple-agent-template/blob/rust-agent/agent/src/approval/token.rs)).
+
+For the **Break it** table, add one row: putting the rule in the Rig agent's
+`ToolPolicy` would be bypassed by a compromised or misconfigured agent, and
+would judge the model's reported state rather than the locked row.
 
 ## What you learned
 

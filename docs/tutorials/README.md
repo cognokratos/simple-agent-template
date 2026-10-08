@@ -7,6 +7,17 @@ running system, and ends with pointers into the reference documentation.
 Start with the [request walkthrough](REQUEST-WALKTHROUGH.md) if you want the
 end-to-end picture first.
 
+**One lab sequence, two implementations.** The labs are written against the
+canonical NeMo Agent Toolkit agent on `main`. Every lab also works on the
+Rig + Rust agent on
+[`rust-agent`](https://github.com/cognokratos/simple-agent-template/tree/rust-agent):
+check out that branch and run the same commands. Where the Rig implementation
+behaves, logs or traces differently, the lab has a short **On the Rig
+implementation** section; nothing else changes, because the UI, gateway, MCP
+server, data and evaluation are identical. To study the Rig implementation in
+depth, follow the [Rust learning extension](../RUST-LEARNING-PATH.md) after the
+labs.
+
 | Lab | You will | Needs |
 | --- | --- | --- |
 | [01 — Run the agent](01-run-the-agent.md) | Start the stack, sign in, prove the agent refuses unauthenticated callers | Docker, a model endpoint |
@@ -34,7 +45,8 @@ failed**, **Architecture after**, **What you learned**, **Go deeper**.
   commit a weakened control. The checked-in default stays secure and read-only,
   and CI asserts that
   ([`verify_read_only_default.py`](../../scripts/verify_read_only_default.py)).
-* **`agent/config.yml` is baked into the agent image.** After editing it, run
+* **`agent/config.yml` is baked into the agent image** on both branches (its
+  layout differs between them; the prompts in it do not). After editing it, run
   `make rebuild-agent`. After editing the MCP server, run `make rebuild-mcp`
   (which also recreates the agent, since tools are discovered at startup).
   Environment-only changes in `.env` need `make up` to recreate the affected
@@ -53,4 +65,6 @@ Ollama, `temperature: 0.0`. They come from two agent builds with an identical
 configuration digest: one built before, and one from, commit `af29ce0`. Where
 the two builds behaved differently, the labs say so. Deterministic results (401s, rail blocks
 driven by patterns, PII masking, the audit trigger, unit tests) were also
-checked on that setup.
+checked on that setup. Quoted results are from the NAT agent unless a Rig
+section says otherwise; on Rig, deterministic results are additionally pinned by
+the agent's Rust tests (`make agent-test`).

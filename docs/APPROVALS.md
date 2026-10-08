@@ -3,7 +3,14 @@
 **Optional, and off in the shipped configuration.** The sample application is
 read-only and the model has no capability to change state.
 
+The approval boundary — token format, MCP verifier, transaction, audit trail —
+is identical for both agent implementations. What differs is how the agent
+pauses, checks the human's answer and resumes; those parts are labelled **NAT**
+and **Rig** below.
+
 ## Enabling it
+
+### On the NAT implementation
 
 All four are required; no single one opens the path:
 
@@ -12,6 +19,22 @@ All four are required; no single one opens the path:
 3. set `HITL_APPROVAL_SECRET` (≥ 24 characters, identical for the agent and the
    MCP server);
 4. set `HITL_ENABLE_INTERACTIVE=true` so NAT mounts its interaction endpoints.
+
+### On the Rig implementation
+
+All three are required, and the agent **refuses to start** with only some of
+them — whoever sets one switch believes approvals are on:
+
+1. uncomment the `tools.approval` block in `agent/config.yml` on `rust-agent`
+   (declaring the tool is its registration), then `make rebuild-agent`;
+2. set `HITL_APPROVAL_SECRET` as above;
+3. set `HITL_ENABLE_INTERACTIVE=true`, which mounts the interaction route.
+
+A secret alone is valid there: the MCP server can route its endpoint beside a
+read-only agent. `HITL_INTERACTION_TIMEOUT_SECONDS` (default 600) bounds how long
+a prompt waits before it counts as a cancellation.
+
+### Either way
 
 Without the secret the MCP server routes **no execution endpoint at all** — there
 is no mutation surface rather than a disabled one. CI asserts the shipped
@@ -31,6 +54,15 @@ model calls the approval function with its proposal
   → the model is told what happened; it never restates the payload
 ```
 
+On the Rig implementation the same flow is explicit code: the tool-policy hook
+lets `ticket_priority_change` proceed only into
+[`approval/gate.rs`](https://github.com/cognokratos/simple-agent-template/blob/rust-agent/agent/src/approval/gate.rs), which suspends the run on a
+`PendingTicket`; [`approval/pending.rs`](https://github.com/cognokratos/simple-agent-template/blob/rust-agent/agent/src/approval/pending.rs)
+checks the answer and only then builds a `VerifiedDecision` (a type with a
+private constructor); [`approval/token.rs`](https://github.com/cognokratos/simple-agent-template/blob/rust-agent/agent/src/approval/token.rs)
+mints the same token. The model's result omits `actor_id`, and the run's states
+are explicit in [`agent/state.rs`](https://github.com/cognokratos/simple-agent-template/blob/rust-agent/agent/src/agent/state.rs).
+
 Authorization and effect are one step. Nothing between the human's confirmation
 and the state change depends on further model output, so a request can never end
 up approved but unapplied — and the model never gets an opportunity to alter
@@ -41,7 +73,7 @@ what was approved.
 | Layer | Checks | Does not check |
 | --- | --- | --- |
 | **Gateway** | shape, size, encoding, UUID form, protocol-level confirm/cancel consistency | which choices are legitimate — it cannot know, for an arbitrary application |
-| **Interaction guard** | the responder owns the execution; the submitted id **and** value, together, are one *this* prompt actually offered as a pair; the response type matches the prompt type | anything about the resulting mutation |
+| **Interaction check** (NAT: interaction guard; Rig: interaction registry) | the interaction is pending (single use); the responder owns the execution; the submitted id **and** value, together, are one *this* prompt actually offered as a pair; the response type matches the prompt type | anything about the resulting mutation |
 | **Agent** | mints a token binding action, resource, actor, request, the current state as the model reported it, exact payload | nothing about current state — that has moved by the time it is applied |
 | **MCP server** | signature, every binding, lifetime ceiling, re-derived state under a row lock, transition policy, single use | that a human actually made the choice: any token signed with `HITL_APPROVAL_SECRET` is accepted as one (see [the trust model](#the-trust-model)) |
 
@@ -64,6 +96,17 @@ recorded owner; those are allowed through and logged, because refusing them
 would break a NAT feature. `HITL_STRICT_INTERACTION_OWNERSHIP=true` makes even
 that case fail closed, for a deployment where approvals are the only interaction
 type.
+
+### On the Rig implementation: ownership is built in
+
+There is nothing to patch: the registry records the owner and the offer when it
+opens an interaction and checks them when the answer arrives, before the run
+waiting on it can resume. Every interaction has an owner by construction, so
+`HITL_STRICT_INTERACTION_OWNERSHIP` has nothing to make stricter. A refused answer
+leaves the prompt pending for its owner: another user gets `403`; an unoffered
+choice, a wrong prompt kind or an empty reason `422`; a fabricated, answered,
+abandoned or expired interaction `404`
+([contract](AGENT-SERVICE-CONTRACT.md)).
 
 ## The token
 
@@ -173,9 +216,11 @@ that can be edited or deleted is not an audit trail.
 | `low` / `medium` / `high` / `urgent` | your `allowed_choices` |
 | `payload.note` | your payload fields |
 
-Adding an action: a request model and a registered function in
-`agent/src/nat_streaming_react/approval.py`, an entry in `mutation::ACTIONS` on
-the MCP side, and the mutation itself. Nothing in the token format or the
+Adding an action: on NAT, a request model and a registered function in
+`agent/src/nat_streaming_react/approval.py`; on Rig, a proposal schema and a gate
+in `agent/src/approval/` plus a `ToolSpec` in `agent/src/services.rs`
+([EXTENDING.md](EXTENDING.md#adding-an-approval-gated-action)). Either way, an
+entry in `mutation::ACTIONS` on the MCP side, and the mutation itself. Nothing in the token format or the
 verification changes.
 
 The action registry is a fixed list rather than configuration: the set of things
@@ -184,7 +229,7 @@ a human can authorize is a security property of the deployment.
 ## Verifying it
 
 ```
-make verify-approvals        # agent-side approval checks, offline
+make verify-approvals        # agent-side approval checks (NAT: in the agent container; Rig: on the host)
 make verify-approvals-rust   # MCP-side approval and policy tests
 ```
 
@@ -192,9 +237,15 @@ Between them: forged and tampered tokens, expiry, the lifetime ceiling and its
 skew tolerance, wrong action/resource/request, moved authoritative state,
 payload-digest disagreement, missing identity, replay, cancellation, invalid and
 unoffered choices, unauthorized interaction responses, every transition rule, and
-that a token minted by the Python agent is accepted by the Rust verifier —
-including a non-ASCII payload, which proves the two canonical JSON encoders
-agree.
+that a token minted by the agent is accepted by the Rust verifier — including a
+non-ASCII payload, which proves the canonical JSON encoders agree. On
+`rust-agent` the agent's tests compile `mcp-server/src/approval.rs` itself, so
+minter and verifier cannot disagree about a byte without a test failing, and
+[`agent/tests/approvals.rs`](https://github.com/cognokratos/simple-agent-template/blob/rust-agent/agent/tests/approvals.rs) drives the whole flow
+through the real service: approve, cancel at either prompt, keep, another user,
+unoffered and half-cancel choices, fabricated ids, replay, a model that supplies
+approval fields, no gateway request id, disconnect, expiry, concurrent users,
+and the ticket moving between answer and write.
 
 ## What is not covered
 

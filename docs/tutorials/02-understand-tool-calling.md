@@ -115,6 +115,24 @@ flowchart LR
     LLM -->|"requests"| RT -->|"executes"| MCP[MCP server]
 ```
 
+## On the Rig implementation
+
+The tool schemas the model receives are the same MCP schemas, delivered through
+Rig's OpenAI-compatible client; the allow-list is `tools.mcp.include` and the
+description overrides `tools.mcp.overrides` in the Rig agent's `agent/config.yml`.
+For **Break it B**, the startup log line to compare is
+
+```text
+discovered MCP tools tools=["get_ticket", "search_tickets"]
+```
+
+Before any tool runs, the Rig agent asks a deterministic policy
+([`guardrails/tools.rs`](https://github.com/cognokratos/simple-agent-template/blob/rust-agent/agent/src/guardrails/tools.rs)): a call to a tool you removed
+from the allow-list is refused with a reason the model sees, and the trace
+shows a `tool.policy` span with `policy.decision = deny`. Also try asking for
+`limit: "5"` or an extra argument: the Rig agent refuses rather than coerces.
+→ [Rust lessons 04–06](../RUST-LEARNING-PATH.md#04--discover-tools-through-mcp)
+
 ## What you learned
 
 * The model sees names, descriptions and schemas, never your code.

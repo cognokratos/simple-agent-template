@@ -75,7 +75,7 @@ that ordinary code owns.
 
 | Concept | Implementation in this repo |
 | --- | --- |
-| Agent runtime | NeMo Agent Toolkit (NAT) `streaming_react_agent` workflow, [`register.py`](../../agent/src/nat_streaming_react/register.py) |
+| Agent runtime | NeMo Agent Toolkit (NAT) `streaming_react_agent` workflow, [`register.py`](https://github.com/cognokratos/simple-agent-template/blob/main/agent/src/nat_streaming_react/register.py) |
 | LLM | Any OpenAI-compatible endpoint (`llms.primary` in [`agent/config.yml`](../../agent/config.yml)); default `qwen3:8b` on a local Ollama |
 | Tools | Two read-only MCP tools, `search_tickets` and `get_ticket`, in [`mcp-server/src/main.rs`](../../mcp-server/src/main.rs) |
 | Environment | PostgreSQL, schema in [`db/init.sql`](../../db/init.sql) |
@@ -96,7 +96,7 @@ This repository uses NAT's ReAct graph with `use_native_tool_calling: true`.
 Native calling removes a class of parse failures. It also changed streaming:
 NAT's stock stream waits for the literal `Final Answer:` marker, which native
 calling never emits. That is why
-[`register.py`](../../agent/src/nat_streaming_react/register.py) exists (see
+[`register.py`](https://github.com/cognokratos/simple-agent-template/blob/main/agent/src/nat_streaming_react/register.py) exists (see
 [EXTENDING.md](../EXTENDING.md#what-each-local-module-compensates-for)).
 
 ### Diagram B: one tool-calling turn
@@ -162,6 +162,24 @@ this customer's orders?"). It is not worth it for "every night, export open tick
 CSV", and not for any single decision with an explicit rule, such as ranking
 tickets by priority ([concept 3](03-grounding-and-authoritative-state.md#grounded-is-not-the-same-as-correct)).
 See [ANTI-PATTERNS.md](ANTI-PATTERNS.md#overusing-agents-for-deterministic-workflows).
+
+## On the Rig implementation
+
+The same concept, without the toolkit. On
+[`rust-agent`](https://github.com/cognokratos/simple-agent-template/tree/rust-agent)
+the loop is Rig's agent runner over a small, serialisable state machine
+(`AgentRun`: call the model, call tools, done). A Rig agent is assembled **per
+request** in [`builder.rs`](https://github.com/cognokratos/simple-agent-template/blob/rust-agent/agent/src/agent/builder.rs), and
+[`execution.rs`](https://github.com/cognokratos/simple-agent-template/blob/rust-agent/agent/src/agent/execution.rs) walks one request through every step,
+labelling each decision probabilistic or deterministic. Native tool calling
+streams without any `Final Answer:` workaround. The loop is bounded twice: Rig's
+model-call budget (`max_tool_calls + 1`) and a deterministic tool-call budget in
+the dispatch hook, so the limit means exactly `max_tool_calls` tool calls.
+
+What NAT gives you here is a configurable graph; what Rig makes explicit is the
+loop itself. In both, the loop is where the model *decides*, never where
+authority is *granted*. → [Rust lesson 03](../RUST-LEARNING-PATH.md#03--understand-the-agent-loop),
+[NAT vs Rig](../NAT-VS-RIG.md#the-agent-loop)
 
 ## Go deeper
 

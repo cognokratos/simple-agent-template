@@ -172,6 +172,19 @@ Unchanged, and that is the point. The default architecture contained every
 failure above. The labs that follow add capabilities, and each one must keep
 these failures contained.
 
+## On the Rig implementation
+
+Run the same experiments. The model-dependent results may differ — the same
+model receives a slightly different request from Rig's client — but the
+containment does not: the injected ticket text still reaches the model as data,
+the fabricated-authorization ticket still cannot change anything without a
+human approval, and a tool-call explosion stops at exactly `max_tool_calls`
+tool calls, enforced by the dispatch hook. On `rust-agent` the same attacks are
+also scripted deterministically against the real service:
+`cargo test --test agent_loop` in `agent/` plays a model that proposes unknown
+tools, invents `user_id` arguments, claims to be an administrator and never
+stops calling tools.
+
 ## What you learned
 
 * Tool results are an attack channel that input guardrails never see.

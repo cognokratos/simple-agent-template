@@ -79,9 +79,9 @@ The concepts this enforces, and where:
 | Property | Enforced by |
 | --- | --- |
 | Off unless deliberately enabled; no mutation surface by default | No `HITL_APPROVAL_SECRET` → MCP never routes `/approvals/execute` (`main.rs`). CI asserts the shipped config is read-only. |
-| Only the prompted user can answer the prompt | `OwnerAwareExecutionStore` in [`interaction_guard.py`](../../agent/src/nat_streaming_react/interaction_guard.py). Stock NAT authorizes on knowledge of two UUIDs. |
+| Only the prompted user can answer the prompt | `OwnerAwareExecutionStore` in [`interaction_guard.py`](https://github.com/cognokratos/simple-agent-template/blob/main/agent/src/nat_streaming_react/interaction_guard.py). Stock NAT authorizes on knowledge of two UUIDs. |
 | The answer is one of the offered choices | Same guard: id and value must match an offered pair |
-| The actor is the authenticated human, not the model | `actor_id` comes from the gateway header (`_identity()` in [`approval.py`](../../agent/src/nat_streaming_react/approval.py)) |
+| The actor is the authenticated human, not the model | `actor_id` comes from the gateway header (`_identity()` in [`approval.py`](https://github.com/cognokratos/simple-agent-template/blob/main/agent/src/nat_streaming_react/approval.py)) |
 | The model cannot alter what was approved | The token *is* the payload. MCP reads every mutation parameter from the signed claims, not from tool arguments. |
 | The model's claim about current state is checked, not trusted | `expected_choice` starts as the model's `current_priority`. MCP compares it with the row it locked, so a wrong claim voids the token. |
 | Policy is re-evaluated after approval | `apply_policy` in [`mutation.rs`](../../mcp-server/src/mutation.rs): allowed choice, not a no-op, override requires a rationale |
@@ -110,14 +110,32 @@ binding in the token removes one of those. The agent-side approval checks
 exercise each one, including a
 Python-minted token verified by the Rust verifier.
 
+## On the Rig implementation
+
+The security requirement is identical, and so is everything from the token
+onward: same claims, same MCP verifier, same single transaction, same audit
+row. What differs is how the agent waits and how it checks the answer:
+
+| Step | NAT | Rig |
+| --- | --- | --- |
+| Suspend | NAT pauses the workflow coroutine (`prompt_user_input`) | the approval gate awaits a `PendingTicket` ([`approval/gate.rs`](https://github.com/cognokratos/simple-agent-template/blob/rust-agent/agent/src/approval/gate.rs)) |
+| Check the answer | `interaction_guard.py` substitutes NAT's execution store to add owner and offer checks | the registry checks owner, prompt kind and offered pair, and only then builds a `VerifiedDecision` — a type nothing else can construct ([`approval/pending.rs`](https://github.com/cognokratos/simple-agent-template/blob/rust-agent/agent/src/approval/pending.rs)) |
+| Run state | implicit | explicit: `Running ⇄ AwaitingApproval` in [`agent/state.rs`](https://github.com/cognokratos/simple-agent-template/blob/rust-agent/agent/src/agent/state.rs) |
+| Unanswered prompt | waits until disconnect | expires as a cancellation |
+| What the model learns | the MCP result | the MCP result without `actor_id` |
+
+Making the state explicit is the instructive part: a blocked request cannot
+await approval, and a finished run cannot resume, because those states do not
+exist in the type. → [Rust lessons 10–12](../RUST-LEARNING-PATH.md#10--model-execution-as-an-explicit-state-machine)
+
 ## Go deeper
 
 * Lab: [08 — Add a state-changing action](../tutorials/08-add-a-state-changing-action.md),
   [09 — Add human approval](../tutorials/09-add-human-approval.md)
 * Reference: [APPROVALS.md](../APPROVALS.md),
   [EXTENDING.md — adding an approval-gated action](../EXTENDING.md#adding-an-approval-gated-action)
-* Source: [`approval.py`](../../agent/src/nat_streaming_react/approval.py),
-  [`interaction_guard.py`](../../agent/src/nat_streaming_react/interaction_guard.py),
+* Source: [`approval.py`](https://github.com/cognokratos/simple-agent-template/blob/main/agent/src/nat_streaming_react/approval.py),
+  [`interaction_guard.py`](https://github.com/cognokratos/simple-agent-template/blob/main/agent/src/nat_streaming_react/interaction_guard.py),
   [`mcp-server/src/approval.rs`](../../mcp-server/src/approval.rs),
   [`mcp-server/src/mutation.rs`](../../mcp-server/src/mutation.rs)
 * Then: [ANTI-PATTERNS.md](ANTI-PATTERNS.md) and the
