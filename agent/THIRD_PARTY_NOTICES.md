@@ -5,55 +5,58 @@ original code and documentation in this repository. The material below is not
 covered by it, or not only by it. Its own terms continue to apply.
 
 The authoritative copies of this file, `LICENSE` and `LICENSES/Apache-2.0.txt`
-are at the repository root. Byte-identical copies in `agent/` are packaged with
-the `nat-streaming-react` distribution (`project.license-files`), and
-`scripts/verify_agent_package_licenses.py` checks that they match. Paths below
-are relative to the repository root.
+are at the repository root. Byte-identical copies in `agent/` are copied into
+the agent's Docker image (`/usr/share/doc/tickets-agent/`), because the image
+build sees only that directory; `scripts/verify_agent_package_licenses.py`
+checks that they match, and with `--image` that the built image carries them.
+Paths below are relative to the repository root.
 
-## Apache-2.0: files derived from, or closely following, NVIDIA NeMo Agent Toolkit
+## This branch (`rust-agent`)
 
-| File | Notice in the file | Status |
-| --- | --- | --- |
-| `agent/src/nat_streaming_react/register.py` | `SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES.` | modified from NAT's `react_agent` workflow registration (`nat/plugins/langchain/agent/react_agent/register.py`); carries a modification notice |
-| `agent/src/nat_streaming_react/text_guardrails.py` | `SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES.` | modified from NAT's NeMo Guardrails middleware (`nat/plugins/security/middleware/guardrails/`); carries a modification notice |
-| `agent/src/nat_streaming_react/observability/otlp_exporter.py` | `SPDX-License-Identifier: Apache-2.0` only (**no NVIDIA copyright line**) | Apache-2.0 retained; exact provenance not recorded (below) |
+This branch replaces the NeMo Agent Toolkit (NAT) agent with a Rust service
+built on Rig. **None of the Apache-2.0 files derived from NVIDIA NeMo Agent
+Toolkit exist on this branch**: `agent/src/nat_streaming_react/register.py`,
+`text_guardrails.py` and `observability/otlp_exporter.py` were removed with the
+rest of the Python agent. They, their NVIDIA notices and their provenance
+record remain on the `main` branch, where those files live; consult `main`'s
+`THIRD_PARTY_NOTICES.md` for them.
 
-These files are distributed under the Apache License, Version 2.0, whose full
-text is in [`LICENSES/Apache-2.0.txt`](LICENSES/Apache-2.0.txt). Keep their
-headers and this file with any copy or excerpt.
+The Rust agent in `agent/src/` was written for this branch. It reproduces the
+*behaviour* of the NAT agent — the same contract, policies, prompts and token
+format — but contains no code copied from NeMo Agent Toolkit, NeMo Guardrails or
+Presidio:
 
-### Provenance of `observability/otlp_exporter.py`
+* the system prompt, self-check prompt, tool descriptions and output patterns
+  in `agent/config.yml` are this repository's own MIT-licensed configuration,
+  carried over byte for byte from `main`'s `agent/config.yml`;
+* the input classifier's verdict parsing reimplements the documented behaviour
+  of NeMo Guardrails 0.21's `is_content_safe` parser, and the PII recognisers
+  are independent deterministic implementations of the same entity list, not
+  a port of Presidio.
 
-What was verified:
+`agent/src/approval/token/against_the_mcp_verifier/mod.rs` and
+`agent/tests/support/mod.rs` compile `mcp-server/src/approval.rs` (this
+repository, MIT) into tests; nothing is copied.
 
-- The file was added in this repository's first commit (`a52fbe0`, 2026-09-20),
-  when the agent pinned `nvidia-nat[langchain,opentelemetry]==1.8.0`. It was
-  later revised for NAT 1.9 (`af29ce0`, `2f6153c`). Git history records no
-  upstream source.
-- Its configuration class and factory follow `OtelCollectorTelemetryExporter` and
-  `otel_telemetry_exporter` in NVIDIA NeMo Agent Toolkit,
-  `packages/nvidia_nat_opentelemetry/src/nat/plugins/opentelemetry/register.py`.
-  The shared parts are: the `BatchConfigMixin` / `CollectorConfigMixin` /
-  `TelemetryExporterBaseConfig` bases, a `resource_attributes` field, the
-  default resource-attribute keys, and the `OTLPSpanAdapterExporter(...)` call with
-  the same keyword arguments.
-- That upstream function is identical at tags `v1.8.0` and `v1.9.0`. This was
-  checked against the published `nvidia-nat-opentelemetry` 1.8.0 and 1.9.0 wheels
-  and the GitHub tag contents. The upstream file carries
-  `SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.`
-  and `SPDX-License-Identifier: Apache-2.0`.
-- The rest of the file has no upstream counterpart: the processor insertion, the
-  span-prefix handling and the documentation.
-
-What remains unknown: whether those parts were copied or adapted from that
-upstream file, or written independently against the same plugin API. Similarity
-alone does not establish it. The file therefore keeps its Apache-2.0 declaration,
-and no NVIDIA copyright line has been added on the strength of resemblance. If
-the origin is established, add the matching notice and a modification notice.
+`LICENSES/Apache-2.0.txt` is kept: many Rust crates the agent links are
+licensed `MIT OR Apache-2.0` or `Apache-2.0`, and the image ships the text.
 
 ## Dependencies
 
-Dependencies installed at build or run time (NeMo Agent Toolkit, NeMo
-Guardrails, Presidio, Keycloak, PostgreSQL, MLflow, the OpenTelemetry Collector,
-assistant-ui and the Rust and npm crates and packages in the lock files) are not
-part of this repository. Each is used under its own licence.
+Dependencies installed at build or run time are not part of this repository.
+Each is used under its own licence. For the agent on this branch that means
+the Rust crates locked in `agent/Cargo.lock` — at the time of writing 298 in the
+runtime dependency closure, all under permissive licences (MIT, Apache-2.0,
+BSD-2/3-Clause, ISC, Zlib, Unicode-3.0, Unlicense, CC0-1.0, BSL-1.0), with one
+data licence:
+
+* `webpki-roots` / `webpki-root-certs` — the Mozilla CA certificate bundle,
+  under **CDLA-Permissive-2.0**, which asks that its text accompany the data
+  when it is shared. The bundle is compiled into the agent binary (as it is
+  into the gateway's). The licence text is at
+  <https://cdla.dev/permissive-2-0/>.
+
+Reproduce the inventory with `cargo metadata --format-version 1 --locked` in
+`agent/`. Keycloak, PostgreSQL, MLflow, the OpenTelemetry Collector,
+assistant-ui and the gateway's and MCP server's crates are unchanged from
+`main` and used under their own licences.

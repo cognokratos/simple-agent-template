@@ -1,77 +1,54 @@
 # syntax=docker/dockerfile:1.7
 
-FROM python:3.12-slim AS builder
+# The Rig-based Rust agent (rust-agent branch). Two stages: a full Rust
+# toolchain to build, and a distroless runtime with nothing but the binary,
+# the behavioural config and the licence texts — no shell, no package manager,
+# no Python, no NAT. Health checks and the Makefile's in-container probes use
+# the binary's own `probe` subcommand.
 
-ENV PYTHONDONTWRITEBYTECODE=1 \
-    PYTHONUNBUFFERED=1 \
-    UV_LINK_MODE=copy \
-    UV_PYTHON_DOWNLOADS=never
-
+# rig-core 0.44 requires Rust >= 1.95; pinned rather than `rust:1` so a
+# toolchain release cannot change what is built.
+FROM rust:1.97-bookworm AS builder
 WORKDIR /app
 
-COPY --from=ghcr.io/astral-sh/uv:0.8.3 /uv /uvx /bin/
+# Dependencies first, against stub sources, so a source-only change reuses
+# the compiled dependency layer.
+COPY Cargo.toml Cargo.lock ./
+RUN mkdir -p src \
+    && printf 'fn main() {}\n' > src/main.rs \
+    && printf '' > src/lib.rs
+RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
+    --mount=type=cache,target=/usr/local/cargo/git,sharing=locked \
+    --mount=type=cache,target=/app/target,sharing=locked \
+    cargo build --release --locked && rm -rf src
 
-# NeMo Guardrails 0.21 depends on annoy. On Linux ARM64 it is built from
-# source, so a C++ compiler is required. It remains in the builder stage.
-RUN apt-get update \
-    && apt-get install -y --no-install-recommends g++ \
-    && rm -rf /var/lib/apt/lists/*
-
-RUN python -m venv /opt/venv
-ENV PATH="/opt/venv/bin:$PATH"
-
-COPY requirements.txt /app/requirements.txt
-RUN --mount=type=cache,target=/root/.cache/uv,sharing=locked \
-    uv pip install --python /opt/venv/bin/python \
-      --requirements /app/requirements.txt
-
-# No site-packages rewriting. The three build-time patches this image used to
-# apply are now application code, reached through supported extension points:
-#   * NAT API-key auth      -> src/nat_streaming_react/fastapi_worker.py,
-#                              selected by general.front_end.runner_class
-#   * NAT single-trace root -> src/nat_streaming_react/observability/
-#   * Guardrails 0.21 rails -> src/nat_streaming_react/guardrails_compat.py
-# See guardrails_compat's module docstring for the conditions under which the
-# compatibility layer can be deleted.
-
-# Presidio uses spaCy for entity recognition. Install the English model in the
-# builder so it is copied into the runtime virtual environment.
-RUN --mount=type=cache,target=/root/.cache/pip,sharing=locked \
-    python -m spacy download en_core_web_lg
-
-COPY pyproject.toml /app/pyproject.toml
-# Licence documents named by project.license-files; the build fails without them,
-# and the installed .dist-info/licenses/ copies travel with /opt/venv.
-COPY LICENSE THIRD_PARTY_NOTICES.md /app/
-COPY LICENSES /app/LICENSES
-COPY src /app/src
-RUN --mount=type=cache,target=/root/.cache/uv,sharing=locked \
-    uv pip install --python /opt/venv/bin/python /app
+COPY src ./src
+# The target directory is a persistent BuildKit cache, so the stub build's
+# artefacts can look newer than the real sources; touching them forces this
+# package to rebuild while keeping cached dependencies.
+RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
+    --mount=type=cache,target=/usr/local/cargo/git,sharing=locked \
+    --mount=type=cache,target=/app/target,sharing=locked \
+    touch src/main.rs src/lib.rs \
+    && cargo build --release --locked \
+    && cp /app/target/release/tickets-agent /tmp/tickets-agent
 
 
-FROM python:3.12-slim AS runtime
-
-ENV PYTHONDONTWRITEBYTECODE=1 \
-    PYTHONUNBUFFERED=1 \
-    PATH="/opt/venv/bin:$PATH"
-
+FROM gcr.io/distroless/cc-debian12:nonroot AS runtime
 WORKDIR /app
-
-COPY --from=builder /opt/venv /opt/venv
+COPY --from=builder --chmod=0755 /tmp/tickets-agent /usr/local/bin/tickets-agent
 COPY config.yml /app/config.yml
-COPY verify_input_guardrails.py /app/verify_input_guardrails.py
-COPY verify_output_guardrails.py /app/verify_output_guardrails.py
-COPY verify_guardrails_rails.py /app/verify_guardrails_rails.py
-COPY verify_trace_pipeline.py /app/verify_trace_pipeline.py
-COPY verify_mcp_auth.py /app/verify_mcp_auth.py
-COPY verify_approval_tokens.py /app/verify_approval_tokens.py
-COPY verify_llm_config.py /app/verify_llm_config.py
+# Licence texts and notices travel with the image.
+COPY LICENSE THIRD_PARTY_NOTICES.md /usr/share/doc/tickets-agent/
+COPY LICENSES /usr/share/doc/tickets-agent/LICENSES
 
-# Stamped last on purpose. A new commit must not invalidate the dependency and
-# source layers above it, so a provenance-only rebuild stays cheap.
+# Stamped last, so a new commit does not invalidate the layers above.
 ARG AGENT_BUILD_COMMIT=unknown
-ENV AGENT_BUILD_COMMIT=${AGENT_BUILD_COMMIT}
+ENV AGENT_BUILD_COMMIT=${AGENT_BUILD_COMMIT} \
+    AGENT_CONFIG_PATH=/app/config.yml \
+    AGENT_BIND_ADDRESS=0.0.0.0:8000
 
+USER nonroot:nonroot
 EXPOSE 8000
-
-CMD ["nat", "serve", "--config_file", "/app/config.yml", "--host", "0.0.0.0", "--port", "8000"]
+ENTRYPOINT ["/usr/local/bin/tickets-agent"]
+CMD ["serve"]

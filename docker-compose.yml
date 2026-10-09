@@ -209,6 +209,10 @@ services:
       - "${PUBLIC_BIND_ADDRESS:-127.0.0.1}:13133:13133"
     restart: unless-stopped
 
+  # The Rig-based Rust agent (rust-agent branch). Same networks, same
+  # credentials and the same environment variable names as the NAT agent on
+  # `main` -- including the historical NAT_* names -- so the two branches stay
+  # comparable line by line. See docs/NAT-VS-RIG.md.
   agent:
     build:
       context: ./agent
@@ -232,20 +236,19 @@ services:
       TICKETS_MCP_URL: http://mcp-server:8080/mcp
       MCP_API_KEY: ${MCP_API_KEY:-dev-mcp-api-key-change-me}
       # Optional human-approval feature; see the MCP service above and
-      # agent/config.yml. Both must be set, and config.yml must declare the
-      # function and expose it, before the model has any way to change state.
+      # agent/config.yml. The agent refuses to start with only some of the
+      # switches set, and without all of them the model has no way to change
+      # state.
       HITL_APPROVAL_SECRET: ${HITL_APPROVAL_SECRET-}
       HITL_ENABLE_INTERACTIVE: ${HITL_ENABLE_INTERACTIVE:-false}
-      # Fail closed on an interaction whose owner this agent did not record.
-      # Safe to enable when the approval feature is the only interaction type in
-      # use; leave unset if NAT's OAuth consent flow is also used.
-      HITL_STRICT_INTERACTION_OWNERSHIP: ${HITL_STRICT_INTERACTION_OWNERSHIP:-false}
+      # How long a pending approval waits for its human before the run treats
+      # it as a cancellation.
+      HITL_INTERACTION_TIMEOUT_SECONDS: ${HITL_INTERACTION_TIMEOUT_SECONDS:-600}
       NAT_GATEWAY_API_KEY: ${AGENT_API_KEY:-dev-agent-api-key-change-me}
-      OTEL_COLLECTOR_TRACES_ENDPOINT: ${OTEL_COLLECTOR_TRACES_ENDPOINT:-http://otel-collector:4318/v1/traces}
       OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: ${OTEL_EXPORTER_OTLP_TRACES_ENDPOINT:-http://otel-collector:4318/v1/traces}
-      OTEL_EXPORTER_OTLP_TRACES_PROTOCOL: http/protobuf
       OTEL_SERVICE_NAME: ${OTEL_SERVICE_NAME:-tickets-agent}
       DEPLOYMENT_ENVIRONMENT: ${DEPLOYMENT_ENVIRONMENT:-local}
+      NAT_TRACE_CAPTURE_CONTENT: ${NAT_TRACE_CAPTURE_CONTENT:-true}
       NAT_TRACE_CONTENT_MAX_CHARS: ${NAT_TRACE_CONTENT_MAX_CHARS:-65536}
       GUARDRAILS_TRACE_CAPTURE_CONTENT: ${GUARDRAILS_TRACE_CAPTURE_CONTENT:-true}
       GUARDRAILS_TRACE_CAPTURE_RAW_OUTPUT: ${GUARDRAILS_TRACE_CAPTURE_RAW_OUTPUT:-false}
@@ -253,24 +256,21 @@ services:
       GUARDRAILS_INPUT_DETERMINISTIC_FALLBACK: ${GUARDRAILS_INPUT_DETERMINISTIC_FALLBACK:-true}
       GUARDRAILS_INPUT_READ_ONLY_ALLOW_OVERRIDE: ${GUARDRAILS_INPUT_READ_ONLY_ALLOW_OVERRIDE:-true}
       GUARDRAILS_INPUT_BLOCK_MESSAGE: "${GUARDRAILS_INPUT_BLOCK_MESSAGE:-I'm sorry, I can't help with that request.}"
-      GUARDRAILS_RAIL_POOL_SIZE: ${GUARDRAILS_RAIL_POOL_SIZE:-4}
-      # Ceiling on a streamed answer buffered for PII masking (see
-      # text_guardrails._pii_buffer_limit); only relevant when the "mask
-      # sensitive data on output" flow is enabled in config.yml. Read
-      # directly by the agent process, so it must reach this container's
-      # environment, not just docs/.env.example.
+      # Ceiling on one streamed answer. On `main` it bounds the buffer PII
+      # masking needs; here masking runs in a bounded window, so it bounds the
+      # answer itself. Over it, the rest of the answer is withheld.
       GUARDRAILS_PII_MAX_BUFFER_CHARS: ${GUARDRAILS_PII_MAX_BUFFER_CHARS:-200000}
       # Ceiling on the user text handed to the guard model. Over this the
-      # request is refused, never truncated: a classifier shown a prefix
-      # decides about the prefix. See docs/GUARDRAILS.md#input-length-bound.
+      # request is refused, never truncated. See docs/GUARDRAILS.md#input-length-bound.
       GUARDRAILS_INPUT_MAX_CHARS: ${GUARDRAILS_INPUT_MAX_CHARS:-32000}
-      NAT_TRACE_CAPTURE_CONTENT: ${NAT_TRACE_CAPTURE_CONTENT:-true}
-      # NAT 1.9 attributes every span to the authenticated user. Off by
-      # default: traces already carry the question and the answer, and the
-      # identifier is what turns them into a per-person record. See
-      # docs/OBSERVABILITY.md#per-user-attribution.
+      # Off by default: traces already carry the question and the answer, and
+      # a stable per-user identifier is what turns them into a per-person
+      # record. See docs/OBSERVABILITY.md#per-user-attribution.
       OTEL_TRACE_USER_ID: ${OTEL_TRACE_USER_ID:-false}
-      OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT: ${OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT:-true}
+      # Rig's own prompt/completion span content. Off by default: model output
+      # on those spans is pre-output-rail. See docs/OBSERVABILITY.md.
+      AGENT_TRACE_CAPTURE_MODEL_CONTENT: ${AGENT_TRACE_CAPTURE_MODEL_CONTENT:-false}
+      RUST_LOG: ${AGENT_RUST_LOG:-tickets_agent=info,warn}
     depends_on:
       mcp-server:
         condition: service_healthy
@@ -283,11 +283,8 @@ services:
       - mcp_net
       - telemetry_net
     healthcheck:
-      test:
-        - CMD-SHELL
-        - >-
-          python -c "import urllib.request;
-          urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=2)"
+      # The image is distroless: the binary probes itself.
+      test: ["CMD", "/usr/local/bin/tickets-agent", "probe", "http", "http://127.0.0.1:8000/health/ready"]
       start_period: 20s
       interval: 5s
       timeout: 3s
@@ -384,9 +381,9 @@ services:
       EVALUATION_HTTP_TIMEOUT_SECONDS: ${EVALUATION_HTTP_TIMEOUT_SECONDS:-360}
       EVALUATION_HTTP_MAX_ATTEMPTS: ${EVALUATION_HTTP_MAX_ATTEMPTS:-4}
       # The harness calls the agent directly, with no browser login behind it.
-      # Since NAT 1.9 the agent requires an asserted identity on every request
-      # (general.front_end.identity_header), so the harness names itself. A
-      # synthetic principal deliberately: an evaluation run is not a person.
+      # The agent requires an asserted identity on every request, so the
+      # harness names itself. A synthetic principal deliberately: an
+      # evaluation run is not a person.
       EVALUATION_PRINCIPAL: ${EVALUATION_PRINCIPAL:-evaluation-harness}
       # The tool names the harness recognises as workflow tool calls. A domain
       # application overrides this instead of editing the harness.
@@ -424,7 +421,7 @@ services:
 networks:
   # Each network is one trust relationship. Membership decides which containers
   # can route to a service at all; publishing a host port (see `ports:`) is what
-  # decides whether the host and browser can. NAT, MCP, PostgreSQL and the
+  # decides whether the host and browser can. The agent, MCP, PostgreSQL and the
   # gateway publish nothing, so they are unreachable from outside the cluster.
   #
   # None of these are `internal: true`. That flag removes a network's default
@@ -436,17 +433,17 @@ networks:
 
   # Browser/host-facing services. Only members of this network publish ports.
   edge:
-  # assistant-ui -> Rust gateway. The UI never reaches NAT or MCP.
+  # assistant-ui -> Rust gateway. The UI never reaches the agent or MCP.
   gateway_net:
   # Rust gateway -> Keycloak OIDC backchannel.
   auth_net:
-  # Rust gateway and the containerized evaluator -> NAT. Nothing else routes here.
+  # Rust gateway and the containerized evaluator -> the agent. Nothing else routes here.
   agent_net:
-  # NAT and the loopback-only MCP Inspector -> Rust MCP server.
+  # The agent and the loopback-only MCP Inspector -> Rust MCP server.
   mcp_net:
   # MCP server -> PostgreSQL. The database is reachable from one service only.
   data_net:
-  # Trace export: NAT/evaluator -> OpenTelemetry Collector -> MLflow.
+  # Trace export: agent/evaluator -> OpenTelemetry Collector -> MLflow.
   telemetry_net:
 
 volumes:

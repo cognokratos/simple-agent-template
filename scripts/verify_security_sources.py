@@ -102,75 +102,75 @@ def main() -> None:
 
     require("Policy::none()" in text("gateway/src/main.rs"), "gateway HTTP redirects are not disabled")
 
-    # The build-time rewrite of NAT's installed front-end worker is gone; the
-    # same properties are now asserted against the application-owned worker.
+    # rust-agent branch: the agent is the Rig-based Rust service in agent/. The
+    # properties asserted against NAT's front-end worker on `main` are asserted
+    # here against the Rust modules that own them. A property that moves must
+    # move deliberately, not silently.
     for removed in (
-        "agent/patch_nat_api_key.py",
-        "agent/patch_nat_single_trace.py",
-        "agent/patch_nemoguardrails_regex.py",
+        "agent/src/nat_streaming_react",
+        "agent/pyproject.toml",
+        "agent/requirements.txt",
     ):
         require(
             not (ROOT / removed).exists(),
-            f"{removed} is back; site-packages must not be rewritten at build time",
+            f"{removed} is back; the NAT agent belongs to `main`, not this branch",
         )
 
-    worker = text("agent/src/nat_streaming_react/fastapi_worker.py")
-    require("NAT_GATEWAY_API_KEY" in worker, "NAT API-key environment variable missing")
+    agent_settings = text("agent/src/config.rs")
+    require('"NAT_GATEWAY_API_KEY"' in agent_settings, "agent service-key environment variable missing")
+    require('"MCP_API_KEY"' in agent_settings, "agent MCP-key environment variable missing")
     require(
-        'await self.app({**scope, "headers": sanitized}, receive, send)' in worker,
-        "NAT does not strip the service key before the application sees it",
+        "pub fn parse_bool" in agent_settings and "is not a recognised boolean" in agent_settings,
+        "agent boolean parsing is not strict",
     )
-    require("hmac.compare_digest" in worker, "NAT key comparison is not constant time")
+
+    agent_auth = text("agent/src/api/auth.rs")
     require(
-        'PUBLIC_PATHS: frozenset[str] = frozenset({"/health", "/health/live", "/health/ready"})'
-        in worker,
-        "the unauthenticated NAT surface is no longer liveness-only",
+        "request.headers_mut().remove(header::AUTHORIZATION)" in agent_auth,
+        "the agent does not strip the service key before handlers see it",
     )
+    require("ct_eq" in agent_auth, "agent key comparison is not constant time")
     require(
-        "StaticServiceKeyMiddleware" in worker and "WorkflowTraceContextMiddleware" in worker,
-        "the NAT worker does not install both the auth and trace middleware",
+        'pub const PUBLIC_PATHS: [&str; 3] = ["/health", "/health/live", "/health/ready"];' in agent_auth,
+        "the unauthenticated agent surface is no longer liveness-only",
     )
     # Two questions, two layers: "is this the gateway" and "who is it acting
-    # for". NAT 1.9's own identity_header refusal does not reach the client on
-    # the workflow routes (its interactive runner swallows the error into a 200
-    # response body), so this middleware is what makes the second one real.
+    # for". The identity layer must refuse a missing or repeated header.
+    require("ApiError::MissingIdentity" in agent_auth, "the agent does not require an asserted identity")
+    require("values.next().is_some()" in agent_auth, "a repeated identity header is not treated as ambiguous")
+
+    agent_api = text("agent/src/api/mod.rs")
     require(
-        "RequireIdentityHeaderMiddleware" in worker,
-        "the NAT worker does not require an asserted identity on non-health routes",
+        "middleware::from_fn_with_state(key, auth::require_gateway)" in agent_api,
+        "the agent's protected routes are not behind the gateway check",
     )
-    agent_config = text("agent/config.yml")
     require(
-        "nat_streaming_react.fastapi_worker.AuthenticatedFastApiFrontEndPluginWorker"
-        in agent_config,
-        "config.yml does not select the authenticated NAT front-end worker",
-    )
-    # Not the enforcement point, but what populates Context.user_id, and so
-    # what the per-user span attribution switch governs.
-    require(
-        "identity_header: x-authenticated-user-id" in agent_config,
-        "config.yml no longer tells NAT which header carries the asserted identity",
+        '.route("/health", get(live))' in agent_api and ".fallback_service(protected)" in agent_api,
+        "the agent's public and protected route split has changed",
     )
 
-    # NAT copies inbound headers into exported span metadata, so every identity
-    # header the gateway mints needs an explicit telemetry decision: redacted
-    # (IDENTITY_HEADERS) or deliberately kept (RETAINED_GATEWAY_HEADERS). A new
-    # x-authenticated-* header in the gateway fails here until it gets one,
-    # rather than leaking into traces by default.
+    # Identity enters in one place and the model cannot construct it.
+    identity = text("agent/src/identity.rs")
+    require(
+        "pub(crate) fn from_verified_headers" in identity and "pub fn new" not in identity,
+        "TrustedCaller gained a public constructor; identity must only come from verified headers",
+    )
+
+    # Every identity header the gateway mints needs an explicit telemetry
+    # decision: never exported (IDENTITY_HEADERS) or deliberately kept
+    # (RETAINED_GATEWAY_HEADERS). A new x-authenticated-* header in the gateway
+    # fails here until it gets one.
     minted = set(re.findall(r'"(x-authenticated-[a-z-]+)"', proxy))
     require(bool(minted), "no x-authenticated-* headers found in gateway/src/proxy.rs")
-    trace_processor = text("agent/src/nat_streaming_react/observability/trace_processor.py")
+    constants = dict(re.findall(r'pub const ([A-Z_]+): &str = "([a-z0-9-]+)";', identity))
 
-    def header_set(name: str) -> set[str]:
-        match = re.search(
-            rf"^{name}: frozenset\[str\] = frozenset\(\{{(.*?)\}}\)",
-            trace_processor,
-            re.MULTILINE | re.DOTALL,
-        )
-        require(match is not None, f"trace_processor.{name} is missing")
-        return set(re.findall(r'"([a-z0-9-]+)"', match.group(1)))
+    def header_list(name: str) -> set[str]:
+        match = re.search(rf"pub const {name}: &\[&str\] = &\[(.*?)\];", identity, re.DOTALL)
+        require(match is not None, f"identity.{name} is missing")
+        return {constants[item.strip()] for item in match.group(1).split(",") if item.strip()}
 
-    redacted = header_set("IDENTITY_HEADERS")
-    retained = header_set("RETAINED_GATEWAY_HEADERS")
+    redacted = header_list("IDENTITY_HEADERS")
+    retained = header_list("RETAINED_GATEWAY_HEADERS")
     require(not redacted & retained, f"headers both redacted and retained: {sorted(redacted & retained)}")
     undecided = minted - redacted - retained
     require(not undecided, f"gateway identity header(s) with no telemetry decision: {sorted(undecided)}")
@@ -178,35 +178,58 @@ def main() -> None:
         retained <= minted,
         f"RETAINED_GATEWAY_HEADERS names headers the gateway does not send: {sorted(retained - minted)}",
     )
-    require(
-        re.search(r"^\}\) \| IDENTITY_HEADERS$", trace_processor, re.MULTILINE) is not None,
-        "SENSITIVE_HEADERS no longer includes the raw gateway identity headers",
-    )
-    # One trace model: FastAPI's native request tracing would otherwise add a
-    # trace per health probe and a second OTLP exporter to the global provider.
-    require(
-        "        disable_fastapi_native_telemetry(app)\n" in worker,
-        "the NAT worker no longer disables FastAPI's native telemetry",
-    )
 
+    # Rig is pinned exactly: its API moves between minor releases.
+    cargo = text("agent/Cargo.toml")
+    for crate in ("rig-core", "rig-agent", "rig-rmcp", "rmcp"):
+        require(
+            re.search(rf'^{crate} = \{{ version = "=\d+\.\d+\.\d+"', cargo, re.MULTILINE) is not None,
+            f"{crate} is not pinned to an exact version in agent/Cargo.toml",
+        )
+
+    # The MCP server is unchanged on this branch and stays the capability
+    # boundary: same checks as on `main`.
     mcp = text("mcp-server/src/main.rs")
     require("MCP_API_KEY" in mcp, "MCP API-key environment variable missing")
     require("constant_time_eq" in mcp, "MCP key comparison is not constant time")
     require("request.headers_mut().remove(header::AUTHORIZATION)" in mcp, "MCP does not strip the service key")
 
+    # The agent reaches MCP with the service credential, over MCP.
+    mcp_client = text("agent/src/mcp/client.rs")
+    require(".auth_header(" in mcp_client, "the agent does not send the MCP key")
+    require("McpTool::from_mcp_server" in mcp_client, "the agent no longer invokes tools through rig-rmcp")
+
+    # Tool policy is enforced at Rig's dispatch hook and re-checked by executors.
+    hooks = text("agent/src/agent/hooks.rs")
+    require("fn on_dispatch" in hooks and "tool_policy.decide" in hooks, "the tool-policy dispatch hook is missing")
+    require("fn on_invalid_tool_call" in hooks, "unknown tool calls are not resolved deterministically")
+    for executor in ("agent/src/mcp/tools.rs", "agent/src/agent/builder.rs"):
+        require("tool_policy.decide" in text(executor), f"{executor} executes without re-checking the policy")
+
+    # Only the authenticated route can build a human decision.
+    pending = text("agent/src/approval/pending.rs")
+    require(
+        "pub struct VerifiedDecision(Decision);" in pending,
+        "VerifiedDecision must keep a private field: only the interaction route may construct one",
+    )
+    require("RespondError::NotOwner" in pending, "interaction ownership is not checked")
+
+    # The shipped agent configuration exposes no mutation tool.
     agent_config = text("agent/config.yml")
-    require("custom_headers:" in agent_config, "NAT MCP custom headers are missing")
-    require("Authorization: Bearer ${MCP_API_KEY}" in agent_config, "NAT does not send the MCP key")
+    require(
+        re.search(r"^  approval:", agent_config, re.MULTILINE) is None,
+        "agent/config.yml enables the approval tool by default",
+    )
 
     evaluator = text("evaluation/client.py")
-    require("AGENT_API_KEY" in evaluator, "evaluator does not require the NAT key")
+    require("AGENT_API_KEY" in evaluator, "evaluator does not require the agent key")
 
     # Every guardrail decision event the agent emits must be one the evaluator
     # recognises. These are magic strings shared across two deployed codebases,
     # and a mismatch is silent: the evaluator simply records nothing.
-    guardrails_source = text("agent/src/nat_streaming_react/text_guardrails.py")
+    guardrails_source = text("agent/src/agent/input_rail.rs") + text("agent/src/agent/execution.rs")
     emitted = set(re.findall(r'"(guardrail_[a-z0-9_]+_decision)"', guardrails_source))
-    require(bool(emitted), "no guardrail decision events found in the agent source")
+    require(len(emitted) == 2, f"expected an input and an output decision event, found {sorted(emitted)}")
     # Read the evaluator's prefixes from source rather than importing it: this
     # check has to run with nothing but python3 installed, and evaluation.client
     # imports mlflow at module scope.
@@ -229,41 +252,28 @@ def main() -> None:
             f"the agent emits {event!r} but the evaluator would not capture it",
         )
 
-    # Rail compatibility for the pinned Guardrails release, and its removal
-    # condition, must both stay documented in one place.
-    compat = text("agent/src/nat_streaming_react/guardrails_compat.py")
-    require("Removal condition" in compat, "guardrails_compat does not document its removal condition")
-    require(
-        "def register_rail_compatibility" in compat,
-        "the guardrails compatibility registration is missing",
-    )
-    require("class RailsPool" in compat, "concurrent rail isolation is missing")
-
-    # Private NAT dependencies are documented rather than implied to be absent.
-    observability = text("agent/src/nat_streaming_react/observability/__init__.py")
-    require(
-        "NAT_PRIVATE_API_DEPENDENCIES" in observability,
-        "the observability package does not declare its private NAT dependencies",
-    )
-
     # /version must never be able to serve a credential or prompt text.
-    provenance = text("agent/src/nat_streaming_react/provenance.py")
-    # Mentioning a credential in a docstring is fine; *reading* one is not. Match
-    # only the call sites that would put a value into the reported identity.
+    provenance = text("agent/src/telemetry/provenance.rs")
     credential_reads = re.findall(
-        r'(?:os\.environ(?:\.get)?|_setting)\(\s*"([A-Z0-9_]*(?:API_KEY|SECRET|PASSWORD|TOKEN)[A-Z0-9_]*)"',
+        r'(?:env::var|env!)\(\s*"([A-Z0-9_]*(?:API_KEY|SECRET|PASSWORD|TOKEN)[A-Z0-9_]*)"',
         provenance,
     )
     require(
         not credential_reads,
         f"provenance reads credential environment variable(s): {sorted(set(credential_reads))}",
     )
-    require("prompt_sha256" in provenance, "provenance reports no prompt digest")
-    # It reads the system prompt in order to digest it; it must never put the
-    # text itself into the reported identity.
+    require('"prompt_sha256"' in provenance, "provenance reports no prompt digest")
+    require('"agent_runtime": AGENT_RUNTIME' in provenance, "provenance does not name the agent runtime")
     require(
-        'identity["prompt"]' not in provenance and '"prompt":' not in provenance,
+        '"system_prompt":' not in provenance and '"prompt":' not in provenance,
         "provenance may expose prompt text rather than only its digest",
+    )
+
+    # What is exported to OTLP is fixed in code, not governed by RUST_LOG.
+    telemetry = text("agent/src/telemetry/mod.rs")
+    require(
+        "with_filter(export_filter())" in telemetry and "rig=info" in telemetry,
+        "the OTLP export filter no longer pins Rig to info (Rig logs full provider requests at TRACE)",
     )
 
     check_workflows()

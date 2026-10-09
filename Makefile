@@ -136,11 +136,7 @@ print-provenance: ## Print the resolved source identity
 	@echo "GIT_DIRTY=$(GIT_DIRTY)"
 
 version: ## Print the running agent's own provenance from its authenticated /version
-	@$(COMPOSE) exec -T agent python -c "import json,os,urllib.request; \
-	req=urllib.request.Request('http://127.0.0.1:8000/version', \
-	headers={'Authorization':'Bearer '+os.environ['NAT_GATEWAY_API_KEY'], \
-	'x-authenticated-user-id':'make-version'}); \
-	print(json.dumps(json.load(urllib.request.urlopen(req, timeout=10)), indent=2))"
+	@$(COMPOSE) exec -T agent /usr/local/bin/tickets-agent probe version | python3 -m json.tool
 
 config: ## Render and validate the normal Docker Compose configuration
 	$(COMPOSE) config
@@ -176,7 +172,7 @@ restart: ## Restart existing service containers without rebuilding
 recreate: ## Force-recreate all running services without rebuilding
 	$(COMPOSE) up -d --force-recreate --remove-orphans
 
-debug-up: env ## Start with loopback-only gateway, NAT, and MCP diagnostic ports exposed
+debug-up: env ## Start with loopback-only gateway, agent, and MCP diagnostic ports exposed
 	$(DEBUG_COMPOSE) up -d --build --remove-orphans
 	@$(MAKE) --no-print-directory wait
 
@@ -215,7 +211,7 @@ health: ## Check all public endpoints and internal service health
 	@curl -fsS http://localhost:$(KEYCLOAK_PORT)/realms/$${KEYCLOAK_REALM:-tickets}/.well-known/openid-configuration >/dev/null && echo "OK  Keycloak       http://localhost:$(KEYCLOAK_PORT)"
 	@curl -fsS http://localhost:$(MLFLOW_PORT)/health >/dev/null && echo "OK  MLflow         http://localhost:$(MLFLOW_PORT)"
 	@curl -fsS http://localhost:13133/ >/dev/null && echo "OK  OTel Collector http://localhost:13133"
-	@$(COMPOSE) exec -T agent python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=2)" >/dev/null && echo "OK  NAT agent      internal only"
+	@$(COMPOSE) exec -T agent /usr/local/bin/tickets-agent probe http http://127.0.0.1:8000/health/ready >/dev/null && echo "OK  Rust agent     internal only"
 	@$(COMPOSE) exec -T mcp-server curl -fsS http://127.0.0.1:8080/health >/dev/null && echo "OK  MCP server     internal only"
 
 logs: ## Follow logs from every normal cluster service
@@ -227,7 +223,7 @@ logs-app: ## Follow PostgreSQL, MCP, agent, gateway, Keycloak, and UI logs
 logs-observability: ## Follow agent, OpenTelemetry Collector, and MLflow logs
 	$(COMPOSE) logs -f --tail=$(LOG_TAIL) agent otel-collector mlflow
 
-logs-agent: ## Follow NAT agent logs
+logs-agent: ## Follow Rust agent logs
 	$(COMPOSE) logs -f --tail=$(LOG_TAIL) agent
 
 logs-ui: ## Follow assistant-ui logs
@@ -251,7 +247,7 @@ logs-mlflow: ## Follow MLflow logs
 logs-otel: ## Follow OpenTelemetry Collector logs
 	$(COMPOSE) logs -f --tail=$(LOG_TAIL) otel-collector
 
-rebuild-agent: ## Rebuild and force-recreate the NAT agent and its dependents
+rebuild-agent: ## Rebuild and force-recreate the Rust agent and its dependents
 	$(COMPOSE) build agent
 	$(COMPOSE) up -d --force-recreate agent gateway ui
 
@@ -268,52 +264,59 @@ rebuild-gateway: ## Rebuild and force-recreate the Rust gateway and UI
 	$(COMPOSE) up -d --force-recreate gateway ui
 
 verify-mcp: ## Verify that MCP rejects missing keys and accepts the agent key
-	$(COMPOSE) exec -T agent python /app/verify_mcp_auth.py
+	$(COMPOSE) exec -T agent /usr/local/bin/tickets-agent probe mcp-auth
 
 fixtures: ## Apply the synthetic Guardrails test fixtures to the current database
 	$(COMPOSE) exec -T postgres \
 		sh -lc 'psql -U "$$POSTGRES_USER" -d "$$POSTGRES_DB"' \
 		< db/guardrail_test_fixtures.sql
 
-verify-input-guardrails: ## Run the input-guardrail regression smoke test
-	$(COMPOSE) exec agent python /app/verify_input_guardrails.py
+# The agent's checks are Rust tests and run on the host (like
+# verify-approvals-rust), with no cluster and no model: the integration suites
+# drive the real service against a fake OpenAI-compatible endpoint and an
+# in-process MCP server. See agent/tests/.
+CARGO_AGENT := cd agent && cargo test --locked
 
-verify-stream-adapter: ## Verify the NAT SSE adapter preserves numeric/scalar answer chunks
-	cd ui && node --experimental-strip-types scripts/verify-nat-wire.mjs
+agent-test: ## Run every agent unit and integration test (host Rust toolchain; no cluster, no model)
+	$(CARGO_AGENT)
 
-verify-output-guardrails: ## Verify streamed output release, secret blocking, and PII masking (loads a ~600MB spaCy model)
-	$(COMPOSE) exec -T agent python /app/verify_output_guardrails.py
+agent-check: ## Agent formatting, clippy with warnings denied, and the full test suite
+	cd agent && cargo fmt --check
+	cd agent && cargo clippy --locked --all-targets --all-features -- -D warnings
+	$(CARGO_AGENT)
 
-verify-rails: ## Run the live NeMo Guardrails input/output rail regression suite
-	$(COMPOSE) exec -T agent python /app/verify_guardrails_rails.py
-
-verify-guardrails: verify-input-guardrails verify-output-guardrails verify-rails ## Run every guardrail regression check
-
-# Implementation-neutral names for "run the agent's own checks", so the shared
-# documentation can name one command on either branch. On main they run the NAT
-# agent's offline suites inside its container (cluster up); on rust-agent they
-# run the Rust agent's fmt, clippy and tests on the host.
-agent-test: verify-llm-config verify-guardrails verify-trace-pipeline verify-approvals ## Run the agent's own test suites (NAT: inside the agent container)
-
-agent-check: agent-test ## Run every agent check (NAT: same as agent-test)
-
-docs-parity: ## README.md and docs/ are identical to origin/main (enforced on rust-agent; trivially true on main)
+docs-parity: ## README.md and docs/ are identical to origin/main (documentation is edited on main only)
 	python3 scripts/verify_docs_parity.py
 
 rust-agent-drift: ## Is origin/rust-agent still one commit on origin/main with identical docs? (detection only)
 	python3 scripts/verify_rust_agent_drift.py
 
-verify-llm-config: ## Verify the LLM provider builds and omits empty optional parameters
-	$(COMPOSE) exec -T agent python /app/verify_llm_config.py
+verify-input-guardrails: ## Run the input-policy tests: precedence, history forgery, verdict parsing, switches
+	$(CARGO_AGENT) --lib guardrails::input config::
 
-verify-approvals: ## Run the offline approval-boundary tests (token binding, replay, ownership)
-	$(COMPOSE) exec -T agent python /app/verify_approval_tokens.py
+verify-stream-adapter: ## Verify the NAT SSE adapter preserves numeric/scalar answer chunks
+	cd ui && node --experimental-strip-types scripts/verify-nat-wire.mjs
+
+verify-output-guardrails: ## Verify streamed output release, cross-chunk secret blocking, and PII masking
+	$(CARGO_AGENT) --lib guardrails::output guardrails::pii
+
+verify-rails: ## Run the input and output rails end to end through the real service
+	$(CARGO_AGENT) --test agent_loop
+
+verify-guardrails: verify-input-guardrails verify-output-guardrails verify-rails ## Run every guardrail regression check
+
+verify-llm-config: ## Verify configuration parsing, including omitted empty optional parameters
+	$(CARGO_AGENT) --lib config::
+
+verify-approvals: ## Run the approval-boundary tests: tokens vs the MCP verifier, ownership, replay, HITL flows
+	$(CARGO_AGENT) --lib approval::
+	$(CARGO_AGENT) --test approvals
 
 verify-approvals-rust: ## Run the MCP approval verifier and mutation-policy tests
 	cd mcp-server && cargo test approval:: && cargo test mutation::
 
-verify-trace-pipeline: ## Run the offline observability pipeline regression tests
-	$(COMPOSE) exec -T agent python /app/verify_trace_pipeline.py
+verify-trace-pipeline: ## Run the observability tests: one trace per request, traceparent, redaction
+	$(CARGO_AGENT) --test observability
 
 trace-test: verify-trace-pipeline ## Verify observability end to end against MLflow (needs the cluster and a model)
 	python3 scripts/verify_traces_e2e.py
@@ -327,8 +330,8 @@ static-check: verify-stream-adapter eval-test-host security-config-test docs-che
 license-check: ## agent/ licence copies match the repository-root originals (no dependencies)
 	python3 scripts/verify_agent_package_licenses.py
 
-package-license-check: ## Build sdist + wheels of agent/ and check licence texts and notices in each (needs setuptools>=77)
-	python3 scripts/verify_agent_package_licenses.py --build
+package-license-check: ## Check the licence texts and notices inside the built agent image (needs Docker)
+	python3 scripts/verify_agent_package_licenses.py --image
 
 docs-check: ## Verify documentation links, heading anchors and referenced make targets
 	python3 scripts/verify_docs_test.py
@@ -344,11 +347,14 @@ open-inspector: ## Open MCP Inspector (token is read from .env/default)
 	@token="$${MCP_INSPECTOR_API_TOKEN:-dev-mcp-inspector-token-change-me}"; \
 	$(OPEN) "http://localhost:6274/?MCP_INSPECTOR_API_TOKEN=$$token"
 
-inspector-tools: ## List MCP tools directly through Inspector CLI, bypassing NAT/gateway/UI
+inspector-tools: ## List MCP tools directly through Inspector CLI, bypassing agent/gateway/UI
 	$(COMPOSE) --profile dev exec -T mcp-inspector sh -lc 'mcp-inspector --cli http://mcp-server:8080/mcp --transport http --header "Authorization: Bearer $$MCP_API_KEY" --method tools/list'
 
-shell-agent: ## Open a shell inside the NAT agent container
-	$(COMPOSE) exec agent bash
+shell-agent: ## The agent image is distroless (no shell): print how to probe it instead
+	@echo "The Rust agent image is distroless and has no shell. Probe it with:"
+	@echo "  $(COMPOSE) exec agent /usr/local/bin/tickets-agent probe version"
+	@echo "  $(COMPOSE) exec agent /usr/local/bin/tickets-agent probe mcp-auth"
+	@echo "  $(COMPOSE) exec agent /usr/local/bin/tickets-agent probe tcp mcp-server:8080"
 
 shell-db: ## Open psql in the PostgreSQL container
 	$(COMPOSE) exec postgres sh -lc 'psql -U "$$POSTGRES_USER" -d "$$POSTGRES_DB"'
@@ -362,8 +368,8 @@ open-gateway: ## Open the gateway health endpoint; requires `make debug-up`
 open-keycloak: ## Open the Keycloak admin console
 	$(OPEN) $(KEYCLOAK_PUBLIC_URL)/admin/
 
-open-agent: ## Open NAT Swagger UI; requires `make debug-up`
-	$(OPEN) http://localhost:8000/docs
+open-agent: ## Open the agent readiness endpoint; requires `make debug-up`
+	$(OPEN) http://localhost:8000/health/ready
 
 open-mlflow: ## Open MLflow in the default browser
 	$(OPEN) http://localhost:$(MLFLOW_PORT)
@@ -417,15 +423,13 @@ auth-test: ## Smoke-test Keycloak discovery and every authentication boundary
 	if $(COMPOSE) exec -T gateway curl -sS -o /dev/null --max-time 5 http://mcp-server:8080/health 2>/dev/null; then \
 		echo "gateway can reach MCP; it must not share mcp_net"; exit 1; \
 	fi; \
-	mcp_status=$$($(COMPOSE) exec -T agent sh -lc 'python -c "import urllib.request,urllib.error; \
-req=urllib.request.Request(\"http://mcp-server:8080/mcp\", method=\"POST\"); \
-print(urllib.request.urlopen(req, timeout=5).status)" 2>&1 | grep -oE "HTTP Error [0-9]+" | grep -oE "[0-9]+" || echo 000'); \
+	mcp_status=$$($(COMPOSE) exec -T agent /usr/local/bin/tickets-agent probe status POST http://mcp-server:8080/mcp); \
 	[[ "$$mcp_status" == 401 ]] || { echo "MCP without API key returned $$mcp_status, expected 401"; exit 1; }; \
 	echo "Authentication boundary smoke tests passed."
 
-network-test: ## Assert the east-west topology at runtime: who can reach NAT, MCP and the database
+network-test: ## Assert the east-west topology at runtime: who can reach the agent, MCP and the database
 	@set -euo pipefail; \
-	echo "host -> gateway/NAT/MCP/PostgreSQL must all be unreachable (no published ports)"; \
+	echo "host -> gateway/agent/MCP/PostgreSQL must all be unreachable (no published ports)"; \
 	published="$$($(COMPOSE) ps --format json 2>/dev/null | python3 -c 'import json,sys; \
 print(" ".join(str(p["PublishedPort"]) for line in sys.stdin if line.strip() \
 for p in (json.loads(line).get("Publishers") or []) if p.get("PublishedPort")))')"; \
@@ -442,29 +446,29 @@ for p in (json.loads(line).get("Publishers") or []) if p.get("PublishedPort")))'
 			echo "        probe cannot be conclusive. Free the port for an unambiguous result."; \
 		fi; \
 	done; \
-	echo "  ok: gateway, NAT, MCP and PostgreSQL are not published by this project"; \
+	echo "  ok: gateway, agent, MCP and PostgreSQL are not published by this project"; \
 	$(COMPOSE) exec -T gateway sh -lc 'curl -sS --max-time 5 -o /dev/null http://agent:8000/health' \
-		|| { echo "gateway cannot reach NAT"; exit 1; }; \
-	echo "  ok: gateway -> NAT"; \
-	$(COMPOSE) exec -T agent sh -lc 'python -c "import urllib.request; urllib.request.urlopen(\"http://mcp-server:8080/health\", timeout=5)"' \
-		|| { echo "NAT cannot reach MCP"; exit 1; }; \
-	echo "  ok: NAT -> MCP"; \
+		|| { echo "gateway cannot reach the agent"; exit 1; }; \
+	echo "  ok: gateway -> agent"; \
+	$(COMPOSE) exec -T agent /usr/local/bin/tickets-agent probe http http://mcp-server:8080/health >/dev/null \
+		|| { echo "the agent cannot reach MCP"; exit 1; }; \
+	echo "  ok: agent -> MCP"; \
 	if $(COMPOSE) exec -T gateway sh -lc 'curl -sS --max-time 5 -o /dev/null http://mcp-server:8080/health' 2>/dev/null; then \
 		echo "gateway can reach MCP; it must not share mcp_net"; exit 1; \
 	fi; \
 	echo "  ok: gateway cannot reach MCP"; \
 	if $(COMPOSE) exec -T ui sh -lc 'wget -q -T 5 -O /dev/null http://agent:8000/health' 2>/dev/null; then \
-		echo "assistant-ui can reach NAT; it must not share agent_net"; exit 1; \
+		echo "assistant-ui can reach the agent; it must not share agent_net"; exit 1; \
 	fi; \
-	echo "  ok: assistant-ui cannot reach NAT"; \
+	echo "  ok: assistant-ui cannot reach the agent"; \
 	if $(COMPOSE) exec -T ui sh -lc 'wget -q -T 5 -O /dev/null http://mcp-server:8080/health' 2>/dev/null; then \
 		echo "assistant-ui can reach MCP; it must not share mcp_net"; exit 1; \
 	fi; \
 	echo "  ok: assistant-ui cannot reach MCP"; \
-	if $(COMPOSE) exec -T agent sh -lc 'python -c "import socket; socket.create_connection((\"postgres\", 5432), 5)"' 2>/dev/null; then \
-		echo "NAT can reach PostgreSQL directly; only the MCP server may"; exit 1; \
+	if $(COMPOSE) exec -T agent /usr/local/bin/tickets-agent probe tcp postgres:5432 2>/dev/null; then \
+		echo "the agent can reach PostgreSQL directly; only the MCP server may"; exit 1; \
 	fi; \
-	echo "  ok: NAT cannot reach PostgreSQL directly"; \
+	echo "  ok: the agent cannot reach PostgreSQL directly"; \
 	echo "Network isolation tests passed."
 
 security-test: security-config-test network-test auth-test verify-mcp ## Run all authentication and topology tests
@@ -545,4 +549,4 @@ eval-test: ## Run evaluator parser and scorer unit tests in the evaluator image
 eval-test-host: ## Run the same evaluator unit tests on the host (no Docker)
 	python3 -m unittest discover -s evaluation/tests -t . -p 'test_*.py' -v
 
-test: eval-test verify-llm-config verify-guardrails verify-trace-pipeline verify-approvals security-test ## Run evaluator, Guardrails, observability, approval-boundary, and security tests
+test: eval-test agent-test verify-approvals-rust security-test ## Run evaluator, agent (Rust), MCP approval, and security tests
