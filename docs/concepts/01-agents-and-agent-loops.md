@@ -75,8 +75,8 @@ that ordinary code owns.
 
 | Concept | Implementation in this repo |
 | --- | --- |
-| Agent runtime | NeMo Agent Toolkit (NAT) `streaming_react_agent` workflow, [`register.py`](https://github.com/cognokratos/simple-agent-template/blob/main/agent/src/nat_streaming_react/register.py) |
-| LLM | Any OpenAI-compatible endpoint (`llms.primary` in [`agent/config.yml`](../../agent/config.yml)); default `qwen3:8b` on a local Ollama |
+| Agent runtime | A Rust service on the [Rig](https://github.com/0xPlaygrounds/rig) agent framework: [`builder.rs`](../../agent/src/agent/builder.rs) assembles the agent, [`execution.rs`](../../agent/src/agent/execution.rs) runs it |
+| LLM | Any OpenAI-compatible endpoint (`LLM_BASE_URL` / `LLM_MODEL`, see [CONFIGURATION.md](../CONFIGURATION.md#model-endpoint)); default `qwen3:8b` on a local Ollama |
 | Tools | Two read-only MCP tools, `search_tickets` and `get_ticket`, in [`mcp-server/src/main.rs`](../../mcp-server/src/main.rs) |
 | Environment | PostgreSQL, schema in [`db/init.sql`](../../db/init.sql) |
 
@@ -92,12 +92,11 @@ extracted them with regexes. **Native tool calling** moves this into the model
 API: the tool schemas go into the request as structured definitions, and the
 model returns a structured `tool_calls` field instead of prose to be parsed.
 
-This repository uses NAT's ReAct graph with `use_native_tool_calling: true`.
-Native calling removes a class of parse failures. It also changed streaming:
-NAT's stock stream waits for the literal `Final Answer:` marker, which native
-calling never emits. That is why
-[`register.py`](https://github.com/cognokratos/simple-agent-template/blob/main/agent/src/nat_streaming_react/register.py) exists (see
-[EXTENDING.md](../EXTENDING.md#what-each-local-module-compensates-for)).
+This repository uses native tool calling: Rig sends the MCP tool schemas as
+structured definitions and reads structured tool calls back. Native calling
+removes a class of parse failures, and there is no `Final Answer:` marker to
+wait for: the answer is simply the assistant text Rig streams once the model
+stops calling tools.
 
 ### Diagram B: one tool-calling turn
 
@@ -109,7 +108,7 @@ TKT-1001"*, as observed in a live trace (see the
 sequenceDiagram
     autonumber
     actor User
-    participant RT as Agent runtime (NAT ReAct)
+    participant RT as Agent runtime (Rig loop)
     participant LLM
     participant MCP as MCP server (Rust)
     participant DB as PostgreSQL
@@ -117,7 +116,7 @@ sequenceDiagram
     User->>RT: "Show me ... ticket TKT-1001"
     RT->>LLM: system prompt + tool schemas + user message
     LLM-->>RT: tool_call get_ticket {"ticket_id":"TKT-1001"}
-    Note over RT: The runtime executes it.<br/>The model never does.
+    Note over RT: Tool policy decides,<br/>then the runtime executes it.<br/>The model never does.
     RT->>MCP: tools/call get_ticket (Bearer MCP_API_KEY)
     MCP->>DB: SELECT ... WHERE id = $1 (parameterized)
     DB-->>MCP: ticket row + history rows
@@ -130,22 +129,28 @@ sequenceDiagram
 ## The loop is bounded by configuration
 
 An unbounded loop around a probabilistic component is an outage waiting to
-happen. The bounds live in `workflow:` in
-[`agent/config.yml`](../../agent/config.yml):
+happen. The bounds live in [`agent/config.yml`](../../agent/config.yml):
 
 | Setting | Value | What it bounds |
 | --- | --- | --- |
-| `max_tool_calls` | `20` | Loop iterations. `register.py` turns it into a LangGraph `recursion_limit` of `(max_tool_calls + 1) * 2`. When it is hit, the user gets "The agent could not produce a final answer within 20 tool calls" instead of a hang. |
-| `max_history` | `20` | Messages carried into each model call |
-| `tool_call_max_retries` | `2` | Retries of a failing tool call |
-| `parse_agent_response_max_retries` | `3` | Retries when the model's output cannot be parsed |
-| `pass_tool_call_errors_to_agent` | `true` | A tool error becomes an *observation* the model can explain, not a crash. Try `TKT-9999` (scenario 4 in [TEST-SCENARIOS.md](../TEST-SCENARIOS.md#4-tool-error-handling)). |
-| `request_timeout` / `max_retries` (under `llms.primary`) | `300.0` / `2` | Each model call |
-| `tool_call_timeout` (under `function_groups.tickets_mcp`) | `30` | Each MCP call |
+| `workflow.max_tool_calls` | `20` | Tool calls per request, exactly. Rig allows `max_tool_calls + 1` model calls, and the tool-policy hook ([`hooks.rs`](../../agent/src/agent/hooks.rs)) refuses any tool call beyond the budget. When the loop runs out, the user gets "The agent could not produce a final answer within 20 tool calls" instead of a hang. |
+| `workflow.max_history` | `20` | Messages carried into each model call |
+| `workflow.max_tokens` | `4096` | Each model reply |
+| `tools.mcp.tool_call_timeout_seconds` | `30` | Each MCP call |
+
+A tool error does not crash the run: it goes back to the model as the tool's
+result, an *observation* the model can explain. Try `TKT-9999` (scenario 4 in
+[TEST-SCENARIOS.md](../TEST-SCENARIOS.md#4-tool-error-handling)).
+
+The loop also has explicit states — received, screening input, running,
+awaiting approval, completed, blocked, failed, cancelled — in
+[`state.rs`](../../agent/src/agent/state.rs). Every legal move is listed, and
+anything else is refused, so a blocked run cannot be resumed and a completed
+one cannot start waiting for an approval.
 
 ## The system prompt is configuration, not a control
 
-The `system_prompt` in [`agent/config.yml`](../../agent/config.yml) tells the
+The `workflow.system_prompt` in [`agent/config.yml`](../../agent/config.yml) tells the
 model how to use the tools, to ground every factual statement, and to treat
 ticket text as untrusted data. It is worth writing carefully, because it
 measurably changes behaviour. It is **not** a security boundary. A prompt is a
@@ -163,23 +168,18 @@ CSV", and not for any single decision with an explicit rule, such as ranking
 tickets by priority ([concept 3](03-grounding-and-authoritative-state.md#grounded-is-not-the-same-as-correct)).
 See [ANTI-PATTERNS.md](ANTI-PATTERNS.md#overusing-agents-for-deterministic-workflows).
 
-## On the Rig implementation
+## The framework runs the loop; it does not own it
 
-The same concept, without the toolkit. On
-[`rust-agent`](https://github.com/cognokratos/simple-agent-template/tree/rust-agent)
-the loop is Rig's agent runner over a small, serialisable state machine
-(`AgentRun`: call the model, call tools, done). A Rig agent is assembled **per
-request** in [`builder.rs`](https://github.com/cognokratos/simple-agent-template/blob/rust-agent/agent/src/agent/builder.rs), and
-[`execution.rs`](https://github.com/cognokratos/simple-agent-template/blob/rust-agent/agent/src/agent/execution.rs) walks one request through every step,
-labelling each decision probabilistic or deterministic. Native tool calling
-streams without any `Final Answer:` workaround. The loop is bounded twice: Rig's
-model-call budget (`max_tool_calls + 1`) and a deterministic tool-call budget in
-the dispatch hook, so the limit means exactly `max_tool_calls` tool calls.
-
-What NAT gives you here is a configurable graph; what Rig makes explicit is the
-loop itself. In both, the loop is where the model *decides*, never where
-authority is *granted*. → [Rust lesson 03](../RUST-LEARNING-PATH.md#03--understand-the-agent-loop),
-[NAT vs Rig](../NAT-VS-RIG.md#the-agent-loop)
+Rig is the agent runner here. A Rig agent is assembled **per request** in
+[`builder.rs`](../../agent/src/agent/builder.rs), with tools that close over
+that request's trusted context, and
+[`execution.rs`](../../agent/src/agent/execution.rs) walks one request through
+every step, labelling each decision probabilistic or deterministic. The loop is
+where the model *decides*, never where authority is *granted*: identity, the
+tool budget, the tool policy and the output policy are this repository's code,
+which is why the agent could move from the NeMo Agent Toolkit to Rig without
+changing them. → [Agent internals, lesson 03](../AGENT-INTERNALS.md#03--understand-the-agent-loop),
+[Framework migration — the agent loop](../FRAMEWORK-MIGRATION.md#the-agent-loop)
 
 ## Go deeper
 

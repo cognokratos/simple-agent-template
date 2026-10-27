@@ -99,17 +99,23 @@ Each of these is explained in [EVALUATION.md](../EVALUATION.md#the-methodology-w
   dataset still fails, because "the model got worse" and "the cluster is broken"
   must never look the same.
 
-## On the Rig implementation
+## Evaluation outlives the framework
 
-The evaluation pipeline is shared verbatim: the harness talks to whichever
-agent is running through the same [contract](../AGENT-SERVICE-CONTRACT.md), and
-tags the run `provenance.agent.runtime` (`nat` or `rig-rust`). Because the
-datasets, scorers, gates and prompts are identical, evaluation is the fair way
-to compare the two implementations — see
-[EVALUATION.md](../EVALUATION.md#comparing-runtimes). On `rust-agent`, the
-deterministic half — what the agent does with a *given* model output — is also
-tested offline against a scripted adversarial model (`make agent-test`), which
-complements rather than replaces the suites.
+The harness talks to the agent only through its
+[service contract](../AGENT-SERVICE-CONTRACT.md), and the datasets, scorers and
+gates belong to this repository, not to any agent framework. Every run is
+tagged `provenance.agent.runtime` from the agent's `/version` (`rig-rust` for
+the current agent). That is what made the migration from NeMo Agent Toolkit to
+Rig measurable: the same suites ran against both, and they can still be run
+against the retired agent (`nat-1.9-final`, tagged `nat`) for a historical
+comparison — see [EVALUATION.md](../EVALUATION.md#comparing-runtimes).
+
+The suites measure the agent *with* its model. The deterministic half — what
+the agent does with a *given* model output — is also tested offline against a
+scripted adversarial model (`make agent-test`: unknown tools, invented
+arguments, secrets split across chunks, a forged identity in the prompt). That
+complements the suites rather than replacing them: it pins the controls, and
+the suites measure the behaviour.
 
 ## Go deeper
 

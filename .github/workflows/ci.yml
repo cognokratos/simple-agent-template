@@ -40,8 +40,8 @@ jobs:
       # Dependency-free on purpose, so these can run without Docker, Rust, Node
       # or a pip install. If any step here ever needs a dependency, that is a
       # finding rather than a convenience.
-      - name: Byte-compile the agent, evaluator and scripts
-        run: python3 -m compileall -q agent/src evaluation scripts
+      - name: Byte-compile the evaluator and scripts
+        run: python3 -m compileall -q evaluation scripts
 
       # `-t .` sets the top-level import directory to the repository root, which
       # is what lets the suite run identically here and inside the evaluator
@@ -67,51 +67,41 @@ jobs:
       - name: live-evaluation.yml upload condition semantics
         run: python3 scripts/verify_live_evaluation_upload_condition_test.py
 
-  agent-package:
-    name: Agent package licence files
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-      # Separate from the dependency-free job above: building a distribution
-      # needs the PEP 517 backend, installed explicitly and pinned.
-      - name: Install the build backend
-        run: python3 -m pip install --quiet "setuptools==84.0.0"
-      - name: sdist, wheel, wheel-from-sdist and install carry the licence texts and notices
-        run: python3 scripts/verify_agent_package_licenses.py --build
-
   rust:
     name: Rust (${{ matrix.crate }})
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
-        crate: [mcp-server, gateway]
+        crate: [mcp-server, gateway, agent]
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
         with:
-          components: clippy
+          components: clippy, rustfmt
 
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: ${{ matrix.crate }}
 
-      # No `cargo fmt --check`. These crates are laid out by hand — argument
-      # lists and assertions are wrapped for readability rather than to rustfmt's
-      # heuristics — and no rustfmt.toml reproduces that. Clippy, which catches
-      # things that matter, is enforced instead.
+      # No `cargo fmt --check` for mcp-server and gateway: those crates are laid
+      # out by hand — argument lists and assertions are wrapped for readability
+      # rather than to rustfmt's heuristics — and no rustfmt.toml reproduces
+      # that. The agent was written to its own rustfmt.toml and is checked.
+      - name: Format (agent)
+        if: matrix.crate == 'agent'
+        working-directory: agent
+        run: cargo fmt --check
+
       - name: Clippy
         working-directory: ${{ matrix.crate }}
-        run: cargo clippy --all-targets -- -D warnings
+        run: cargo clippy --locked --all-targets --all-features -- -D warnings
 
       - name: Tests
         working-directory: ${{ matrix.crate }}
-        run: cargo test
+        run: cargo test --locked
 
-      # Both lockfiles are committed. A build that has to resolve dependencies
+      # Every lockfile is committed. A build that has to resolve dependencies
       # afresh is not the build that was reviewed.
       - name: The lockfile is committed and current
         working-directory: ${{ matrix.crate }}
@@ -139,13 +129,14 @@ jobs:
         working-directory: ui
         run: npm run typecheck
 
-      # The streaming contract: NAT sends assistant text as `data: {"value": ...}`
-      # and many single chunks are valid JSON scalars. Re-parsing them changes
-      # their type and the consumer silently drops them, so every number and
-      # boolean vanishes from the answer. Cheap to check, invisible when broken.
-      - name: NAT SSE wire contract
+      # The streaming contract (docs/AGENT-SERVICE-CONTRACT.md): the agent
+      # sends assistant text as `data: {"value": ...}` and many single chunks
+      # are valid JSON scalars. Re-parsing them changes their type and the
+      # consumer silently drops them, so every number and boolean vanishes
+      # from the answer. Cheap to check, invisible when broken.
+      - name: Agent SSE wire contract
         working-directory: ui
-        run: npm run verify:nat-wire
+        run: npm run verify:agent-wire
 
       - name: Build
         working-directory: ui
@@ -174,7 +165,7 @@ jobs:
 
       # Asserts the east-west topology from the *resolved* configuration: which
       # services publish host ports, which networks each one joins, and that the
-      # database, MCP and NAT are not reachable from the edge. No containers
+      # database, MCP and the agent are not reachable from the edge. No containers
       # start. Every profile is rendered, because `docker compose config` omits
       # profile-gated services and would otherwise skip what it claims to check.
       - name: Security topology of the resolved Compose configuration

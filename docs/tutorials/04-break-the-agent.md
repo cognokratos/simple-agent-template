@@ -25,9 +25,13 @@ automatically on a fresh database ([`db/injection_test_fixtures.sql`](../../db/i
 [`db/guardrail_test_fixtures.sql`](../../db/guardrail_test_fixtures.sql)). For an
 existing volume, `make fixtures` applies the guardrail fixtures.
 
-All results quoted below were observed on the default `qwen3:8b`, temperature
-0, with the agent called directly (as the evaluation harness does). Run each
-prompt several times and record your own results.
+The model results quoted below were observed on the default `qwen3:8b`,
+temperature 0, with the agent called directly (as the evaluation harness does).
+They were recorded on the retired NeMo Agent Toolkit agent (`nat-1.9-final`),
+with the same prompts and model. The Rust agent sends the same model a slightly
+different request through Rig's client, so its model-dependent results may
+differ; what contains each failure does not. Treat the quotes as a baseline,
+run each prompt several times, and record your own results.
 
 ## Run it
 
@@ -65,8 +69,9 @@ plus five `get_ticket` calls.
 **Observed** (every run: 4 direct runs across two agent builds, ~10 s each, plus
 the `tools` evaluation run): `search_tickets(status="open")`, then `get_ticket`
 for `TKT-1002`, `TKT-1004` and `TKT-1001`, the first three rows returned,
-newest first. `TKT-1003` and `TKT-1005` were never fetched. The final
-streamed text was `Calling tickets_mcp__get_ticket`, which is not an answer.
+newest first. `TKT-1003` and `TKT-1005` were never fetched, and the run ended
+without an answer. Whatever trajectory you observe, the loop cannot run away:
+the tool-policy hook stops it at exactly `workflow.max_tool_calls` tool calls.
 
 ### Experiment 3: weak vs stronger model
 
@@ -84,9 +89,9 @@ same model at temperature 0:
   > a priority of "high"
 
   The tool result listed `TKT-1002` with priority **`urgent`**.
-* rebuild from `af29ce0`, 4 of 4 runs (~7 s each): `search_tickets`, then
-  `get_ticket` for three tickets, then no answer (the same `Calling
-  tickets_mcp__get_ticket` ending as experiment 2).
+* a later rebuild, 4 of 4 runs (~7 s each): `search_tickets`, then
+  `get_ticket` for three tickets, then no answer (the same ending as
+  experiment 2).
 
 [TEST-SCENARIOS.md](../TEST-SCENARIOS.md#6-prioritization-reasoning) names
 TKT-1002 as the expected pick.
@@ -162,8 +167,8 @@ Notice how the evaluation suites relate to these runs:
 * Experiment 2 maps to `TOOLS-FANOUT-OPEN-TICKETS`, which expects five
   `get_ticket` calls. The observed trajectory would fail it.
 * Experiment 3 has **no evaluation case**. Nothing would catch it automatically.
-* Experiment 4 maps to `GROUND-ABSENT-RECORD`, which failed in the evaluation
-  run on `af29ce0` (`grounded_in_tool_results/mean = 0.75`, see
+* Experiment 4 maps to `GROUND-ABSENT-RECORD`, which failed in a recorded
+  evaluation run (`grounded_in_tool_results/mean = 0.75`, see
   [lab 05](05-evaluate-the-agent.md#observe)).
 
 ## Architecture after
@@ -172,18 +177,17 @@ Unchanged, and that is the point. The default architecture contained every
 failure above. The labs that follow add capabilities, and each one must keep
 these failures contained.
 
-## On the Rig implementation
+## The same attacks, without a model
 
-Run the same experiments. The model-dependent results may differ — the same
-model receives a slightly different request from Rig's client — but the
-containment does not: the injected ticket text still reaches the model as data,
-the fabricated-authorization ticket still cannot change anything without a
-human approval, and a tool-call explosion stops at exactly `max_tool_calls`
-tool calls, enforced by the dispatch hook. On `rust-agent` the same attacks are
-also scripted deterministically against the real service:
-`cargo test --test agent_loop` in `agent/` plays a model that proposes unknown
-tools, invents `user_id` arguments, claims to be an administrator and never
-stops calling tools.
+The containment above does not depend on the model, so it can be tested without
+one. `make agent-test` runs the agent's Rust tests on the host; the integration
+tests in [`agent/tests/agent_loop.rs`](../../agent/tests/agent_loop.rs) play a
+scripted model against the real service that proposes unknown tools
+(`an_unknown_tool_is_refused_and_the_model_is_told_why`), invents `user_id`
+arguments (`invented_privileged_arguments_are_refused`), claims to be someone
+else (`a_forged_identity_in_the_prompt_changes_nothing`) and never stops
+calling tools (`the_loop_is_bounded_by_configuration`). Each one must be
+contained by deterministic code, every time.
 
 ## What you learned
 

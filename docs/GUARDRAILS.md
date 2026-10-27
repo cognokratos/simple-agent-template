@@ -1,13 +1,26 @@
 # Guardrails
 
-On the canonical NAT implementation: NeMo Guardrails, configured in
-`agent/config.yml` and driven by `agent/src/nat_streaming_react/text_guardrails.py`.
+The agent's policy layers are plain Rust in
+[`agent/src/guardrails/`](../agent/src/guardrails), run by
+[`input_rail.rs`](../agent/src/agent/input_rail.rs) and
+[`execution.rs`](../agent/src/agent/execution.rs). Each is explicit about
+whether its decision is probabilistic.
 
-Most of this page describes the canonical NAT implementation. The Rig
-implementation on `rust-agent` keeps the same input policy, prompt and secret
-patterns but implements them as explicit Rust code, with a different PII
-detector; it is described in [On the Rig implementation](#on-the-rig-implementation)
-below, and compared in [NAT-VS-RIG.md](NAT-VS-RIG.md#input-guardrails).
+| Layer | Decides | Kind |
+| --- | --- | --- |
+| input ([`input.rs`](../agent/src/guardrails/input.rs)) | whether the request reaches the agent model | patterns + one **probabilistic** classifier call, combined deterministically |
+| tool ([`tools.rs`](../agent/src/guardrails/tools.rs)) | whether a proposed tool call runs | deterministic ([SECURITY.md](SECURITY.md#tool-authority)) |
+| output — secrets ([`output.rs`](../agent/src/guardrails/output.rs)) | whether the rest of the answer is released | deterministic |
+| output — PII ([`pii.rs`](../agent/src/guardrails/pii.rs)) | which spans are masked | deterministic |
+
+None of them decides whether a mutation is permitted: that authority is the MCP
+server's, re-checked at the point of mutation. Guardrails filter text; they are
+not authorization.
+
+The retired NAT agent (`nat-1.9-final`) implemented the same input policy with
+NeMo Guardrails and masked PII with Presidio; what changed in the migration,
+and what was deliberately narrowed, is in
+[FRAMEWORK-MIGRATION.md](FRAMEWORK-MIGRATION.md#input-guardrails).
 
 ## Input rail
 
@@ -19,9 +32,46 @@ it. Precedence is deliberately asymmetric:
    LLM false positive;
 3. otherwise the LLM verdict stands.
 
-The allow templates are anchored to the complete message (`fullmatch` on
-whitespace-normalised text, length-bounded), so appending an instruction
-override to an otherwise valid query does not inherit the allow.
+The allow templates are anchored to the complete message (`^(?:…)$` on
+whitespace-normalised text, at most 500 characters), so appending an
+instruction override to an otherwise valid query does not inherit the allow.
+
+The layers are pure functions — `critical_matches`, `allow_matches`, `screen`
+and `resolve` — so the whole precedence table is a unit test that needs no
+model. [`input_rail.rs`](../agent/src/agent/input_rail.rs) runs them in order
+for each request:
+
+1. the [length bound](#input-length-bound);
+2. the deterministic layers;
+3. one classifier call: the `self_check_input` prompt from
+   [`agent/config.yml`](../agent/config.yml) (`guardrails.prompts`), rendered
+   with the user message, sent as a single user message to the guard model
+   (`LLM_GUARD_MODEL`) at temperature 0.001 with the prompt's `max_tokens`;
+4. `resolve`, which applies the precedence above.
+
+**The rail fails closed.** If the classifier call fails, the request is
+refused and the decision event records
+`classifier_available: false`; a missing verdict is treated like an
+unrecognised one.
+
+Which layer decided is recorded as `decision_source` on the
+`guardrail_input_self_check_decision` stream event (which the evaluation
+scorers read) and as `guardrail.decision_source` on the
+`guardrail.input.self_check` span:
+
+| `decision_source` | Meaning |
+| --- | --- |
+| `llm` | no deterministic layer matched; the classifier decided |
+| `llm_and_deterministic_block` | a critical pattern matched and the classifier also voted to block |
+| `deterministic_block_fallback` | a critical pattern matched; the classifier voted to allow |
+| `deterministic_allow_override` | the classifier voted to block; an allow template corrected it |
+| `llm_and_deterministic_allow` | the classifier allowed and an allow template agreed |
+| `deterministic_input_limit` | refused by the length bound before anything else ran |
+
+A refused request never reaches the agent model. The user sees the
+classifier's own refusal (`I'm sorry, I can't respond to that.`) when the
+classifier voted to block, and `GUARDRAILS_INPUT_BLOCK_MESSAGE` when only a
+deterministic layer did or the classifier was unavailable.
 
 ### Client-supplied history
 
@@ -29,7 +79,8 @@ The gateway validates that each history message has role `user` or `assistant`;
 it cannot validate who *wrote* it. A caller can therefore replay fabricated
 assistant turns that no rail ever screened, carrying the implied authority of
 the agent's own voice. The deterministic patterns run across those turns, and a
-match joins the block set so it outranks the allow override.
+match joins the block set — labelled `history:<pattern>` — so it outranks the
+allow override.
 
 Prior **user** turns are deliberately not re-screened. Each was screened by the
 full rail when it was the latest turn, and a refused one never reached the
@@ -43,73 +94,22 @@ It is knowingly left open: closing it means re-screening text the user can see
 was already refused, and the same caller can simply send that text as the latest
 turn, where the full rail does screen it.
 
-## Output rails
-
-Two, and they do different things.
-
-### `regex check output` — blocks
-
-Deterministic credential and prompt-leakage patterns, no LLM. This is what
-blocks a streamed response. NeMo evaluates a rolling window of
-`chunk_size + context_size` chunks, so a credential split across several tokens
-is still caught, and `stream_first: false` means a credential in the final chunk
-is seen before it is released.
-
-### `mask sensitive data on output` — masks the complete answer, buffered
-
-Presidio-backed PII masking. **Measured behaviour in nemoguardrails 0.21**, not
-assumed — `agent/verify_output_guardrails.py` asserts all of it:
-
-* `entities` is the only key the masking action reads.
-* Each match is replaced with `<ENTITY_TYPE>`. There is no configurable mask
-  token: `mask_token` is declared in the Guardrails config schema and read
-  nowhere in the package, so it is not set in `config.yml`.
-* The confidence floor is Guardrails' own hardcoded **0.4**. The configured
-  `score_threshold: 0.6` is **not** passed to Presidio by `mask_sensitive_data`
-  (only by `detect_sensitive_data`, which this policy does not use). It is kept
-  as a declaration of intent and would become live if a detect rail were added.
-
-NeMo's own streaming rail runner (`stream_async`) can only use an action's
-return value to decide blocked/not-blocked, never to rewrite text — that is a
-property of NeMo 0.21 itself, unrelated to anything fixable in this repository.
-So when this flow is enabled, `TextGuardrailsMiddleware` does not call
-`stream_async` for output evaluation at all: it dispatches to
-`_stream_with_buffered_masking`, which buffers the complete streamed answer,
-runs the same masking evaluation (`generate_async`, the blocking-capable path)
-over it exactly once, and only then releases the masked result. This is
-deliberate: an entity can straddle any two adjacent model-token chunk
-boundaries, so the complete answer is the only boundary that is always safe to
-mask against, and nothing is released until that evaluation has finished — a
-masked, blocked, or errored outcome never has an unmasked prefix already sent
-to the client. The trade is latency: the client waits for the whole answer
-instead of seeing it token by token. `GUARDRAILS_PII_MAX_BUFFER_CHARS` (default
-200000) bounds how much is buffered; a response over that limit is refused
-outright rather than released partially masked or unmasked.
-
-Disabling this flow (leaving only `regex check output` in `output.flows`)
-returns output evaluation to the fully-streamed, low-latency path — credential
-blocking alone does not need buffering, since it only needs to decide
-block/no-block, never to rewrite text. The two flows are independent switches;
-enabling or disabling one does not change the other's availability, only
-which dispatch path the middleware uses for output evaluation as a whole (see
-`TextGuardrailsMiddleware._pii_masking_enabled`).
-
-`PERSON` and `ORGANIZATION` are deliberately absent from the entity list: names
-are part of the ticket-triage workflow, and masking them would destroy the answer.
-
 ## What the LLM verdict actually is
 
-The self-check prompt demands `Yes` or `No`, and `output_parser: is_content_safe`
-turns that into a decision. That parser's real behaviour in nemoguardrails 0.21
-is asserted by `verify_input_guardrails.py` rather than assumed, because the LLM
-half of the input rail rests entirely on it:
+The self-check prompt demands `Yes` or `No`, and
+[`classifier_says_safe`](../agent/src/guardrails/input.rs) turns the reply into
+a decision. It reproduces NeMo Guardrails 0.21's `is_content_safe` parser,
+which the retired NAT agent used, so the verdict means the same thing it did
+before the migration. Its behaviour is pinned by the unit test
+`the_verdict_parser_matches_nemo_0_21` rather than assumed, because the LLM half
+of the input rail rests entirely on it:
 
-* it normalises the response, keeps the **first two tokens**, and matches them
-  against `safe`, `unsafe`, `yes`, `no` — token membership, not substring;
+* it lower-cases the reply, collapses every run of non-word characters to one
+  space, keeps the **first two tokens**, and matches them against `safe`,
+  `unsafe`, `yes`, `no` — token membership, not substring;
 * **anything it does not recognise is unsafe.** An empty response, a refusal, a
   reply in another language and `Maybe` all block. This is the property that
-  matters, and it is the opposite of the default NAT's own content-safety
-  middleware used until 1.9, which returned "safe" on any parse failure;
+  matters;
 * the four keywords are tested in the order above, so a response whose first two
   tokens contain the bare word `safe` parses as safe even when negated —
   **`Not safe` parses as safe.**
@@ -120,10 +120,16 @@ bounds the reply to roughly one word, and the deterministic critical-pattern
 layer blocks the high-risk categories without consulting the model at all. If
 any of those is relaxed, this parser stops being safe to rely on alone.
 
+The classifier is the general instruct model with a self-check prompt, not a
+dedicated guard model; replacing it is listed in
+[LIMITATIONS.md](LIMITATIONS.md#before-production).
+
 ## Input length bound
 
 The user text is measured before the guard model is asked anything. Over
-`GUARDRAILS_INPUT_MAX_CHARS` (32,000 by default) the request is refused.
+`GUARDRAILS_INPUT_MAX_CHARS` (32,000 characters by default, floor 256) the
+request is refused with `GUARDRAILS_INPUT_OVERSIZE_MESSAGE` and
+`decision_source = deterministic_input_limit`.
 
 Refused, never truncated. A classifier shown a prefix decides about the prefix,
 so truncating would let 32k of benign text followed by the real request be
@@ -132,99 +138,23 @@ request from being the most expensive one to serve: the guard model runs on
 every request, ahead of all other work.
 
 `max_history: 20` in the workflow bounds the number of turns, not their length,
-so it is not a substitute. This mirrors what NAT 1.9 added to its own
-content-safety middleware (`max_content_length`), which this template does not
-otherwise use — see below.
+so it is not a substitute.
 
-## NAT's own defense middleware: assessed, not adopted
+## Output rails
 
-NAT ships a `defense` middleware family (`content_safety_guard`, `pii_defense`,
-`output_verifier_tools`, `pre_tool_verifier`) that overlaps these rails. 1.9
-improved two of them — the content guard became fail-closed with exact verdict
-parsing and a bounded input, and `output_verifier_tools` gained `fail_closed`.
-Each was assessed against what is already here:
+Two deterministic rails, applied **while the answer streams**, and they do
+different things: secret patterns block, PII entities are masked. Only
+assistant text from Rig's stream is a candidate for release; reasoning
+fragments and tool-call arguments are never streamed to the client.
 
-| Component | Verdict |
-| --- | --- |
-| `content_safety_guard` | **Not adopted yet.** Its 1.9 fixes (fail-closed, exact verdicts, bounded input) are improvements this template already had by other means — the rail above re-raises on guard-model error and now bounds its input. Adopting it would require a real guard model returning `Safe`/`Unsafe`/`Controversial` (Nemoguard, Qwen Guard) rather than the general instruct model the self-check prompt targets. Worth doing together with the dedicated guard model that [LIMITATIONS.md](LIMITATIONS.md) already lists under "before production", not before it. |
-| `pii_defense` | **Not adopted.** Tempting, because it honours `score_threshold` — which the pinned NeMo masking action ignores, and which is this template's one documented masking gap. But it joins buffered chunks with `str(chunk)`, the exact defect `text_guardrails` exists to correct, and on `redirection` it yields a bare string in place of a `ChatResponseChunk`, which breaks the SSE wire format. It also buffers without any ceiling, where `GUARDRAILS_PII_MAX_BUFFER_CHARS` refuses rather than releasing partially-masked text. Revisit if NAT fixes chunk handling. |
-| `output_verifier_tools` | **Not applicable.** It asks an LLM whether a tool result is correct. The tools here are parameterized SQL reads whose correctness is not in question; the risk this template guards is disclosure, which the regex and masking rails cover. |
-| `pre_tool_verifier` | **Not adopted.** It screens tool *inputs* for injection using an LLM. Tool inputs here are a status filter and a ticket id, validated by the MCP server's schema, and the read-only deployment has no mutation to protect. The injection risk is in ticket *content* flowing back to the model, which is addressed in the system prompt's untrusted-data rule rather than by re-classifying tool arguments. |
+### A bounded streaming window
 
-The common reason three of these do not fit is structural rather than
-incidental: they are *function* middleware acting on individual tool calls,
-while the rails here act at the workflow's input and output boundary, which is
-where "what the user asked" and "what the user received" are actually defined.
-
-## Compatibility with the pinned release
-
-`nvidia-nat-security[guardrails]==1.9.0` constrains `nemoguardrails` to
-`>=0.11,<0.22`, so the pin is 0.21.0. **The 1.9 upgrade did not change this** —
-the requirement is byte-identical to 1.8.0's, and so is
-`nemo_guardrails_middleware.py` itself. That release has three defects on the
-streaming path, all fixed upstream in 0.23.0:
-
-1. `detect_regex_pattern` is declared with no `output_mapping`, so NeMo's
-   `is_output_blocked` falls back to a default that returns `False` for its dict
-   result — **a match never blocks the stream**;
-2. `detect_regex_pattern` and `mask_sensitive_data` are declared
-   `(source, text, config)` while the streaming runner always injects `context`,
-   `llm_task_manager`, `model_name`, `llms` and `llm` — **a `TypeError` before
-   any check runs**;
-3. `_prepare_params` resolves the `$bot_message` placeholder **in place** into
-   the shared, process-wide flow configuration, so the first streamed response
-   permanently rewrites it and every later request re-checks the first request's
-   text.
-
-`agent/src/nat_streaming_react/guardrails_compat.py` fixes all three from
-application code, without modifying the installed package: corrected action
-declarations registered through `LLMRails.register_action` (delegating the logic
-itself upstream), a flow-parameter guard, and a pool of isolated rails
-instances.
-
-The pool exists because the guard is only enough for one request at a time. NeMo
-resolves the placeholder into the instance's flow config *while* streaming, so
-with two responses in flight one stream's chunks get checked against the other's
-text. `verify_guardrails_rails.py` asserts that a single stream destroys the
-shared placeholder, which is the deterministic root cause of that race.
-
-**Removal condition:** every helper self-disables once the installed action
-declares what it needs. Delete the module when `nvidia-nat-security` relaxes its
-Guardrails pin to `>=0.23` and `requirements.txt` is upgraded.
-
-## On the Rig implementation
-
-The same layers, as plain Rust in
-[`agent/src/guardrails/`](https://github.com/cognokratos/simple-agent-template/tree/rust-agent/agent/src/guardrails), run by
-[`input_rail.rs`](https://github.com/cognokratos/simple-agent-template/blob/rust-agent/agent/src/agent/input_rail.rs) and
-[`execution.rs`](https://github.com/cognokratos/simple-agent-template/blob/rust-agent/agent/src/agent/execution.rs). Each is explicit about
-whether its decision is probabilistic.
-
-| Layer | Decides | Kind | Relation to NAT |
-| --- | --- | --- | --- |
-| input | whether the request reaches the agent model | patterns + one **probabilistic** classifier call, combined deterministically | equivalent; fails closed if the classifier is unreachable |
-| tool | whether a proposed tool call runs | deterministic | no NAT counterpart ([SECURITY.md](SECURITY.md#tool-authority)) |
-| output — secrets | whether the rest of the answer is released | deterministic | equivalent |
-| output — PII | which spans are masked | deterministic | **narrower** |
-
-### Input
-
-[`guardrails/input.rs`](https://github.com/cognokratos/simple-agent-template/blob/rust-agent/agent/src/guardrails/input.rs) carries the same
-critical patterns (Python's `re.IGNORECASE | re.DOTALL` is `(?is)`), the same
-anchored allow templates, the same precedence and the same `decision_source`
-strings; the decision event has the same name. The classifier is one model call
-with the `self_check_input` prompt — byte-identical to the NAT one — as a single
-user message at temperature 0.001, and its reply is parsed exactly as NeMo
-0.21's `is_content_safe` does (read from the 0.21 source), including the
-pinned `Not safe` hazard described [above](#what-the-llm-verdict-actually-is).
-The client-supplied-history rule and the input length bound are identical.
-
-### Output: a bounded streaming window
-
-A secret can straddle any chunk boundary. The Rig agent's
-[`StreamingOutputGuard`](https://github.com/cognokratos/simple-agent-template/blob/rust-agent/agent/src/guardrails/output.rs) never releases a
-character until 320 more have arrived behind it, and scans the held text
-together with the last 512 characters already released:
+A secret can straddle any chunk boundary: checking each chunk alone would
+release `sk-abc` in one chunk and `def…` in the next, each innocent.
+[`StreamingOutputGuard`](../agent/src/guardrails/output.rs) therefore never
+releases a character until 320 more have arrived behind it
+(`HOLDBACK_CHARS`), and scans the held text together with the last 512
+characters already released (`LOOKBEHIND_CHARS`):
 
 ```text
    released (raw kept as look-behind)    |  held back (not yet sent)
@@ -234,76 +164,113 @@ together with the last 512 characters already released:
 
 Every pattern's minimal match is far shorter than the hold-back, so a match is
 in view before any of it could be released; the release cut never splits a PII
-entity. A secret match stops the stream: what was held is dropped and a notice
-is sent instead. The limit, stated plainly: a match whose own span exceeds the
-window can be missed — the same class of bound as NeMo's rolling chunk window.
+entity. The limit, stated plainly: a match whose own span exceeds the window
+(for example a keyword separated from its value by hundreds of spaces) can be
+missed.
 
-### Output: PII — narrower than Presidio
+### Secrets — block
 
-The same entity list and the same `<ENTITY_TYPE>` replacement, from a
-**different detector**: [`guardrails/pii.rs`](https://github.com/cognokratos/simple-agent-template/blob/rust-agent/agent/src/guardrails/pii.rs) is
-pattern matching tightened with checksums (Luhn for cards, mod-97 for IBANs,
-Base58Check and Bech32 for Bitcoin addresses, area/group/serial rules for SSNs).
-This is **not** Presidio and is not claimed to be. Checksums make it stricter
-for entities that have one; for free-form entities — phone numbers in layouts
-other than international `+CC …` and North American `3-3-4`, and anything
-Presidio finds through context words — it will miss what Presidio would catch.
+`guardrails.output.secret_patterns` in [`agent/config.yml`](../agent/config.yml):
+credential shapes (`api_key=…`, `Bearer …`, `AKIA…`, `ghp_…`, `sk-…`,
+private-key headers) and prompt-leakage phrases, matched case-insensitively. A
+match stops the stream: what was held is dropped, and the client receives
+"I can't share the rest of that response because it may contain sensitive
+information." in its place. Nothing further is released, and dropping the
+model stream cancels the rest of the run. Text released *before* the match
+stays released; the hold-back is what makes sure none of the match was in it.
+
+### PII — mask
+
+`guardrails.output.pii_entities` lists the entities to mask; each match is
+replaced with `<ENTITY_TYPE>` (`<EMAIL_ADDRESS>`, `<PHONE_NUMBER>`, …). The
+detector is [`guardrails/pii.rs`](../agent/src/guardrails/pii.rs): pattern
+matching tightened with checksums (Luhn for cards, mod-97 for IBANs,
+Base58Check and Bech32 for Bitcoin addresses, area/group/serial rules for
+SSNs). It is **not** an NER model. Checksums make it strict for entities that
+have one; for free-form entities — phone numbers in layouts other than
+international `+CC …` and North American `3-3-4` — it misses what a
+context-aware detector would catch. This narrowing against the retired agent's
+Presidio is recorded in [LIMITATIONS.md](LIMITATIONS.md) and
+[FRAMEWORK-MIGRATION.md](FRAMEWORK-MIGRATION.md#output-guardrails-and-pii).
+
 What the narrowing buys is a model-free output path: masking runs inside the
-streaming window, so the answer is not buffered whole as it is on NAT, and an
-answer over `GUARDRAILS_PII_MAX_BUFFER_CHARS` is cut with a notice rather than
-refused before release.
+streaming window, so the answer is never buffered whole and still streams.
+
+`PERSON` and `ORGANIZATION` are deliberately absent from the entity list: names
+are part of the ticket-triage workflow, and masking them would destroy the
+answer. They are also not supported by the detector, and an entity name it does
+not recognise stops startup rather than being silently ignored.
+
+### Oversized answers
+
+`GUARDRAILS_PII_MAX_BUFFER_CHARS` (default 200,000) bounds one streamed answer.
+Over it, the stream stops with "The response was too large to safely apply
+output protection and the rest was withheld." What was already released stays
+released; nothing past the bound is sent.
 
 ### Tool results shown to people
 
-Output rails on NAT protect assistant text only; tool steps reach the UI's tool
-card and the trace unfiltered. The Rig agent redacts secrets and masks PII in
-the *display copy* of every tool result
-(`OutputPolicy::redact_for_display`); the model still receives the raw record.
-
-### What has no counterpart
-
-The NeMo compatibility module and the rails-instance pool described above do
-not exist on `rust-agent`: no rail state is shared between requests, so
-`GUARDRAILS_RAIL_POOL_SIZE` is not read. An unrecognised boolean in a
-guardrail switch **stops startup** there, rather than keeping the default.
+Output rails on assistant text alone would leave the UI's tool card and the
+trace as a side channel. The agent therefore redacts secrets (`[REDACTED]`) and
+masks PII in the *display copy* of every tool result
+(`OutputPolicy::redact_for_display`) — the copy sent in `TOOL_END` events and
+recorded on the `tickets_mcp__<tool>` span. The model still reasons over the
+raw record.
 
 ## Configuration
+
+Behaviour in [`agent/config.yml`](../agent/config.yml) (baked into the image;
+`make rebuild-agent` after a change):
+
+| Key | Effect |
+| --- | --- |
+| `guardrails.prompts` | must contain the `self_check_input` task; its `max_tokens` bounds the classifier reply |
+| `guardrails.output.secret_patterns` | blocking patterns; must not be empty, and one that does not compile stops startup |
+| `guardrails.output.pii_entities` | entities to mask; an unknown name stops startup; `[]` disables masking |
+
+Switches and messages in the environment:
 
 | Variable | Default | Effect |
 | --- | --- | --- |
 | `GUARDRAILS_INPUT_DETERMINISTIC_FALLBACK` | `true` | Deterministic critical-pattern blocking |
 | `GUARDRAILS_INPUT_READ_ONLY_ALLOW_OVERRIDE` | `true` | Allow templates may correct an LLM false positive |
-| `GUARDRAILS_INPUT_BLOCK_MESSAGE` | a refusal | What a blocked user sees |
+| `GUARDRAILS_INPUT_BLOCK_MESSAGE` | a refusal | What a user blocked by a deterministic layer sees |
 | `GUARDRAILS_INPUT_MAX_CHARS` | `32000` | Ceiling on the user text handed to the guard model; a longer message is refused, never truncated. Floor of 256. |
 | `GUARDRAILS_INPUT_OVERSIZE_MESSAGE` | a refusal | What a user over that bound sees |
-| `GUARDRAILS_RAIL_POOL_SIZE` | `4` | Concurrent rail evaluations before queueing |
-| `GUARDRAILS_TRACE_CAPTURE_CONTENT` | `true` | Prompt/answer text on guardrail spans |
+| `GUARDRAILS_PII_MAX_BUFFER_CHARS` | `200000` | Ceiling on one streamed answer; over it the rest is withheld. Floor of 1024. |
+| `GUARDRAILS_TRACE_CAPTURE_CONTENT` | `true` | The user message (`guardrail.user_input`) and the classifier reply (`guardrail.llm.response`) on the input-rail span |
+| `GUARDRAILS_TRACE_MAX_CHARS` | `16384` | Bound on `guardrail.user_input` |
 | `GUARDRAILS_TRACE_CAPTURE_RAW_OUTPUT` | `false` | See below |
-| `GUARDRAILS_TRACE_MAX_CHARS` | `16384` | Per-attribute bound |
-| `GUARDRAILS_PII_MAX_BUFFER_CHARS` | `200000` | Ceiling on a streamed answer buffered for PII masking; an answer over this is refused, not released unmasked. Only relevant when `mask sensitive data on output` is enabled. |
 
-Every boolean is parsed strictly: an unrecognised value keeps the declared
-default and logs a warning. It used to become `False`, which for
-`GUARDRAILS_INPUT_DETERMINISTIC_FALLBACK` meant a typo silently switched off the
-deterministic block patterns.
+Every boolean is parsed strictly: `true`/`false`, `1`/`0`, `yes`/`no`,
+`on`/`off`. Anything else **stops startup**. A typo in
+`GUARDRAILS_INPUT_DETERMINISTIC_FALLBACK` must not silently switch off the
+deterministic block patterns, and keeping a default while a warning scrolls past
+in a log is not much better.
 
-`GUARDRAILS_TRACE_CAPTURE_RAW_OUTPUT` stays `false`: pre-mask output contains
-exactly the PII or secret the rails exist to stop, and enabling it writes that
-text into the trace backend.
+`GUARDRAILS_TRACE_CAPTURE_RAW_OUTPUT` stays `false`. It is parsed (so a typo
+still stops startup), but the output-rail span records counts and indices only,
+never the matched or pre-mask text, so there is no raw output for it to enable.
+Pre-rail model text can reach a span only through Rig's own model spans, which
+`AGENT_TRACE_CAPTURE_MODEL_CONTENT` governs and which is also off by default
+([OBSERVABILITY.md](OBSERVABILITY.md#what-never-reaches-a-span)).
 
 ## Verifying it
 
 ```
-make verify-input-guardrails    # decision precedence, history forgery, env parsing
-make verify-output-guardrails   # config invariants, patterns, masking behaviour
-make verify-rails               # the rails end to end
+make verify-input-guardrails    # precedence, history forgery, verdict parsing, switches, config parsing
+make verify-output-guardrails   # streamed release, cross-chunk secret blocking, PII masking
+make verify-rails               # both rails end to end through the real service
 make verify-guardrails          # all three
 ```
 
-The targets have the same names on both branches. On NAT they run inside the
-agent container; on Rig they run the agent's Rust tests on the host, including
-every two-way split of a secret across chunks and the repository's own
-guardrail fixtures.
-
-`verify-rails` runs the deployed policy against a deterministic fake rail LLM, so
-what is under test is the rail wiring rather than the model. It needs no network.
+All of them are the agent's Rust tests, run on the host with no cluster and no
+model. The unit tests cover every two-way split of a secret across chunks, a
+secret streamed one character at a time, and the repository's own guardrail
+fixtures (`db/guardrail_test_fixtures.sql`). `verify-rails` runs the
+integration suite `agent_loop`, which drives the real service against a fake
+OpenAI-compatible endpoint and an in-process MCP server, so what is under test
+is the rail wiring rather than the model: a classifier block stops the request
+before the agent model, an unreadable verdict fails closed, oversized input is
+refused, a secret split across model chunks is never released, and tool
+results shown to the client are redacted.

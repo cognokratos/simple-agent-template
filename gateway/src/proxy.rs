@@ -147,7 +147,7 @@ pub fn validate_chat_request(
 /// * here: shape, size and encoding. A body that is too large, an option with
 ///   an unbounded label, or a field the schema does not declare never reaches
 ///   the agent.
-/// * in the agent (`nat_streaming_react.approval`): the submitted option id is
+/// * in the agent (`agent/src/approval/pending.rs`): the submitted option id is
 ///   checked against the options that *this* pending interaction actually
 ///   offered, for the authenticated user who owns that execution.
 ///

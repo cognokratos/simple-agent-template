@@ -4,10 +4,10 @@ Every variable has a working default in `docker-compose.yml`, so `make dev`
 starts without setting any of them. `.env.example` documents the ones that
 matter.
 
-Both agent implementations read the **same variable names**, including the
-historical `NAT_*` ones, so the two branches' configurations compare line by
-line. Where the Rig agent on `rust-agent` reads or interprets something
-differently, [On the Rig implementation](#on-the-rig-implementation) says so.
+Secrets and endpoints come from the environment; the agent's behaviour comes
+from [`agent/config.yml`](#agent-behaviour-agentconfigyml). Three variables were
+renamed when the Rust agent became canonical; the old names still work for now
+([renamed variables](#renamed-variables)).
 
 ## Model endpoint
 
@@ -35,12 +35,14 @@ classifies input, and vice versa.
 
 ### `qwen3:8b` and the prioritization prompt
 
-> **On the Rig implementation** the same model answered this prompt correctly
+> **With the current Rig agent** the same model answered this prompt correctly
 > from a single `search_tickets` call in the runs observed, and the evaluation
 > suites passed at their gates. That is an observation from a handful of runs,
 > not evidence that the runtime fixed a model limitation: the model and prompt
 > are the same, but the two clients build different request bodies. What
-> follows was observed with the NAT agent.
+> follows was observed with the retired NAT agent
+> ([FRAMEWORK-MIGRATION.md](FRAMEWORK-MIGRATION.md#what-was-measured)); keep it in
+> mind when a small model stops mid-trajectory.
 
 In repeated local testing against this support-ticket example, `qwen3:8b`
 answers the single-tool and no-tool demonstration prompts correctly and
@@ -70,66 +72,104 @@ set) and `make dev`. This is not a recommendation to change the shipped
 default — `qwen3:8b` remains what the template ships and is smaller/cheaper to
 run — only a confirmed working alternative for this specific prompt.
 
-### Why "empty means omitted" needed code
+### Empty means omitted
 
 `reasoning_effort` is not universally valid: local Qwen3 needs
 `reasoning_effort: none` to suppress thinking (without it the short Yes/No
 guardrail classification breaks), while many OpenAI-compatible endpoints reject
-the parameter outright.
+the parameter outright. So a set-but-empty `LLM_REASONING_EFFORT` (or
+`LLM_GUARD_REASONING_EFFORT`) means *do not send the parameter at all*. Compose
+preserves the emptiness with `${LLM_REASONING_EFFORT-none}` (`-`, not `:-`), the
+agent parses it into `None` ([`config.rs`](../agent/src/config.rs)), and
+`reasoning_effort` is sent only when it is `Some`
+([`agent/model.rs`](../agent/src/agent/model.rs)).
 
-NAT's YAML interpolation cannot express absence. `${VAR:-default}` always
-produces a string, for both an unset and an explicitly empty variable, and
-`OpenAIModelConfig` allows extra fields and forwards any key written in the YAML.
-Writing `reasoning_effort: ${LLM_REASONING_EFFORT:-null}` does not omit the
-parameter — it sends the four-character string `"null"`, which is worse than
-sending nothing, because it is a value the provider must reject. Measured:
+Absence is a value worth modelling explicitly. The retired NAT agent needed a
+custom provider for the same rule, because its YAML interpolation could not
+express it and sent the string `"null"` instead; see
+[FRAMEWORK-MIGRATION.md](FRAMEWORK-MIGRATION.md#model-client).
 
-```
-explicit 'null'  -> reasoning_effort in client kwargs: True   value='null'
-explicit ''      -> reasoning_effort in client kwargs: True   value=''
-explicit 'none'  -> reasoning_effort in client kwargs: True   value='none'
-omitted          -> reasoning_effort in client kwargs: False
-```
+The model client is Rig's generic OpenAI dialect on Chat Completions, with
+strict tool mode off (it would mark optional parameters required); verified
+against Ollama with `qwen3:8b`.
 
-So `agent/src/nat_streaming_react/llm_config.py` registers an
-`openai_optional_params` provider that drops empty optional parameters before
-pydantic records them as set. `TextGuardrailsMiddlewareConfig` applies the same
-rule to the guard model's `extra_body`.
+## Agent behaviour (`agent/config.yml`)
 
-## On the Rig implementation
-
-Behaviour comes from `agent/config.yml`, whose layout differs from NAT's (the
-prompts in it are byte-identical): `workflow.system_prompt`,
-`tools.mcp.include` and `tools.mcp.overrides`, `tools.approval` (commented out
-by default), `guardrails.prompts`, `guardrails.output.secret_patterns` and
-`guardrails.output.pii_entities`. Unknown keys are refused, and the file is
-baked into the image, so edit it and `make rebuild-agent`. Typed parsing is in
-[`config.rs`](https://github.com/cognokratos/simple-agent-template/blob/rust-agent/agent/src/config.rs).
+Behaviour comes from `agent/config.yml`: `workflow.system_prompt` and the loop
+bounds, `tools.mcp.include` and `tools.mcp.overrides`, `tools.approval`
+(commented out by default), `guardrails.prompts`,
+`guardrails.output.secret_patterns` and `guardrails.output.pii_entities`.
+Unknown keys are refused, and the file is baked into the image, so edit it and
+`make rebuild-agent`. Typed parsing is in [`config.rs`](../agent/src/config.rs).
 
 **Fail fast.** Any security-relevant setting that does not parse stops startup:
-a missing credential, a short approval secret, an unrecognised boolean (NAT
-keeps the default and warns), a partially enabled approval feature, a secret
-pattern that does not compile, an unknown PII entity, or an MCP tool schema the
-agent cannot enforce.
+a missing credential, a short approval secret, an unrecognised boolean, a
+partially enabled approval feature, a secret pattern that does not compile, an
+unknown PII entity, an MCP tool schema the agent cannot enforce, or a renamed
+variable whose old and new names disagree.
 
-**Empty means omitted** is one `Option` there: a set-but-empty
-`LLM_REASONING_EFFORT` becomes `None`, and `reasoning_effort` is sent only when it
-is `Some` ([`agent/model.rs`](https://github.com/cognokratos/simple-agent-template/blob/rust-agent/agent/src/agent/model.rs)). The model client is
-Rig's generic OpenAI dialect on Chat Completions, with strict tool mode off
-(it would mark optional parameters required); verified against Ollama with
-`qwen3:8b`.
-
-| Rig-only setting | Default | Effect |
+| Agent setting | Default | Effect |
 | --- | --- | --- |
 | `HITL_INTERACTION_TIMEOUT_SECONDS` | `600` | a pending approval older than this counts as cancelled (floor 5) |
+| `AGENT_TRACE_CAPTURE_CONTENT` | `true` | readable question and answer on the request's root span ([OBSERVABILITY.md](OBSERVABILITY.md)) |
+| `AGENT_TRACE_CONTENT_MAX_CHARS` | `65536` | bound on that content (floor 256) |
 | `AGENT_TRACE_CAPTURE_MODEL_CONTENT` | `false` | Rig's own prompt/completion span content |
 | `AGENT_CONFIG_PATH`, `AGENT_BIND_ADDRESS` | `/app/config.yml`, `0.0.0.0:8000` | |
 | `AGENT_RUST_LOG` | `tickets_agent=info,warn` | the agent container's `RUST_LOG` (container log only) |
 
-Read by NAT and ignored by Rig: `GUARDRAILS_RAIL_POOL_SIZE` (no rails pool) and
-`HITL_STRICT_INTERACTION_OWNERSHIP` (ownership is always enforced). The trusted
-identity header is a constant in the Rig agent rather than NAT's
-`general.front_end.identity_header`.
+Accepted and without effect: `HITL_STRICT_INTERACTION_OWNERSHIP` (ownership is
+always enforced; `false` prints a startup warning). The trusted identity header is the
+constant `x-authenticated-user-id` ([`identity.rs`](../agent/src/identity.rs)),
+not a setting.
+
+## Renamed variables
+
+The agent's environment once used the names of the NeMo Agent Toolkit runtime
+it was first built on. They were renamed to agent-neutral names when the Rust
+agent became canonical:
+
+| Current name | Deprecated alias | Where the old name lived |
+| --- | --- | --- |
+| `AGENT_API_KEY` | `NAT_GATEWAY_API_KEY` | inside the agent container only; users always set `AGENT_API_KEY`, which Compose passed to the gateway and evaluator under that name and to the agent as `NAT_GATEWAY_API_KEY` |
+| `AGENT_TRACE_CAPTURE_CONTENT` | `NAT_TRACE_CAPTURE_CONTENT` | user-facing: `.env` and the agent container |
+| `AGENT_TRACE_CONTENT_MAX_CHARS` | `NAT_TRACE_CONTENT_MAX_CHARS` | user-facing: `.env` and the agent container |
+
+How an alias is resolved depends on where it is set.
+
+**In the agent process** (its own environment: a container run without this
+Compose file, Kubernetes, or a local `cargo run`), the agent sees both names
+and applies one rule, explicit and tested (`config::RENAMED` in
+[`config.rs`](../agent/src/config.rs)):
+
+1. the current name, when set and non-blank, always wins;
+2. otherwise the deprecated alias is used, and startup prints a deprecation
+   warning naming the replacement to stderr (`tickets-agent warning: …`;
+   configuration is read before tracing starts);
+3. if both are set to **different** values, the agent refuses to start: one of
+   them is a stale credential or setting that someone believes is in effect.
+
+**Through this Compose file**, the agent container receives only the current
+names; `make security-config-test` fails if it ever receives a deprecated one.
+
+* The two trace variables are resolved in `docker-compose.yml` before the
+  agent sees them:
+  `${AGENT_TRACE_CAPTURE_CONTENT:-${NAT_TRACE_CAPTURE_CONTENT:-true}}`. An old
+  `.env` that sets only `NAT_TRACE_*` keeps working, but silently: the agent
+  receives an `AGENT_*` value and prints no deprecation warning. If `.env` sets
+  both names to different values, Compose takes the `AGENT_*` one; the agent
+  cannot see the conflict, so it is not rejected. Rename them in `.env`.
+* The service key was never a host-side `NAT_*` variable. Compose reads
+  `AGENT_API_KEY` from `.env` and now passes it to the agent under the same
+  name, so the gateway, the evaluator and the agent provably share one value
+  (`make security-config-test` asserts it). A `NAT_GATEWAY_API_KEY` in `.env` is
+  ignored by Compose, as it always was.
+
+**Removal.** The aliases exist for one deprecation cycle so existing `.env`
+files and deployments keep working. They will be removed in a later release;
+rename them now. A deployment that sets only the current names is unaffected.
+
+The other environment names (`LLM_*`, `MCP_API_KEY`, `HITL_*`, `GUARDRAILS_*`,
+`OTEL_*`) were already framework-neutral and did not change.
 
 ## Project and volume identity
 
@@ -164,7 +204,7 @@ changes.
 | Variable | Default | Notes |
 | --- | --- | --- |
 | `MCP_API_KEY` | dev value | agent → MCP |
-| `AGENT_API_KEY` | dev value | gateway/evaluator → agent (both agents read it as `NAT_GATEWAY_API_KEY`) |
+| `AGENT_API_KEY` | dev value | gateway/evaluator → agent; deprecated alias `NAT_GATEWAY_API_KEY` ([renamed variables](#renamed-variables)) |
 | `KEYCLOAK_GATEWAY_CLIENT_SECRET` | dev value | |
 | `GATEWAY_COOKIE_SECURE` | `false` | Set `true` behind TLS. Parsed strictly — a typo is an error, not silently `false` |
 | `GATEWAY_SESSION_TTL_SECONDS` | `28800` | |
@@ -173,8 +213,8 @@ changes.
 | `HITL_APPROVAL_SECRET` | **unset** | Unset keeps the stack read-only; see [APPROVALS.md](APPROVALS.md) |
 | `EVALUATION_PRINCIPAL` | `evaluation-harness` | Identity the evaluation harness asserts to the agent. Every direct caller must assert one; see [SECURITY.md](SECURITY.md#the-agent-requires-an-asserted-identity) |
 
-The agent's trusted identity header is set in `agent/config.yml`
-(`general.front_end.identity_header`) rather than by environment variable,
+The agent's trusted identity header is a constant in
+[`identity.rs`](../agent/src/identity.rs) rather than an environment variable,
 because it is a property of the deployment's trust boundary rather than a knob:
 changing it means changing which header the agent believes, and that only makes
 sense together with the proxy that mints it.

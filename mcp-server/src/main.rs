@@ -373,7 +373,7 @@ async fn run() -> anyhow::Result<()> {
         LocalSessionManager::default().into(),
         StreamableHttpServerConfig::default()
             // RMCP rejects non-loopback Host headers by default to protect
-            // local servers from DNS rebinding. NAT connects through Docker
+            // local servers from DNS rebinding. The agent connects through Docker
             // using Host: mcp-server:8080, so allow only the expected Docker
             // service names and local development hosts.
             .with_allowed_hosts(allowed_hosts.clone())

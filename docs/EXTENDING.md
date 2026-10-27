@@ -9,8 +9,8 @@ what is meant to be inherited unchanged.
 | --- | --- |
 | `db/init.sql` | your schema and seed data |
 | `mcp-server/src/main.rs` tool functions | your read-only tools |
-| NAT (`main`): `agent/config.yml` — `system_prompt`, `tool_names`, `include`, rail prompts, allow templates | your prompt and tool surface |
-| Rig (`rust-agent`): `agent/config.yml` — `workflow.system_prompt`, `tools.mcp.include` and `overrides`, rail prompt, output patterns and PII entities; `agent/src/guardrails/input.rs` — `CRITICAL_PATTERNS`, `ALLOW_TEMPLATES` | the same, in the Rig agent's layout |
+| `agent/config.yml` — `workflow.system_prompt`, `tools.mcp.include` and `overrides`, `guardrails.prompts`, `guardrails.output` secret patterns and PII entities | your prompt, tool surface and rail policy |
+| `agent/src/guardrails/input.rs` — `CRITICAL_PATTERNS`, `ALLOW_TEMPLATES` | your deterministic input policy |
 | `evaluation/datasets/*.json` | your cases |
 | `db/*_test_fixtures.sql` | your guardrail and injection fixtures |
 | `ui/app/page.tsx` welcome copy | your examples |
@@ -20,54 +20,41 @@ what is meant to be inherited unchanged.
 Everything else, and in particular:
 
 * the gateway, entirely — OIDC, sessions, CSRF, proxying, stream limits;
-* `fastapi_worker.py`, `interaction_guard.py`, `llm_config.py`,
-  `guardrails_compat.py`, `observability/`, `provenance.py` (NAT); on Rig, the
-  agent crate apart from the sample tables above;
+* the agent crate apart from the sample entries above — see
+  [what the agent modules are for](#what-the-agent-modules-are-for);
 * the approval token format and both verifiers;
 * the evaluation harness, scorers and provenance;
 * the Compose topology and its checks.
 
-## What each local module compensates for
+## What the agent modules are for
 
-None of these are preferences. Each exists because NAT or NeMo Guardrails does
-something specific that this deployment cannot use as shipped, and each names
-the upstream change that would let it be deleted. Checked against NAT 1.9.0:
-**every one still applies**, which is why upgrading from 1.8 removed none of
-them.
+None of these are workarounds. Nothing patches, wraps or reaches into Rig's
+internals, and no private Rig API is used: the agent owns its request
+lifecycle, and Rig supplies the model client, the tool-calling loop, MCP tool
+adapters and the dispatch hook the policy runs in. Each module is a deliberate
+part of the design. Most of them are where deterministic software keeps
+authority the model does not have — identity, tool access, approvals, state
+transitions — so they are infrastructure, not sample.
 
-| Module | Upstream behaviour it compensates for | Delete when |
-| --- | --- | --- |
-| `register.py` | NAT's ReAct `_stream_fn` buffers tokens until it sees the literal `Final Answer:`. With native tool calling the model returns a normal assistant message instead, so the fallback emits the entire answer as one chunk — no streaming. | The ReAct stream handles native tool calling without the marker |
-| `text_guardrails.py` | NAT's `GuardrailsMiddleware` converts each streamed item with `str(chunk)`. For a `ChatResponseChunk` that serialises the whole Pydantic object instead of the assistant text, so the rails see JSON rather than prose. | The middleware extracts chat content rather than stringifying the chunk |
-| `guardrails_compat.py` | Three streaming-rail defects in nemoguardrails 0.21 (see [GUARDRAILS.md](GUARDRAILS.md)). Fixed upstream in 0.23.0, which the `nvidia-nat-security[guardrails]` pin forbids. | That pin allows `>=0.23` |
-| `interaction_guard.py` | NAT's interaction-response route authorizes on knowledge of two UUIDs. `ExecutionRecord` carries no owner, so any authenticated caller can answer anyone's approval prompt, with any choice the schema permits. | `ExecutionStore` records an owner and the route checks it |
-| `llm_config.py` | NAT's YAML interpolation cannot express *absence*. An optional pass-through parameter such as `reasoning_effort` must be present for one provider and entirely absent for another; `${VAR:-}` always produces a string. | A configured-empty extra is omitted rather than forwarded |
-| `observability/` | NAT exposes no public way to supply the workflow root span id or read the span-attribute prefix, so Guardrails spans would form a second trace. Three private attributes, each listed with its own condition in [OBSERVABILITY.md](OBSERVABILITY.md). | Those three have public equivalents |
-| `fastapi_worker.py` | Partly not a workaround — `runner_class` is a supported extension point, and the service-credential layer exists because NAT *trusts* gateway-injected identity headers. `RequireIdentityHeaderMiddleware` **is** a workaround: NAT 1.9's `identity_header` raises `IdentityHeaderError`, but its interactive runner (used unconditionally for the workflow routes) catches it into a 200 response body, so the refusal never reaches the client. | The credential layer: never. The identity layer: when NAT's refusal produces a real 401 on the workflow routes |
+| Module (`agent/src/`) | What it is |
+| --- | --- |
+| [`agent/execution.rs`](../agent/src/agent/execution.rs), [`agent/builder.rs`](../agent/src/agent/builder.rs) | the request lifecycle; a per-request Rig agent whose tools close over the trusted scope |
+| [`agent/state.rs`](../agent/src/agent/state.rs) | the execution state machine; an illegal transition is an error, not a silent state change |
+| [`agent/hooks.rs`](../agent/src/agent/hooks.rs), [`guardrails/tools.rs`](../agent/src/guardrails/tools.rs), [`mcp/schema.rs`](../agent/src/mcp/schema.rs) | deterministic tool policy (`ToolPolicy::decide`) at Rig's dispatch hook; strict schemas; an exact tool-call budget |
+| [`mcp/`](../agent/src/mcp) | MCP discovery against the allow-list in `agent/config.yml`; tools that are destructive, identity-bearing or unenforceable are refused at startup |
+| [`guardrails/input.rs`](../agent/src/guardrails/input.rs), [`agent/input_rail.rs`](../agent/src/agent/input_rail.rs) | input policy rules and their runner, which fails closed |
+| [`guardrails/output.rs`](../agent/src/guardrails/output.rs), [`guardrails/pii.rs`](../agent/src/guardrails/pii.rs) | streaming output policy: a bounded hold-back window, secret patterns, deterministic PII recognisers |
+| [`approval/`](../agent/src/approval) | the approval gate, the interaction registry with ownership and offered-choice checks, token minting and execution against MCP |
+| [`api/auth.rs`](../agent/src/api/auth.rs), [`identity.rs`](../agent/src/identity.rs) | service key and asserted identity, in that order; `TrustedCaller` never enters the model context |
+| [`config.rs`](../agent/src/config.rs), [`agent/model.rs`](../agent/src/agent/model.rs) | typed, fail-fast configuration; empty means omitted |
+| [`telemetry/`](../agent/src/telemetry) | one tracing model, fixed export filter, `/version` provenance |
 
-Before assuming a module is obsolete after an upgrade, check the actual
-behaviour rather than the release notes: for 1.9, four of the relevant upstream
-files were byte-identical to 1.8.
-
-### On the Rig implementation: what the agent modules are for
-
-The Rig agent on `rust-agent` has no such workarounds: nothing patches, wraps or
-reaches into Rig's internals, and no private Rig API is used. Each module is a
-deliberate part of the design, and the NAT module it corresponds to is noted:
-
-| Module (`agent/src/`) | What it is | NAT counterpart |
-| --- | --- | --- |
-| [`agent/execution.rs`](https://github.com/cognokratos/simple-agent-template/blob/rust-agent/agent/src/agent/execution.rs), [`agent/builder.rs`](https://github.com/cognokratos/simple-agent-template/blob/rust-agent/agent/src/agent/builder.rs) | the request lifecycle; a per-request Rig agent whose tools close over the trusted scope | `register.py` |
-| [`agent/hooks.rs`](https://github.com/cognokratos/simple-agent-template/blob/rust-agent/agent/src/agent/hooks.rs), [`guardrails/tools.rs`](https://github.com/cognokratos/simple-agent-template/blob/rust-agent/agent/src/guardrails/tools.rs), [`mcp/schema.rs`](https://github.com/cognokratos/simple-agent-template/blob/rust-agent/agent/src/mcp/schema.rs) | deterministic tool policy at Rig's dispatch hook; strict schemas | none: tools were NAT configuration |
-| [`guardrails/input.rs`](https://github.com/cognokratos/simple-agent-template/blob/rust-agent/agent/src/guardrails/input.rs), [`agent/input_rail.rs`](https://github.com/cognokratos/simple-agent-template/blob/rust-agent/agent/src/agent/input_rail.rs) | input policy rules and their runner | `text_guardrails.py` (input) |
-| [`guardrails/output.rs`](https://github.com/cognokratos/simple-agent-template/blob/rust-agent/agent/src/guardrails/output.rs), [`guardrails/pii.rs`](https://github.com/cognokratos/simple-agent-template/blob/rust-agent/agent/src/guardrails/pii.rs) | streaming output policy | `text_guardrails.py` (output), `guardrails_compat.py` |
-| [`approval/pending.rs`](https://github.com/cognokratos/simple-agent-template/blob/rust-agent/agent/src/approval/pending.rs) | interaction registry with ownership and offered-choice checks built in | `interaction_guard.py` |
-| [`api/auth.rs`](https://github.com/cognokratos/simple-agent-template/blob/rust-agent/agent/src/api/auth.rs), [`identity.rs`](https://github.com/cognokratos/simple-agent-template/blob/rust-agent/agent/src/identity.rs) | service key and asserted identity, in that order | `fastapi_worker.py` |
-| [`config.rs`](https://github.com/cognokratos/simple-agent-template/blob/rust-agent/agent/src/config.rs), [`agent/model.rs`](https://github.com/cognokratos/simple-agent-template/blob/rust-agent/agent/src/agent/model.rs) | typed, fail-fast configuration; empty means omitted | `llm_config.py` |
-| [`telemetry/`](https://github.com/cognokratos/simple-agent-template/tree/rust-agent/agent/src/telemetry) | one tracing model, fixed export filter, provenance | `observability/`, `provenance.py` |
-
-What `rust-agent` tracks upstream instead is Rig's public API, which moves
-between minor versions ([RUST-BRANCH-MAINTENANCE.md](RUST-BRANCH-MAINTENANCE.md#upgrading-rig)).
+What the agent tracks upstream is Rig's public API, which moves between minor
+versions; the crates are pinned exactly
+([AGENT-INTERNALS.md](AGENT-INTERNALS.md#upgrading-rig)). The retired NAT agent
+needed several modules to work around specific toolkit behaviour; they are
+described at the [`nat-1.9-final`](https://github.com/cognokratos/simple-agent-template/blob/nat-1.9-final/docs/EXTENDING.md#what-each-local-module-compensates-for)
+tag and compared in [FRAMEWORK-MIGRATION.md](FRAMEWORK-MIGRATION.md).
 
 ## Recommended sequence
 
@@ -75,12 +62,12 @@ between minor versions ([RUST-BRANCH-MAINTENANCE.md](RUST-BRANCH-MAINTENANCE.md#
    Rename the crates and the Keycloak realm/client if you want them branded;
    nothing depends on the names beyond the defaults in `docker-compose.yml`.
 2. **Replace the schema and the MCP tools.** Keep them read-only at first.
-3. **Rewrite the prompt and the tool list** in `agent/config.yml`. (Rig: the
-   file is baked into the image — `make rebuild-agent`; a tool schema outside
-   the subset the agent enforces stops startup with the reason.)
+3. **Rewrite the prompt and the tool list** in `agent/config.yml`. The file is
+   baked into the image, so apply it with `make rebuild-agent`; a tool schema
+   outside the subset the agent enforces stops startup with the reason.
 4. **Rewrite the guardrail input policy.** The self-check prompt and the
-   critical patterns (NAT: `_CRITICAL_INPUT_PATTERNS`; Rig: `CRITICAL_PATTERNS`
-   in `agent/src/guardrails/input.rs`) are domain judgements. The read-only allow
+   critical patterns (`CRITICAL_PATTERNS` in `agent/src/guardrails/input.rs`)
+   are domain judgements. The read-only allow
    templates exist to correct LLM false positives on *your* common queries —
    anchor them to the complete message, as the samples are.
 5. **Point the evaluator at your tools:** `EVALUATION_TOOL_NAMES`, new datasets,
@@ -100,15 +87,13 @@ Four edits, and nothing in the token format or verification changes:
    purpose: what a human can authorize is a security property, not configuration.
 2. **Agent** — prompt, collect a rationale when the choice differs from the
    authoritative state, mint, apply:
-   * NAT: a request model and a `@register_function` in `approval.py`,
-     following `ticket_set_priority_approval`;
-   * Rig: a proposal schema and a gate in `agent/src/approval/` (as `mod.rs` and
-     `gate.rs` do), registered as a `ToolSpec` with
-     `ToolEffect::MutationRequiringApproval` in `agent/src/services.rs` and as a
-     tool in `agent/src/agent/builder.rs`; the tool policy then routes it into
-     the gate and nowhere else.
-3. **Config** — NAT: declare the function and add it to `tool_names`; Rig:
-   declare it under `tools.approval` (and in `ApprovalToolsConfig`).
+   a proposal schema and a gate in `agent/src/approval/` (as `mod.rs` and
+   `gate.rs` do), registered as a `ToolSpec` with
+   `ToolEffect::MutationRequiringApproval` in `agent/src/services.rs` and as a
+   tool in `agent/src/agent/builder.rs`; the tool policy then routes it into
+   the gate and nowhere else.
+3. **Config** — declare it under `tools.approval` in `agent/config.yml` (and in
+   `ApprovalToolsConfig` in `agent/src/config.rs`).
 4. **Schema** — whatever the mutation and its audit record need.
 
 The UI needs no change: the approval card renders whatever options the prompt

@@ -1,6 +1,6 @@
-"""Synchronous client for evaluating the live NAT SSE workflow.
+"""Synchronous client for evaluating the live agent SSE workflow.
 
-The evaluator intentionally calls NAT directly with the internal service key.
+The evaluator intentionally calls the agent directly with the internal service key.
 Every evaluation prompt is expected to be read-only, so none of them may enter a
 human-in-the-loop wait; one that does is a defect in the dataset and is raised
 rather than answered. Tool starts and tool ends are captured independently, so
@@ -39,8 +39,14 @@ def _configured_tool_names() -> frozenset[str]:
 
 KNOWN_TOOL_NAMES = _configured_tool_names()
 
-# Event names emitted by nat_streaming_react.text_guardrails. These are magic
-# strings shared across two separately deployed codebases, so an exact-name-only
+# Guardrail decision-event names: part of the agent-service contract
+# (docs/AGENT-SERVICE-CONTRACT.md), inherited from the retired NAT agent
+# (nat-1.9-final) so datasets and scorers did not change with the framework.
+# The Rust agent still emits the input name unchanged
+# (agent/src/agent/input_rail.rs). The output name below is the NAT-era
+# `..._presidio_decision`; the Rust agent emits `..._pii_decision`
+# (agent/src/agent/execution.rs), which the prefix fallback captures. These are magic strings shared across two
+# separately deployed codebases, so an exact-name-only
 # match turns any future rail rename into silent data loss: `output_guardrail`
 # would simply always be None and `guardrail_output_event_present` always False,
 # with nothing failing.
@@ -82,8 +88,9 @@ class ParsedInvocation:
 
     @property
     def tool_calls(self) -> list[dict[str, Any]]:
-        # NAT/LangChain can expose an MCP call as TOOL_* or FUNCTION_*. Prefer
-        # TOOL_* when present; otherwise use the function events. This avoids
+        # An MCP call may be exposed as TOOL_* or FUNCTION_* (the retired NAT
+        # runtime used either). Prefer TOOL_* when present; otherwise use the
+        # function events. This avoids
         # double-counting when both layers happen to be visible.
         return self.tool_starts if self.tool_starts else self.function_tool_starts
 
@@ -206,7 +213,7 @@ def _event_output(payload: dict[str, Any]) -> Any:
 
 
 def _decode_python_content(source: str) -> str | None:
-    """Best-effort fallback for NAT's Python/Pydantic chunk representation."""
+    """Best-effort fallback for the retired NAT runtime's Python/Pydantic chunk repr."""
 
     match = re.search(r"content=(?P<value>'(?:\\.|[^'])*'|\"(?:\\.|[^\"])*\")", source)
     if not match:
@@ -218,10 +225,10 @@ def _decode_python_content(source: str) -> str | None:
     return decoded if isinstance(decoded, str) else None
 
 
-def _parse_nat_output(value: str) -> Any:
-    """Mirror ui/lib/nat-wire.ts: decode JSON containers only, never scalars.
+def _parse_agent_output(value: str) -> Any:
+    """Mirror ui/lib/agent-wire.ts: decode JSON containers only, never scalars.
 
-    NAT's SSE `value` field is assistant text. Scalar-looking chunks such as
+    The agent's SSE `value` field is assistant text. Scalar-looking chunks such as
     "100", "0", "4250.75" or "true" are valid JSON scalars; parsing them changes
     their runtime type and silently drops every such fragment from the
     reconstructed answer, so a grounding scorer sees an answer with no numbers
@@ -255,7 +262,7 @@ def _scalar_text(value: Any) -> str | None:
 
 def _workflow_text(value: Any) -> str:
     if isinstance(value, str):
-        parsed = _parse_nat_output(value)
+        parsed = _parse_agent_output(value)
         if isinstance(parsed, str):
             fallback = _decode_python_content(parsed)
             return fallback if fallback is not None else parsed
@@ -276,7 +283,7 @@ def _workflow_text(value: Any) -> str:
     # "87" arrived here with content already coerced to the int 87, failed the
     # `isinstance(content, str)` extraction below, and the chunk was dropped.
     # Walk the container as it came off the wire and reinterpret strings only at
-    # the leaves, where _parse_nat_output protects scalars.
+    # the leaves, where _parse_agent_output protects scalars.
     if "value" in value:
         return _workflow_text(value["value"])
 
@@ -403,7 +410,7 @@ def _handle_intermediate(parsed: ParsedInvocation, block: str) -> None:
 def _data_line(block: str) -> str | None:
     """Return the `data:` payload of an SSE block, whichever line carries it.
 
-    NAT prefixes some blocks with an `event:` line, so the payload is not always
+    The agent prefixes some blocks with an `event:` line, so the payload is not always
     on the first line of the block.
     """
 
@@ -421,7 +428,7 @@ def _handle_data(parsed: ParsedInvocation, block: str) -> None:
     # _normalize would recursively coerce the inner scalar assistant chunk to
     # int/bool before _workflow_text ever saw it, and a blanket _parse_json here
     # would rewrite an un-enveloped literal chunk such as "1e3" as "1000.0".
-    data = _parse_nat_output(raw)
+    data = _parse_agent_output(raw)
     value = data["value"] if isinstance(data, dict) and "value" in data else data
     text = _workflow_text(value)
     if text:
@@ -475,8 +482,7 @@ def _principal() -> str:
     """The identity this harness asserts to the agent.
 
     The evaluation harness calls the agent directly rather than through the
-    gateway, so no browser login stands behind it. Since NAT 1.9 the agent is
-    configured with ``general.front_end.identity_header`` and answers 401 to a
+    gateway, so no browser login stands behind it. The agent answers 401 to a
     request that asserts no identity, so the harness must name itself.
 
     A synthetic principal rather than a real user's id, deliberately: an
@@ -533,7 +539,7 @@ def invoke_live_agent(question: str, case_id: str | None = None) -> dict[str, An
                             str(
                                 error_payload.get("message")
                                 or error_payload.get("details")
-                                or "NAT workflow failed"
+                                or "Agent workflow failed"
                             )
                         )
                 parsed.duration_ms = (time.perf_counter() - started) * 1000.0
@@ -564,7 +570,7 @@ def collected_latencies_ms() -> list[float]:
 
 @mlflow.trace(name="live_agent_prediction", span_type="AGENT")
 def live_predict_fn(question: str, case_id: str | None = None) -> dict[str, Any]:
-    """MLflow predict function: query the running NAT agent for each dataset row."""
+    """MLflow predict function: query the running agent for each dataset row."""
 
     result = invoke_live_agent(question=question, case_id=case_id)
     duration = result.get("duration_ms")

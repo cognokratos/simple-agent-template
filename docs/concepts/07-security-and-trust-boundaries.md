@@ -27,9 +27,9 @@ flowchart TB
 
     subgraph INTERNAL [No published ports, segmented networks]
         GW["Rust gateway (BFF)<br/>OIDC + PKCE, opaque session, CSRF,<br/>schema validation, mints identity"]
-        subgraph AGENT [NAT agent]
-            MW["StaticServiceKeyMiddleware<br/>RequireIdentityHeaderMiddleware"]
-            RT["ReAct runtime<br/>executes requested tool calls"]
+        subgraph AGENT [Rust agent]
+            MW["api/auth.rs<br/>service key, one identity → TrustedCaller"]
+            RT["Rig agent loop<br/>ToolPolicy decides each requested call"]
         end
         MCP["Rust MCP server<br/>constant-time key check,<br/>typed inputs, two read-only tools"]
         DB[("PostgreSQL<br/>authoritative state, constraints")]
@@ -53,7 +53,8 @@ flowchart TB
 ```
 
 The model's only output is "tool-call requests" back to the runtime. The
-runtime makes the call to MCP, with `Bearer MCP_API_KEY`, which the model never
+runtime decides whether each one runs (a pure policy function at Rig's dispatch
+hook, [SECURITY.md](../SECURITY.md#tool-authority)) and makes the call to MCP, with `Bearer MCP_API_KEY`, which the model never
 sees. The model only supplies the tool name and arguments.
 
 | Concept | Implementation in this repo |
@@ -63,7 +64,8 @@ sees. The model only supplies the tool name and arguments.
 | Identity propagation | Gateway-minted `x-authenticated-*` headers on a freshly built request (`identity_headers` in [`gateway/src/proxy.rs`](../../gateway/src/proxy.rs)) |
 | Service-to-service authentication | Static bearer credentials, constant-time compared: gateway → agent (`AGENT_API_KEY`), agent → MCP (`MCP_API_KEY`) |
 | Network boundaries | Seven Compose networks, one per trust relationship ([`docker-compose.yml`](../../docker-compose.yml)) |
-| Capability boundary | The MCP tool list (`include:` in [`agent/config.yml`](../../agent/config.yml)) |
+| Trusted identity in the agent | [`api/auth.rs`](../../agent/src/api/auth.rs) builds a [`TrustedCaller`](../../agent/src/identity.rs), a type with no public constructor |
+| Capability boundary | The MCP tool list (`tools.mcp.include` in [`agent/config.yml`](../../agent/config.yml)), enforced per call by [`ToolPolicy::decide`](../../agent/src/guardrails/tools.rs) |
 
 ## Four properties worth internalising
 
@@ -84,8 +86,8 @@ no mechanism to act on it. Identity is not an input it controls.
 
 ### 2. Trusted headers require an authenticated caller
 
-NAT is configured to **trust** `x-authenticated-user-id`
-(`general.front_end.identity_header`). A trusted identity header is only as
+The agent **trusts** `x-authenticated-user-id`: it becomes the approval token's
+`actor_id` and the audit trail's actor. A trusted identity header is only as
 trustworthy as the guarantee that only the gateway can send it. That is why
 the agent requires the service credential in addition to network isolation:
 
@@ -94,9 +96,13 @@ the agent requires the service credential in addition to network isolation:
 
 `make auth-test` asserts every combination separately: no key (401); key without
 identity (401); key with a *repeated* identity header (401, because two values
-are ambiguous, not a list); key with one identity (accepted). See
-[SECURITY.md](../SECURITY.md#the-agent-requires-an-asserted-identity) for why
-NAT's own check was not enough and `RequireIdentityHeaderMiddleware` exists.
+are ambiguous, not a list); key with one identity (accepted). Both checks live
+in the agent's own middleware ([`api/auth.rs`](../../agent/src/api/auth.rs)),
+and only after both pass does a [`TrustedCaller`](../../agent/src/identity.rs)
+exist. It has no public constructor, so neither a prompt nor a tool argument can
+become an identity. See
+[SECURITY.md](../SECURITY.md#the-agent-requires-an-asserted-identity).
+→ [Agent internals, lesson 09](../AGENT-INTERNALS.md#09--propagate-trusted-identity-outside-the-prompt)
 
 ### 3. The model's capabilities are the tools, and nothing else
 
@@ -151,17 +157,6 @@ make security-test   # live: network reachability, every auth boundary, MCP keys
 probes from inside the containers: the gateway can reach the agent, the agent can reach MCP,
 and the gateway *cannot* reach MCP. The topology is asserted, not just
 described.
-
-## On the Rig implementation
-
-Every boundary in diagram D is identical on `rust-agent` except the inside of
-the agent box. There the two identity questions are answered by the service's
-own middleware ([`api/auth.rs`](https://github.com/cognokratos/simple-agent-template/blob/rust-agent/agent/src/api/auth.rs)) rather than around a framework,
-and the result is a [`TrustedCaller`](https://github.com/cognokratos/simple-agent-template/blob/rust-agent/agent/src/identity.rs) — a type with no public
-constructor, so neither a prompt nor a tool argument can become an identity.
-One boundary is added explicitly: model → tool call, decided by a pure policy
-function at Rig's dispatch hook ([SECURITY.md](../SECURITY.md#tool-authority)).
-→ [Rust lesson 09](../RUST-LEARNING-PATH.md#09--propagate-trusted-identity-outside-the-prompt)
 
 ## Go deeper
 

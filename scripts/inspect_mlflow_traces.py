@@ -5,7 +5,7 @@ Usage:
     python3 scripts/inspect_mlflow_traces.py [--limit N] [--tracking-uri URL]
 
 Prints one block per trace with its span tree, so a reviewer can see at a glance
-whether NAT workflow spans and NeMo Guardrails spans landed in the same trace.
+whether the agent's workflow, tool and Guardrails spans landed in the same trace.
 """
 
 from __future__ import annotations
@@ -145,7 +145,7 @@ def main() -> None:
 
         def render(parent, depth: int) -> None:
             for span in sorted(children.get(parent, []), key=lambda s: s.get("start_time_unix_nano", 0)):
-                kind = attr(span, "nat.span.kind") or attr(span, "openinference.span.kind") or ""
+                kind = attr(span, "openinference.span.kind") or attr(span, "agent.event_type") or ""
                 print(f"{'  ' * depth}- {span.get('name')}  [{kind}]")
                 for label, key in (("in ", "input.value"), ("out", "output.value")):
                     value = attr(span, key)

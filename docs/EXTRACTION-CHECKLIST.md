@@ -3,11 +3,16 @@
 What was taken from `example/etf-research-agent` into this template, where it
 landed, and what was deliberately left behind. Kept so omissions are reviewable.
 
-This is a history of the canonical NAT implementation on `main`. The agent
+This is a history. The extraction landed in the retired NAT agent, so the agent
 destinations it names (`fastapi_worker.py`, `text_guardrails.py`,
-`approval.py`, the `verify_*.py` scripts, …) are NAT files; where each property
-lives in the Rig agent on `rust-agent` is in
-[EXTENDING.md](EXTENDING.md#on-the-rig-implementation-what-the-agent-modules-are-for).
+`approval.py`, `verify_guardrails_rails.py`, `verify_approval_tokens.py`, …)
+are Python files preserved at the
+[`nat-1.9-final`](https://github.com/cognokratos/simple-agent-template/tree/nat-1.9-final)
+tag, not in this tree. The Rust agent that replaced it carries the same
+properties; where each one lives now is in
+[EXTENDING.md](EXTENDING.md#what-the-agent-modules-are-for), and the comparison
+is in [FRAMEWORK-MIGRATION.md](FRAMEWORK-MIGRATION.md). Gateway, MCP server, UI,
+evaluation, Compose and CI destinations are current, under their present names.
 
 Source ref: `origin/example/etf-research-agent` @ `7f4c329`, one commit ahead of
 `a0667e6`, 136 changed files.
@@ -19,9 +24,9 @@ Status: **done** · **adapted** (taken, but changed materially) · **deferred**
 
 | Item | Destination | Status |
 | --- | --- | --- |
-| Scalar SSE parsing fix | `ui/lib/nat-wire.ts`, chat route | done |
+| Scalar SSE parsing fix | `ui/lib/agent-wire.ts` (then `nat-wire.ts`), chat route | done |
 | Equivalent fix in the evaluator | `evaluation/client.py` | adapted — also fixed two further defects the source has: `_normalize` coerced nested `content` so structured chunks were dropped, and the MCP `{type,text}` unwrap never fired |
-| Regression tests, both paths | `ui/scripts/verify-nat-wire.mjs`, `ScalarWireTests` | done |
+| Regression tests, both paths | `ui/scripts/verify-agent-wire.mjs` (then `verify-nat-wire.mjs`), `ScalarWireTests` | done |
 | `react-markdown` + GFM, no raw HTML | `ui/app/page.tsx`, `globals.css` | done |
 | Responsive/prose styles | `globals.css` | done |
 | ETF welcome prompts, disclaimers, labels | — | rejected — branding |
@@ -53,7 +58,7 @@ Status: **done** · **adapted** (taken, but changed materially) · **deferred**
 | Pure-ASGI service-key auth, constant time | `fastapi_worker.py` | done |
 | Credential stripped from the ASGI scope | `fastapi_worker.py` | done |
 | Minimal unauthenticated health paths | `fastapi_worker.py` | done |
-| Guardrails compatibility registration | `guardrails_compat.py` | adapted — **added** a `mask_sensitive_data` wrapper the source omits, because Presidio is retained here |
+| Guardrails compatibility registration | `guardrails_compat.py` | adapted — **added** a `mask_sensitive_data` wrapper the source omits, because Presidio was retained |
 | Delete `patch_*.py` | — | done, after replacement coverage |
 | Document private-NAT reliance | `observability/__init__.py`, `docs/OBSERVABILITY.md` | done — the source claims a supported-extension-point implementation without listing them |
 
@@ -69,7 +74,7 @@ Status: **done** · **adapted** (taken, but changed materially) · **deferred**
 | Exact rail-block envelope matching | `text_guardrails.py` | done |
 | Safe boolean parsing | `text_guardrails.py` | done |
 | Sequential + concurrent regression cover | `verify_guardrails_rails.py` | adapted — the source asserts the concurrency *symptom*, which is a race and flaky; this asserts the deterministic root cause and reports the symptom |
-| Presidio removal | — | **rejected** — PII protection retained and made configurable; masking behaviour measured and documented. Streaming responses are masked too: since NeMo's streaming rail runner cannot rewrite text, the middleware buffers the complete answer and masks it once (`TextGuardrailsMiddleware._stream_with_buffered_masking`) rather than shipping the limitation undocumented or unfixed |
+| Presidio removal | — | **rejected** — PII protection retained and made configurable; masking behaviour measured and documented. Streaming responses are masked too: since NeMo's streaming rail runner cannot rewrite text, the middleware buffers the complete answer and masks it once (`TextGuardrailsMiddleware._stream_with_buffered_masking`) rather than shipping the limitation undocumented or unfixed. The Rust agent later replaced Presidio with deterministic recognisers and a streaming window; see [LIMITATIONS.md](LIMITATIONS.md#deliberate-gaps) |
 | ETF allow patterns and prompt policy | — | rejected — domain |
 
 ## Observability
@@ -84,7 +89,7 @@ Status: **done** · **adapted** (taken, but changed materially) · **deferred**
 | Credential-header redaction | `trace_processor.py` | done |
 | Registered OTLP exporter | `observability/otlp_exporter.py` | adapted — renamed from `etf_research_otlp` to `agent_otlp`; private `_span_prefix` read defensively |
 | Trace inspection and e2e tools | `scripts/inspect_mlflow_traces.py`, `verify_traces_e2e.py` | done |
-| Configurable content capture | `NAT_TRACE_CAPTURE_CONTENT` | adapted — the source captures unconditionally |
+| Configurable content capture | `NAT_TRACE_CAPTURE_CONTENT`, now `AGENT_TRACE_CAPTURE_CONTENT` ([renamed](CONFIGURATION.md#renamed-variables)) | adapted — the source captures unconditionally |
 
 ## Model configuration and provenance
 
@@ -174,7 +179,7 @@ Status: **done** · **adapted** (taken, but changed materially) · **deferred**
 | Known limitations and untested behaviour | `docs/LIMITATIONS.md` | done |
 | How a domain application builds on this | `docs/EXTENDING.md` | done |
 | Policy/state/audit reusable patterns | `docs/EXTENDING.md` | adapted — interfaces and the template's concrete implementation, not a policy framework |
-| MIT root `LICENSE` | `LICENSE`, `THIRD_PARTY_NOTICES.md` | **adopted later, deliberately** — rejected at extraction because the source added an MIT file while leaving conflicting Apache-2.0 declarations. Resolved by the owner afterwards: original files and metadata moved to MIT together, and the NVIDIA-derived files keep Apache-2.0 as listed exceptions (`docs/LIMITATIONS.md#licensing`) |
+| MIT root `LICENSE` | `LICENSE`, `THIRD_PARTY_NOTICES.md` | **adopted later, deliberately** — rejected at extraction because the source added an MIT file while leaving conflicting Apache-2.0 declarations. Resolved by the owner afterwards: original files and metadata moved to MIT together, and the NVIDIA-derived files kept Apache-2.0 as listed exceptions. Those files left the tree with the NAT agent and remain at `nat-1.9-final` ([LIMITATIONS.md](LIMITATIONS.md#licensing)) |
 | ETF datasets, schema, tools, prompts, diagrams | — | rejected — domain |
 
 ## Deferred

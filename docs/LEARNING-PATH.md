@@ -15,13 +15,19 @@ Each stage answers one question: *why did we need the next architectural
 component?* Each points to a concept page (the why), a lab (the hands-on), and the
 reference manual (the precise how).
 
-The path is taught on the canonical NeMo Agent Toolkit (NAT) implementation.
-Each stage also says, in one line, how the alternative Rig + Rust
-implementation on
-[`rust-agent`](https://github.com/cognokratos/simple-agent-template/tree/rust-agent)
-realises the same component. When you have finished the path, the optional
-[Rust learning extension](RUST-LEARNING-PATH.md) follows the whole architecture
-through that implementation, to expose what a high-level toolkit does for you.
+The path is taught on this repository's agent: a Rust service built on the
+[Rig](https://github.com/0xPlaygrounds/rig) framework. Each stage names the
+source that realises its component and, where there is one, the matching
+lesson in [AGENT-INTERNALS.md](AGENT-INTERNALS.md), the advanced appendix that
+walks through the agent's code. You do not need to know Rust to follow the
+path; you need it for the appendix.
+
+One idea runs underneath every stage: **the agent framework is not the
+architecture.** Rig runs the loop. Identity, authorization, tool access,
+approvals, state transitions and every security boundary are deterministic
+code that would survive replacing it — and once already did, when this agent
+moved from NVIDIA NeMo Agent Toolkit to Rig without moving a single trust
+boundary ([FRAMEWORK-MIGRATION.md](FRAMEWORK-MIGRATION.md)).
 
 ## How long things take
 
@@ -38,16 +44,16 @@ through that implementation, to expose what a high-level toolkit does for you.
 | Stage | Concept | Component it adds | Failure it addresses |
 | --- | --- | --- | --- |
 | 0 | LLM as a probabilistic component | — | Treating model output as a return value |
-| 1 | Agent and agent loop | Agent runtime (NAT ReAct; Rig), loop bounds | One model call cannot act on the world |
+| 1 | Agent and agent loop | Agent runtime (Rig), loop and tool-call bounds | One model call cannot act on the world |
 | 2 | Tool calling | Typed tools, native tool calling | Parsing prose into actions; unbounded actions |
 | 3 | MCP and capability boundaries | Rust MCP server, `include:` list | An agent that can do whatever its credentials can |
 | 4 | Grounding | Tools over the system of record | Confident answers from model memory |
-| 5 | Guardrails and untrusted data | Input/output rails (NeMo Guardrails; explicit Rust policy), deterministic patterns | Hostile input; leaked secrets and PII |
+| 5 | Guardrails and untrusted data | Input/output rails as explicit Rust policy, deterministic patterns | Hostile input; leaked secrets and PII |
 | 6 | Evaluation | MLflow suites, deterministic scorers | "It worked when I tried it" |
 | 7 | Observability | OpenTelemetry → MLflow traces | Not knowing what the agent actually did |
 | 8 | Identity and trust boundaries | Keycloak, gateway, service credentials, segmented networks | The model or the browser choosing who the user is |
 | 9 | Human-in-the-loop mutation | Signed approvals, point-of-mutation policy, audit | The model authorizing its own actions |
-| 10 | Production architecture | All of the above, composed | — |
+| 10 | Production architecture | All of the above, composed — independent of the framework | Mistaking the framework for the architecture |
 
 The whole path rests on one split:
 
@@ -87,8 +93,9 @@ calls.
 **Why it matters.** Every later component exists because of this. You can't
 unit-test the model into correctness, and you can't let it hold authority.
 
-**In this repo.** `llms.primary` in [`agent/config.yml`](../agent/config.yml):
-any OpenAI-compatible endpoint, `temperature: 0.0`. While writing these labs, the
+**In this repo.** `LLM_BASE_URL` and `LLM_MODEL` select any OpenAI-compatible
+endpoint ([CONFIGURATION.md](CONFIGURATION.md#model-endpoint)), and
+`workflow.temperature` in [`agent/config.yml`](../agent/config.yml) is `0.0`. While writing these labs, the
 same prompt, on the same model at temperature 0, with the same configuration
 digest, behaved consistently within one agent build and differently after a
 rebuild ([concept 3](concepts/03-grounding-and-authoritative-state.md#grounded-is-not-the-same-as-correct)).
@@ -108,11 +115,19 @@ the history of TKT-1001?"* something has to fetch data, show it to the model and
 let it continue. That something is an **agent runtime**: a loop that asks the
 model for its next action, executes it, and feeds back the result.
 
-**In this repo.** NAT's ReAct graph, wrapped by `streaming_react_agent` in
-[`register.py`](https://github.com/cognokratos/simple-agent-template/blob/main/agent/src/nat_streaming_react/register.py). The loop is
-bounded by `max_tool_calls`, `max_history`, retries and timeouts.
+**In this repo.** Rig's agent runner, built once per request in
+[`builder.rs`](../agent/src/agent/builder.rs) and driven step by step in
+[`execution.rs`](../agent/src/agent/execution.rs). The loop is bounded twice:
+Rig's model-call budget, and a deterministic tool-call budget of exactly
+`max_tool_calls` enforced in [`hooks.rs`](../agent/src/agent/hooks.rs). The
+run itself moves through an explicit state machine
+([`state.rs`](../agent/src/agent/state.rs)): `Received → ScreeningInput →
+Running ⇄ AwaitingApproval → Completed / Failed / Cancelled`.
+→ [Internals 03](AGENT-INTERNALS.md#03--understand-the-agent-loop),
+[10](AGENT-INTERNALS.md#10--model-execution-as-an-explicit-state-machine)
 
-**On Rig.** Rig's agent runner, built per request in [`builder.rs`](https://github.com/cognokratos/simple-agent-template/blob/rust-agent/agent/src/agent/builder.rs) and driven in [`execution.rs`](https://github.com/cognokratos/simple-agent-template/blob/rust-agent/agent/src/agent/execution.rs); bounded by a model-call budget and a deterministic tool-call budget. → [Rust lesson 03](RUST-LEARNING-PATH.md#03--understand-the-agent-loop)
+The framework owns the loop and nothing else. Swapping it changes how the loop
+is written, not who decides what the loop may do.
 
 **Failure it addresses.** Models that can't act. Bounding the loop addresses its
 own new failure: runaway loops.
@@ -127,9 +142,14 @@ own new failure: runaway loops.
 functions the model can *request*. **Native tool calling** returns those
 requests as structured data rather than prose to be parsed.
 
-**In this repo.** `use_native_tool_calling: true`. `search_tickets` and
-`get_ticket` with JSON Schemas derived from Rust structs. Descriptions tuned in
-`tool_overrides`.
+**In this repo.** Native tool calling through Rig. `search_tickets` and
+`get_ticket` with JSON Schemas derived from Rust structs in the MCP server.
+Descriptions tuned in `tools.mcp.overrides` in `agent/config.yml`. Every
+proposed call passes one deterministic decision point,
+[`ToolPolicy::decide`](../agent/src/guardrails/tools.rs): closed registry,
+closed argument schema, no type coercion.
+→ [Internals 05](AGENT-INTERNALS.md#05--validate-model-proposed-tool-arguments),
+[06](AGENT-INTERNALS.md#06--separate-model-proposals-from-software-authority)
 
 **Failure it addresses.** Brittle text parsing, and actions with no contract.
 It also introduces a new risk: tool descriptions are prompts, and tool
@@ -147,8 +167,11 @@ The agent can do exactly what the tools implement, and nothing else.
 
 **In this repo.** The Rust MCP server ([`mcp-server/src/main.rs`](../mcp-server/src/main.rs)),
 service-key authenticated, the only service on `data_net`. The agent's
-`include:` list grants the tools. A granted tool that doesn't exist stops the
-agent from starting.
+`tools.mcp.include` list grants the tools. A granted tool that doesn't exist, or
+whose schema the agent cannot enforce or that declares an identity field such as
+`user_id`, stops the agent from starting
+([`mcp/client.rs`](../agent/src/mcp/client.rs)).
+→ [Internals 04](AGENT-INTERNALS.md#04--discover-tools-through-mcp)
 
 **Failure it addresses.** An agent with database credentials, and a
 `run_sql` tool. See [ANTI-PATTERNS.md](concepts/ANTI-PATTERNS.md#giving-the-model-direct-database-credentials).
@@ -178,11 +201,16 @@ limit: grounded inputs don't guarantee correct reasoning (lab 04, experiment 3).
 hostile text. Answers can contain secrets or PII. Guardrails filter what goes in
 and what comes out, using an LLM classifier backed by deterministic patterns.
 
-**In this repo.** NeMo Guardrails via `text_guardrails`: length bound, critical
-patterns, LLM self-check, anchored allow templates, regex output blocking,
-buffered Presidio masking.
-
-**On Rig.** The same input rules as pure functions plus one classifier call; secret blocking and deterministic PII masking in a bounded streaming window — narrower than Presidio. → [GUARDRAILS.md](GUARDRAILS.md#on-the-rig-implementation)
+**In this repo.** Input policy as pure functions in
+[`guardrails/input.rs`](../agent/src/guardrails/input.rs): a length bound,
+critical deny patterns, one LLM self-check whose verdict is parsed
+deterministically, and anchored read-only allow templates, with fixed
+precedence. If the classifier is unreachable the request is refused (fail
+closed). Output policy in [`guardrails/output.rs`](../agent/src/guardrails/output.rs):
+credential patterns blocked across chunk boundaries in a bounded streaming
+window, and deterministic PII masking — also applied to the tool results shown
+to people. → [GUARDRAILS.md](GUARDRAILS.md),
+[Internals 07–08](AGENT-INTERNALS.md#07--stream-output-safely)
 
 **Failure it addresses.** Direct prompt injection, harmful requests, credential
 and PII disclosure. It does **not** address indirect injection or authorization.
@@ -215,11 +243,15 @@ a scorer only catches what it asserts.
 tells you *why*: which tools, which arguments, which rail decision, where the
 time went.
 
-**In this repo.** NAT and Guardrails spans joined into one trace per request
-(`trace_context.py`), readable question and answer, header redaction, opt-in
-user attribution, exported over OTLP to MLflow.
-
-**On Rig.** One tracing model in one process: Rig's spans nest under the request's root span with no framework workaround. → [OBSERVABILITY.md](OBSERVABILITY.md#on-the-rig-implementation)
+**In this repo.** One OpenTelemetry root span per request
+([`api/workflow.rs`](../agent/src/api/workflow.rs)); the rails, Rig's own
+`chat` and `execute_tool` spans, the tool policy, the MCP call and any approval
+wait nest under it. Readable question and answer on the root, credentials and
+raw identity never exported, opt-in pseudonymous user attribution, exported
+over OTLP through the Collector to MLflow. OpenTelemetry is the boundary: the
+backend is replaceable without touching the agent.
+→ [OBSERVABILITY.md](OBSERVABILITY.md),
+[Internals 13](AGENT-INTERNALS.md#13--trace-and-evaluate-the-whole-lifecycle)
 
 **Failure it addresses.** Debugging a runtime-chosen code path from scattered
 logs, and accidentally turning the trace store into a credential or PII store.
@@ -238,7 +270,11 @@ must only accept them from the component that minted them.
 CSRF; schema re-serialisation; gateway-minted `x-authenticated-*` headers;
 service credentials on gateway → agent and agent → MCP; seven segmented networks.
 
-**On Rig.** The same checks in the service's own middleware, producing a `TrustedCaller` type the model cannot construct. → [SECURITY.md](SECURITY.md#on-the-rig-implementation)
+In the agent, both checks run in its own middleware
+([`api/auth.rs`](../agent/src/api/auth.rs)) and produce a
+[`TrustedCaller`](../agent/src/identity.rs): a type with no public constructor,
+never rendered into the prompt and never a tool argument.
+→ [Internals 09](AGENT-INTERNALS.md#09--propagate-trusted-identity-outside-the-prompt)
 
 **Failure it addresses.** Spoofed identity, model-chosen identity, and "it's on a
 private network" as authentication.
@@ -254,12 +290,16 @@ change state, an injected instruction or a reasoning error becomes a real change
 with an audit record that looks intentional. The model may propose. A human
 decides. Deterministic code verifies and applies.
 
-**In this repo.** Optional and off by default: `approval.py` (proposal → human
-prompt → signed token), `interaction_guard.py` (only the prompted user, only an
-offered choice), `mutation.rs` (nonce, row lock, re-derived state,
-`apply_policy`, apply + append-only audit in one transaction).
-
-**On Rig.** The run suspends on a `PendingTicket`; the interaction registry builds a `VerifiedDecision` only after owner and offer checks; same token, same MCP verifier. → [Rust lessons 11–12](RUST-LEARNING-PATH.md#11--suspend-for-human-approval)
+**In this repo.** Optional and off by default. The model proposes
+`ticket_priority_change`; [`approval/gate.rs`](../agent/src/approval/gate.rs)
+suspends the run and asks the human; [`approval/pending.rs`](../agent/src/approval/pending.rs)
+accepts an answer only from the prompted user and only with an offered choice,
+and only then builds a `VerifiedDecision`; [`approval/token.rs`](../agent/src/approval/token.rs)
+signs it. The MCP server verifies the token independently, then
+[`mutation.rs`](../mcp-server/src/mutation.rs) applies nonce, row lock,
+re-derived state, `apply_policy`, and the change plus an append-only audit row
+in one transaction.
+→ [Internals 11–12](AGENT-INTERNALS.md#11--suspend-for-human-approval)
 
 **Failure it addresses.** The model authorizing its own actions; replayed,
 stale or altered approvals; editable audit trails.
@@ -274,7 +314,7 @@ stale or altered approvals; editable audit trails.
 specific job, with the model contained in the middle:
 
 * the **gateway** decides who the user is;
-* the **agent runtime** runs a bounded loop and decides nothing about authority;
+* the **agent framework** (Rig) runs a bounded loop and decides nothing about authority;
 * **guardrails** filter text at the edges of the loop;
 * **MCP tools** define everything the model can cause;
 * the **database** is the authority on state and enforces its own invariants;
@@ -288,10 +328,10 @@ See the full diagram, with trust boundaries, in
 
 | Concept | Implementation in this repo |
 | --- | --- |
-| Agent runtime | NeMo Agent Toolkit (NAT) 1.9 — canonical; Rig 0.44 in Rust on `rust-agent` |
+| Agent framework | Rig 0.44, in a Rust agent service |
 | Tool interoperability | MCP (streamable HTTP) |
 | Capability implementation | Rust MCP server (`rmcp`, `sqlx`) |
-| Guardrails | NeMo Guardrails 0.21 + application-level deterministic layers (Rig: explicit Rust policy modules) |
+| Guardrails | Explicit Rust policy modules + one LLM self-check |
 | Tracing | OpenTelemetry → OpenTelemetry Collector |
 | Experiment tracking, trace store | MLflow |
 | Authentication | Keycloak (OIDC), Rust gateway (BFF) |
@@ -299,8 +339,21 @@ See the full diagram, with trust boundaries, in
 | UI | assistant-ui on Next.js |
 
 These are implementation choices. The concepts carry over to other runtimes,
-protocols and stores. What doesn't carry over automatically is the discipline:
-deterministic boundaries around a probabilistic core.
+protocols and stores — demonstrably: the agent framework has already been
+replaced once, from NeMo Agent Toolkit to Rig, and the rest of this table did
+not change ([FRAMEWORK-MIGRATION.md](FRAMEWORK-MIGRATION.md)). Four boundaries
+are what made that possible, and they are the ones to keep in any design:
+
+* **identity** is asserted by the gateway, outside the agent and the model;
+* **MCP** is the capability boundary: the agent can do what the tools do, and
+  nothing else;
+* **OpenTelemetry** is the telemetry boundary: the trace backend is replaceable;
+* **evaluation** datasets, scorers and gates belong to the repository, not to
+  a framework or a vendor.
+
+What doesn't carry over automatically is the discipline: deterministic
+boundaries around a probabilistic core. Frameworks are replaceable; trust
+boundaries are architecture.
 
 **Before production,** read [LIMITATIONS.md](LIMITATIONS.md). It lists what this
 template does *not* do (per-user data authorization, secrets management,

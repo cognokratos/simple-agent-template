@@ -5,7 +5,7 @@ import {
   type UIMessage,
   type UIMessageChunk,
 } from "ai";
-import { parseNatOutputString } from "../../../../lib/nat-wire";
+import { parseAgentOutputString } from "../../../../lib/agent-wire";
 
 export const maxDuration = 300;
 
@@ -191,20 +191,21 @@ function extractPythonField(source: string, fieldNames: string[]): string | unde
 }
 
 /**
- * NAT 1.8 can stringify ChatResponseChunk instead of serializing it as JSON on
- * /v1/workflow/full. This extracts the actual assistant content from both the
- * correct JSON shape and that Python/Pydantic repr fallback.
+ * Extract the assistant content from a workflow output value. Besides the
+ * contract's JSON shape, this still tolerates the Python/Pydantic repr of a
+ * ChatResponseChunk that the retired NeMo Agent Toolkit runtime (nat-1.9-final)
+ * could emit; the Rust agent never sends it.
  */
 function extractWorkflowText(value: unknown): string {
   if (value === null || value === undefined) return "";
 
   if (typeof value === "string") {
-    // `value` from NAT's {"value": ...} SSE envelope is already assistant text.
+    // `value` from the agent's {"value": ...} SSE envelope is already assistant text.
     // Only recurse when that text is a serialized JSON container. Parsing
     // scalar-looking deltas such as "100", "true" or "20260630" would turn them
     // into numbers/booleans, and the branch below then discarded them — every
     // numeric and boolean fragment vanished from the streamed answer.
-    const parsed = parseNatOutputString(value);
+    const parsed = parseAgentOutputString(value);
     if (parsed !== value) return extractWorkflowText(parsed);
 
     if (
@@ -214,14 +215,14 @@ function extractWorkflowText(value: unknown): string {
     ) {
       return (
         extractPythonField(value, ["content"]) ??
-        "[NAT returned an unreadable ChatResponseChunk representation]"
+        "[the agent returned an unreadable ChatResponseChunk representation]"
       );
     }
 
     return value;
   }
 
-  // A bare scalar reaches us when NAT serializes the envelope as {"value": 100}
+  // A bare scalar reaches us when an agent serializes the envelope as {"value": 100}
   // rather than {"value": "100"}, or when the SSE payload is a bare JSON scalar
   // with no envelope at all. Render it instead of dropping it.
   if (typeof value === "number" || typeof value === "boolean" || typeof value === "bigint") {
@@ -363,7 +364,7 @@ type InteractionPrompt = {
 
 /** Read one SSE field from a block, whichever line carries it.
  *
- * NAT prefixes an interaction event with an `event:` line, so the payload is
+ * The agent prefixes an interaction event with an `event:` line, so the payload is
  * not always on the block's first line. */
 function parseSseField(block: string, field: string): string | undefined {
   const prefix = `${field}:`;
@@ -503,7 +504,7 @@ export async function POST(request: Request) {
         if (!upstream.ok || upstream.body === null) {
           const details = await upstream.text();
           throw new Error(
-            `NAT workflow returned ${upstream.status}: ${details || upstream.statusText}`,
+            `Agent workflow returned ${upstream.status}: ${details || upstream.statusText}`,
           );
         }
 
@@ -529,7 +530,7 @@ export async function POST(request: Request) {
             const interactionId = String(event?.interaction_id ?? "");
             const prompt = (asRecord(event?.prompt) ?? {}) as InteractionPrompt;
             if (!executionId || !interactionId) {
-              throw new Error("NAT returned an invalid interaction_required event");
+              throw new Error("The agent returned an invalid interaction_required event");
             }
             emitToolStart(interactionId, "human_approval", {
               executionId,
@@ -576,10 +577,10 @@ export async function POST(request: Request) {
             const rawData = block.slice("data:".length).trim();
             if (!rawData || rawData === "[DONE]") return;
 
-            // The NAT envelope is a JSON container. Anything else on a `data:`
+            // The agent's envelope is a JSON container. Anything else on a `data:`
             // line is literal assistant text and must not be coerced: a blanket
             // JSON.parse rewrites "1e3" as "1000" and "100" as the number 100.
-            const data = parseNatOutputString(rawData);
+            const data = parseAgentOutputString(rawData);
             const value =
               typeof data === "string" ? data : (asRecord(data)?.value ?? data);
             const text = extractWorkflowText(value);
@@ -587,7 +588,7 @@ export async function POST(request: Request) {
             return;
           }
 
-          // NAT emits workflow errors as a plain JSON object rather than an SSE
+          // The agent emits workflow errors as a plain JSON object rather than an SSE
           // field. Surface it instead of silently dropping it.
           if (block.startsWith("{")) {
             const error = parseJsonIfPossible(block);
@@ -596,7 +597,7 @@ export async function POST(request: Request) {
               String(
                 errorRecord?.message ??
                   errorRecord?.details ??
-                  "NAT workflow failed",
+                  "Agent workflow failed",
               ),
             );
           }
@@ -633,7 +634,7 @@ export async function POST(request: Request) {
       } catch (error) {
         finishAnswer();
         const errorText =
-          error instanceof Error ? error.message : "The NAT workflow failed";
+          error instanceof Error ? error.message : "The agent workflow failed";
         writer.write({ type: "error", errorText });
         writer.write({ type: "finish-step" });
         writer.write({ type: "finish", finishReason: "error" });

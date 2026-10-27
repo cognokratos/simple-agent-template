@@ -39,7 +39,7 @@ export async function POST(request: Request, context: RouteContext) {
 
   // A 204/205/304 response must carry a null body: passing the (zero-length but
   // non-null) ArrayBuffer makes the Response constructor throw, which turned
-  // NAT's successful "interaction accepted" 204 into a 500 in the browser.
+  // the agent's successful "interaction accepted" 204 into a 500 in the browser.
   const upstreamBody = await upstream.arrayBuffer();
   const nullBodyStatus =
     upstream.status === 204 || upstream.status === 205 || upstream.status === 304;

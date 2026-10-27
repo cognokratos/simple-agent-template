@@ -100,7 +100,7 @@ def main() -> None:
 
     required = {
         "gateway AGENT_API_KEY": gateway_env.get("AGENT_API_KEY"),
-        "agent NAT_GATEWAY_API_KEY": agent_env.get("NAT_GATEWAY_API_KEY"),
+        "agent AGENT_API_KEY": agent_env.get("AGENT_API_KEY"),
         "agent MCP_API_KEY": agent_env.get("MCP_API_KEY"),
         "MCP MCP_API_KEY": mcp_env.get("MCP_API_KEY"),
         "evaluator AGENT_API_KEY": evaluator_env.get("AGENT_API_KEY"),
@@ -111,12 +111,17 @@ def main() -> None:
         if not value:
             fail(f"{label} is missing")
 
-    if gateway_env["AGENT_API_KEY"] != agent_env["NAT_GATEWAY_API_KEY"]:
-        fail("gateway and NAT use different AGENT_API_KEY values")
-    if evaluator_env["AGENT_API_KEY"] != agent_env["NAT_GATEWAY_API_KEY"]:
-        fail("evaluator and NAT use different AGENT_API_KEY values")
+    if gateway_env["AGENT_API_KEY"] != agent_env["AGENT_API_KEY"]:
+        fail("gateway and agent use different AGENT_API_KEY values")
+    if evaluator_env["AGENT_API_KEY"] != agent_env["AGENT_API_KEY"]:
+        fail("evaluator and agent use different AGENT_API_KEY values")
+    # The container receives only the current names; Compose resolves the
+    # deprecated host-side aliases (docs/CONFIGURATION.md#renamed-variables).
+    for deprecated in ("NAT_GATEWAY_API_KEY", "NAT_TRACE_CAPTURE_CONTENT", "NAT_TRACE_CONTENT_MAX_CHARS"):
+        if deprecated in agent_env:
+            fail(f"the agent container still receives the deprecated {deprecated}")
     if agent_env["MCP_API_KEY"] != mcp_env["MCP_API_KEY"]:
-        fail("NAT and MCP use different MCP_API_KEY values")
+        fail("agent and MCP use different MCP_API_KEY values")
     if ui_env.get("GATEWAY_INTERNAL_URL") != "http://gateway:8081":
         fail("assistant-ui does not target the internal Rust gateway")
     if realm_init_env.get("OIDC_CALLBACK_URL") != gateway_env["OIDC_CALLBACK_URL"]:

@@ -7,16 +7,10 @@ running system, and ends with pointers into the reference documentation.
 Start with the [request walkthrough](REQUEST-WALKTHROUGH.md) if you want the
 end-to-end picture first.
 
-**One lab sequence, two implementations.** The labs are written against the
-canonical NeMo Agent Toolkit agent on `main`. Every lab also works on the
-Rig + Rust agent on
-[`rust-agent`](https://github.com/cognokratos/simple-agent-template/tree/rust-agent):
-check out that branch and run the same commands. Where the Rig implementation
-behaves, logs or traces differently, the lab has a short **On the Rig
-implementation** section; nothing else changes, because the UI, gateway, MCP
-server, data and evaluation are identical. To study the Rig implementation in
-depth, follow the [Rust learning extension](../RUST-LEARNING-PATH.md) after the
-labs.
+The labs run against the Rust agent in [`agent/`](../../agent), built on Rig.
+Where a lab points into the agent's code, the
+[agent internals](../AGENT-INTERNALS.md) lessons go deeper; follow them after
+the labs if you want to study the agent loop itself.
 
 | Lab | You will | Needs |
 | --- | --- | --- |
@@ -45,9 +39,9 @@ failed**, **Architecture after**, **What you learned**, **Go deeper**.
   commit a weakened control. The checked-in default stays secure and read-only,
   and CI asserts that
   ([`verify_read_only_default.py`](../../scripts/verify_read_only_default.py)).
-* **`agent/config.yml` is baked into the agent image** on both branches (its
-  layout differs between them; the prompts in it do not). After editing it, run
-  `make rebuild-agent`. After editing the MCP server, run `make rebuild-mcp`
+* **`agent/config.yml` is baked into the agent image.** After editing it, run
+  `make rebuild-agent`. Every key is validated at startup, so a typo stops the
+  agent rather than silently dropping a policy. After editing the MCP server, run `make rebuild-mcp`
   (which also recreates the agent, since tools are discovered at startup).
   Environment-only changes in `.env` need `make up` to recreate the affected
   containers.
@@ -59,12 +53,13 @@ failed**, **Architecture after**, **What you learned**, **Go deeper**.
 
 ## Observed results
 
-The quoted results in labs 03–07 were recorded against this repository with the
+The quoted results in labs 02–07 were recorded against this repository with the
 default configuration: `qwen3:8b` as both agent and guard model on a local
-Ollama, `temperature: 0.0`. They come from two agent builds with an identical
-configuration digest: one built before, and one from, commit `af29ce0`. Where
-the two builds behaved differently, the labs say so. Deterministic results (401s, rail blocks
-driven by patterns, PII masking, the audit trigger, unit tests) were also
-checked on that setup. Quoted results are from the NAT agent unless a Rig
-section says otherwise; on Rig, deterministic results are additionally pinned by
-the agent's Rust tests (`make agent-test`).
+Ollama, `temperature: 0.0`. Many of the model-behaviour quotes were recorded on
+the retired NeMo Agent Toolkit agent (`nat-1.9-final`), before the Rust agent
+was promoted, with the same prompts and model. The Rust agent sends the same
+model a slightly different request, so your model-dependent results may differ
+— which is part of the exercise. Deterministic results (401s, pattern-driven
+rail blocks, PII masking, tool-policy refusals, the audit trigger) do not depend
+on the model, and on the Rust agent they are pinned by its tests
+(`make agent-test`).

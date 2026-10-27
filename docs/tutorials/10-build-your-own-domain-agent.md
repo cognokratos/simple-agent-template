@@ -19,20 +19,20 @@ files. Knowing exactly which ones is what makes the template reusable.
 flowchart LR
     subgraph INFRA [Inherit unchanged]
         UI[assistant-ui] --> GW[gateway]
-        GW --> NAT[NAT runtime + middleware]
-        OBS[observability] --- NAT
-        EVH[evaluation harness + scorers] --> NAT
+        GW --> AG["Rust agent: api/, identity,<br/>Rig loop + tool-policy hook"]
+        OBS[telemetry + collector] --- AG
+        EVH[evaluation harness + scorers] --> AG
         APP[approval token + verifiers]
     end
     subgraph DOMAIN [Replace]
         SCHEMA[db/init.sql + fixtures]
         TOOLS[MCP tool functions]
-        CFG["agent/config.yml: system_prompt,<br/>include, tool_overrides,<br/>rail prompt"]
-        PATTERNS["text_guardrails.py:<br/>critical patterns, allow templates"]
+        CFG["agent/config.yml: system_prompt,<br/>tools.mcp.include / overrides,<br/>rail prompt, output policy"]
+        PATTERNS["guardrails/input.rs:<br/>critical patterns, allow templates"]
         DATA[evaluation/datasets/*.json]
         COPY[ui/app/page.tsx welcome copy]
     end
-    NAT --> TOOLS --> SCHEMA
+    AG --> TOOLS --> SCHEMA
 ```
 
 The authoritative list is in [EXTENDING.md](../EXTENDING.md#what-is-the-sample).
@@ -51,13 +51,13 @@ and gate each step before moving on:
 | 1. Fork and isolate | Set `COMPOSE_PROJECT_NAME` so your stack and this one keep separate volumes ([CONFIGURATION.md](../CONFIGURATION.md#project-and-volume-identity)) | `make static-check` |
 | 2. Schema | Replace `db/init.sql`. Add `CHECK` constraints for every enumerated field. Keep the approval tables if you might need them later. | `make dev` starts; `make shell-db` shows your data |
 | 3. Tools | Replace the tool functions in `mcp-server/src/main.rs`. **Read-only first.** Typed args, validated, bound, clamped (lab 03). | `cd mcp-server && cargo clippy --all-targets -- -D warnings && cargo test`; `make inspector-tools` |
-| 4. Agent config | Rewrite `system_prompt` (keep `{tools}` / `{tool_names}`), `include:`, `tool_overrides` | Tool cards appear for your prompts in the UI |
-| 5. Input policy | Rewrite the `self_check_input` prompt, `_CRITICAL_INPUT_PATTERNS` and `_READ_ONLY_TICKET_TEMPLATES` for your domain. Anchor allow templates to the complete message. | `make verify-input-guardrails`; your common queries are not blocked |
-| 6. Output policy | Review the regex patterns and the Presidio entity list. Which entities are *needed* in answers (as names are here)? | `make verify-output-guardrails` |
+| 4. Agent config | In `agent/config.yml`, rewrite `workflow.system_prompt` (keep `{tools}` / `{tool_names}`), `tools.mcp.include` and `tools.mcp.overrides`. A tool schema the agent cannot enforce stops startup with the reason. | Tool cards appear for your prompts in the UI |
+| 5. Input policy | Rewrite the `self_check_input` prompt in `agent/config.yml`, and `CRITICAL_PATTERNS` and `ALLOW_TEMPLATES` in [`guardrails/input.rs`](../../agent/src/guardrails/input.rs), with their unit tests. Anchor allow templates to the complete message. | `make verify-input-guardrails`; your common queries are not blocked |
+| 6. Output policy | Review `guardrails.output.secret_patterns` and `pii_entities`, and check whether the recognisers in [`guardrails/pii.rs`](../../agent/src/guardrails/pii.rs) would mask your identifiers or miss your PII. Which entities are *needed* in answers (as names are here)? | `make verify-output-guardrails` |
 | 7. Injection fixtures | Seed dedicated, never-mutated records whose free text carries injection payloads (copy the shape of `db/injection_test_fixtures.sql`) | — |
 | 8. Evaluation | New datasets for all four suites; set `EVALUATION_TOOL_NAMES` and the experiment names | `make eval-all` passes on your chosen model |
 | 9. Traces | Check what your tool spans record. Real data will be sensitive. | `make trace-test` |
-| 10. Mutations (only if needed) | Add an approval-gated action ([lab 08](08-add-a-state-changing-action.md), [EXTENDING.md](../EXTENDING.md#adding-an-approval-gated-action)) | `make verify-approvals-rust`; `make verify-approvals` |
+| 10. Mutations (only if needed) | Add an approval-gated action: a gate in `agent/src/approval/` and a `ToolSpec` in `agent/src/services.rs` ([lab 08](08-add-a-state-changing-action.md), [EXTENDING.md](../EXTENDING.md#adding-an-approval-gated-action)) | `make verify-approvals-rust`; `make verify-approvals` |
 
 ## Run it
 
@@ -71,8 +71,9 @@ make eval-all
 ## Observe
 
 Track how much you changed outside the "Replace" box. If you had to edit the
-gateway, NAT middleware, the observability package or the scorers, write down
-why. That is either a genuine gap in the template (worth an issue upstream) or a
+gateway, the agent's `api/`, `identity.rs`, `agent/hooks.rs`,
+`approval/pending.rs`, `approval/token.rs` or `telemetry/`, or the scorers,
+write down why. That is either a genuine gap in the template (worth an issue upstream) or a
 sign that domain logic is leaking into infrastructure.
 
 ## Break it
@@ -94,21 +95,6 @@ policy is not.
 The same architecture with your domain in the "Replace" box, the same
 deterministic boundaries, and evaluation numbers for *your* agent on *your*
 model.
-
-## On the Rig implementation
-
-The same sequence, with the Rig agent's file layout for the "Replace" box:
-
-| Step | On the Rig implementation |
-| --- | --- |
-| 4. Agent config | `workflow.system_prompt`, `tools.mcp.include`, `tools.mcp.overrides` in `agent/config.yml`; a tool schema the agent cannot enforce stops startup with the reason |
-| 5. Input policy | the `self_check_input` prompt in `agent/config.yml`; `CRITICAL_PATTERNS` and `ALLOW_TEMPLATES` in [`guardrails/input.rs`](https://github.com/cognokratos/simple-agent-template/blob/rust-agent/agent/src/guardrails/input.rs), with their unit tests |
-| 6. Output policy | `guardrails.output.secret_patterns` and `pii_entities`; check whether [`guardrails/pii.rs`](https://github.com/cognokratos/simple-agent-template/blob/rust-agent/agent/src/guardrails/pii.rs) would mask your identifiers or miss your PII |
-| 10. Mutations | a gate in `agent/src/approval/` and a `ToolSpec` in `agent/src/services.rs` ([EXTENDING.md](../EXTENDING.md#adding-an-approval-gated-action)) |
-
-In **Observe**, the infrastructure you should not need to touch on Rig is the
-agent's `api/`, `identity.rs`, `agent/hooks.rs`, `approval/pending.rs`,
-`approval/token.rs` and `telemetry/`.
 
 ## What you learned
 

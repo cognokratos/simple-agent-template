@@ -67,12 +67,12 @@ role revoked in Keycloak stayed in effect.
 
 | From | To | Variable | Notes |
 | --- | --- | --- | --- |
-| gateway | agent | `AGENT_API_KEY` → `NAT_GATEWAY_API_KEY` | Constant-time compare, then removed before anything downstream sees it: NAT strips it from the ASGI scope so its session metadata and telemetry never see it; the Rig agent removes the header in its auth middleware before any handler, log or span |
+| gateway | agent | `AGENT_API_KEY` | Constant-time compare in the agent's auth middleware ([`api/auth.rs`](../agent/src/api/auth.rs)), then the header is removed before any handler, log line or span can see it |
 | evaluator | agent | `AGENT_API_KEY` | Same endpoint, bypassing the browser path |
 | agent | MCP | `MCP_API_KEY` | Constant-time compare; removed from the request before RMCP logging |
 
-Both agents read the same variable names, including the historical
-`NAT_GATEWAY_API_KEY`, so the two branches' configurations compare line for line.
+The agent still accepts the old name `NAT_GATEWAY_API_KEY` as a deprecated
+alias ([renamed variables](CONFIGURATION.md#renamed-variables)).
 
 `make security-config-test` asserts the gateway, evaluator and agent agree on
 `AGENT_API_KEY`, and the agent and MCP on `MCP_API_KEY`, from the *resolved* Compose
@@ -129,81 +129,51 @@ previous helper silently omitted a header it could not encode, so a user whose
 Keycloak display name contained an accent reached the agent with identity
 headers missing — a security-relevant field disappearing with no error anywhere.
 
-Neither agent exports the raw identity. NAT copies these headers into span
-metadata and `main` redacts the user id, username and email from exported
-telemetry in every mode; the Rig agent never records them, keeping only the
-roles (`IDENTITY_HEADERS` / `RETAINED_GATEWAY_HEADERS` in
-[`identity.rs`](https://github.com/cognokratos/simple-agent-template/blob/rust-agent/agent/src/identity.rs)). Per-user attribution, when enabled,
+The agent does not export the raw identity. It never records the user id,
+username or email in telemetry, in any mode, and keeps only the roles (`IDENTITY_HEADERS` / `RETAINED_GATEWAY_HEADERS` in
+[`identity.rs`](../agent/src/identity.rs)). Per-user attribution, when enabled,
 is a pseudonym and nothing else. See
 [OBSERVABILITY.md](OBSERVABILITY.md#redaction-and-what-it-does-not-cover).
 
 ### The agent requires an asserted identity
 
-Both agents answer two questions, in this order, on every route except
-liveness: *is this the gateway?* (the service credential) and *who is it acting
-for?* (exactly one non-empty `x-authenticated-user-id`, otherwise `401`).
-`make auth-test` asserts the same four statuses against either agent. How each
-gets there differs.
+The agent answers two questions, in this order, on every route except liveness
+and readiness: *is this the gateway?* (the service credential) and *who is it
+acting for?* (exactly one non-empty `x-authenticated-user-id`, otherwise `401`).
 
-#### On the NAT implementation
-
-Two layers, because NAT's own one does not reach the client.
-
-`general.front_end.identity_header: x-authenticated-user-id` in
-`agent/config.yml` is NAT 1.9's supported way to consume an identity asserted by
-a trusted proxy. It resolves the header into a `UserInfo` and publishes it as
-`Context.user_id`, which is what makes per-user span attribution possible.
-
-It is **not** what refuses a request that asserts nothing. NAT raises
-`IdentityHeaderError` and registers a handler that would turn it into a `401`,
-but `add_generate_routes` passes `enable_interactive=True` unconditionally for
-the workflow path and its `/stream` and `/full` variants — the
-`enable_interactive_extensions` setting only governs whether the
-`/executions/...` endpoints are mounted, not which runner serves the workflow.
-The interactive runner acquires the session in a background task after the
-response has begun, inside a blanket `except Exception` that pushes the error
-into the stream body. Measured on 1.9.0: a keyed request with no identity header
-returns **200** with a `WORKFLOW_ERROR` event while the agent log shows
-`IdentityHeaderError: Configured identity header 'x-authenticated-user-id' is
-missing`.
-
-`RequireIdentityHeaderMiddleware` in `fastapi_worker.py` is therefore what
-actually enforces it: pure ASGI, ahead of NAT, requiring exactly one non-empty
-occurrence on every non-health route and answering `401` otherwise. `make
-auth-test` asserts that `401`, so the control cannot quietly revert to advisory.
-
-Both halves of the rule matter:
-
-* **Missing.** Previously a caller holding the service credential could reach
-  the workflow with no identity at all. The approval module refused to mint a
-  token in that state, but nothing stopped the request earlier, and the refusal
-  was the only thing standing between an unattributed request and an
-  unattributed audit record.
-* **Repeated.** A repeated header is ambiguous, not a list. Accepting the first
-  occurrence would let anything able to append a header decide who the user is.
-  `ResponderIdentityMiddleware` applies the same exactly-once rule to approval
-  responses, so both sides of an ownership check agree about the same request.
-
-This does **not** replace the service credential, and enabling it without one
-would be a mistake. NAT's own guidance is that a trusted identity header is only
-sound where untrusted clients cannot reach the server directly and the proxy
-strips any client-supplied value. Network reachability answers "can this packet
-arrive"; only the credential answers "is this caller the gateway". The two are
-complementary layers over the same question, and `make auth-test` asserts each
-independently — no key, key without identity, key with a repeated identity, and
-key with a well-formed identity.
-
-#### On the Rig implementation
-
-[`api/auth.rs`](https://github.com/cognokratos/simple-agent-template/blob/rust-agent/agent/src/api/auth.rs) is the service's own Axum middleware,
-so there is no framework refusal to work around: the service key, then exactly
-one bounded identity header, then at most one `x-request-id` (a repeated one is
+[`api/auth.rs`](../agent/src/api/auth.rs) is the service's own Axum middleware,
+outermost on every protected route, so not even a `404` is answered to a caller
+that is not the gateway. It checks the service key, then exactly one bounded
+identity header, then at most one `x-request-id` (a repeated or malformed one is
 `400`, because an approval token is bound to it). Only then is a
-[`TrustedCaller`](https://github.com/cognokratos/simple-agent-template/blob/rust-agent/agent/src/identity.rs) attached to the request. It has no
+[`TrustedCaller`](../agent/src/identity.rs) attached to the request. It has no
 public constructor, so no other code path — and nothing the model produces — can
 create one; it is never rendered into the prompt, and an MCP tool whose schema
 declares `user_id`, `actor_id`, `approval_token` or similar is refused at startup
-([`mcp/schema.rs`](https://github.com/cognokratos/simple-agent-template/blob/rust-agent/agent/src/mcp/schema.rs)).
+([`mcp/schema.rs`](../agent/src/mcp/schema.rs)).
+
+Both halves of the rule matter:
+
+* **Missing.** A caller holding the service credential but asserting no one
+  would otherwise reach the workflow unattributed, and anything it did would
+  become an unattributed audit record.
+* **Repeated.** A repeated header is ambiguous, not a list. Accepting the first
+  occurrence would let anything able to append a header decide who the user is.
+  Approval responses pass through the same middleware, so both sides of an
+  ownership check agree about the same request.
+
+This does **not** replace the service credential. A trusted identity header is
+only sound where untrusted clients cannot reach the server directly and the
+proxy strips any client-supplied value. Network reachability answers "can this
+packet arrive"; only the credential answers "is this caller the gateway". The
+two are complementary layers over the same question, and `make auth-test`
+asserts each independently — no key, key without identity, key with a repeated
+identity, and key with a well-formed identity.
+
+The retired NAT agent (`nat-1.9-final`) needed an extra ASGI middleware for
+this, because NAT's own identity-header handling reported a missing identity
+inside a `200` stream rather than refusing it; owning the HTTP layer removes
+that class of problem.
 
 #### Every caller names itself
 
@@ -211,25 +181,25 @@ Every direct caller therefore names itself. The gateway mints the header from
 the validated session; the evaluation harness and the end-to-end trace check
 assert a synthetic principal (`EVALUATION_PRINCIPAL`, default
 `evaluation-harness`), because an evaluation run is not a person and should not
-be recorded as one. The harness sends no `x-request-id`, so neither agent can
+be recorded as one. The harness sends no `x-request-id`, so the agent cannot
 bind an approval to its requests.
 
 ## Tool authority
 
 The model proposes tool calls; deterministic software decides which run.
 
-* **NAT:** the callable tools are those NAT is configured with (the MCP
-  `include:` list, plus the approval function when enabled), and arguments are
-  parsed into models derived from the published schemas.
-* **Rig:** every proposed call passes Rig's dispatch hook
-  ([`hooks.rs`](https://github.com/cognokratos/simple-agent-template/blob/rust-agent/agent/src/agent/hooks.rs)), which asks one pure function,
-  [`ToolPolicy::decide`](https://github.com/cognokratos/simple-agent-template/blob/rust-agent/agent/src/guardrails/tools.rs): closed registry,
-  JSON-object arguments matching the published schema exactly (unknown fields
-  refused, nothing coerced), at most `max_tool_calls` per request, and the
-  state-changing tool only into the approval gate. The executors re-check.
+Every proposed call passes Rig's dispatch hook
+([`hooks.rs`](../agent/src/agent/hooks.rs)), which enforces the per-request
+budget (`workflow.max_tool_calls`) and asks one pure function,
+[`ToolPolicy::decide`](../agent/src/guardrails/tools.rs): closed registry fixed
+at startup, JSON-object arguments matching the published schema exactly
+(unknown fields refused, nothing coerced), and the state-changing tool only into
+the approval gate — refused outright when approvals are disabled. The executors
+re-check before they act.
 
-In both, the MCP server re-validates every call and remains the authority on
-mutations, re-checked against the locked row after the human answers
+The policy does not decide whether a mutation is permitted. The MCP server
+re-validates every call and remains the authority on mutations, re-checked
+against the locked row after the human answers
 ([APPROVALS.md](APPROVALS.md)).
 
 ## Verifying it

@@ -81,7 +81,7 @@ schemas carry no guidance about *when* to call them.
 
 **Instead:** `search_tickets(status?, limit?)` and `get_ticket(ticket_id)`. Each
 has a typed schema, a clamped limit and a description of when to use it. A new
-capability is a new, reviewable tool plus an `include:` entry.
+capability is a new, reviewable tool plus a `tools.mcp.include` entry.
 
 ## Not distinguishing instructions from tool-returned data
 
@@ -108,13 +108,12 @@ captures every span attribute by default.
 credentials and customer PII from, and it usually has the weakest access
 controls.
 
-**Instead:** service credentials are stripped from the request *before* the
-agent runtime sees it (NAT: `StaticServiceKeyMiddleware`; Rig: its auth
-middleware) and before RMCP logs it (`require_api_key`). On NAT,
-`SensitiveHeaderRedactionProcessor` is a second layer, and the remaining gap —
-raw tool results in tool spans — is documented, not hidden; the Rig agent closes
-it by tracing only a redacted copy of tool results. The per-user identifier and
-pre-mask output are off by default in both. See [concept 6](06-observability.md).
+**Instead:** service credentials are stripped from the request *before* any
+agent handler, log or span sees it (`require_gateway` in the agent's
+[`api/auth.rs`](../../agent/src/api/auth.rs)) and before RMCP logs it
+(`require_api_key` in the MCP server). Tool spans record only a redacted copy of
+tool results, and the per-user identifier and pre-mask model output are off by
+default. See [concept 6](06-observability.md).
 
 ## Relying only on manual prompt testing
 

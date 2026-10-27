@@ -117,18 +117,18 @@
 <g class="node">
 <rect x="735" y="320" width="385" height="245" rx="28" fill="url(#agent)" stroke="#2EA043" stroke-width="2.4"/>
 <text x="760" y="354" font-family="Inter, Arial, sans-serif" font-size="15" font-weight="800" fill="#7EE787" text-anchor="start">
-<tspan x="760" dy="0">NeMo Agent Toolkit</tspan>
+<tspan x="760" dy="0">Rig · Rust</tspan>
 </text>
 <text x="928" y="399" font-family="Inter, Arial, sans-serif" font-size="28" font-weight="790" fill="#E6EDF3" text-anchor="middle">
 <tspan x="928" dy="0">Agent Runtime</tspan>
 </text>
 <rect x="775" y="430" width="305" height="48" rx="15" fill="#11241A" stroke="#2EA043" stroke-width="1.4"/>
 <text x="928" y="460" font-family="Inter, Arial, sans-serif" font-size="16" font-weight="650" fill="#B7F7C4" text-anchor="middle">
-<tspan x="928" dy="0">NeMo Guardrails · input / output</tspan>
+<tspan x="928" dy="0">Rust policy · input / output</tspan>
 </text>
 <rect x="775" y="493" width="305" height="48" rx="15" fill="#13202A" stroke="#3D4B55" stroke-width="1.4"/>
 <text x="928" y="523" font-family="Inter, Arial, sans-serif" font-size="16" font-weight="650" fill="#D4DEE7" text-anchor="middle">
-<tspan x="928" dy="0">ReAct workflow · bounded loop</tspan>
+<tspan x="928" dy="0">Rig loop · tool-policy hook</tspan>
 </text>
 </g>
 <g class="node">
@@ -271,8 +271,8 @@
 <tspan x="790" dy="0">3 · REASON SAFELY</tspan>
 </text>
 <text x="790" y="920" font-family="Inter, Arial, sans-serif" font-size="16" font-weight="560" fill="#C9D1D9" text-anchor="start">
-<tspan x="790" dy="0">Guardrails surround</tspan>
-<tspan x="790" dy="24.8">a bounded ReAct loop</tspan>
+<tspan x="790" dy="0">Explicit Rust policy around</tspan>
+<tspan x="790" dy="24.8">a bounded Rig agent loop</tspan>
 </text>
 <text x="1135" y="886" font-family="Inter, Arial, sans-serif" font-size="15" font-weight="800" fill="#B7F7C4" text-anchor="start">
 <tspan x="1135" dy="0">4 · CALL TYPED TOOLS</tspan>

@@ -28,7 +28,7 @@ def main() -> None:
 
     interactive = services["agent"]["environment"].get("HITL_ENABLE_INTERACTIVE", "false")
     if interactive.strip().lower() not in {"", "false", "0", "no", "off"}:
-        sys.exit("::error::NAT interaction endpoints are enabled by default")
+        sys.exit("::error::agent interaction endpoints are enabled by default")
 
     print("The shipped configuration exposes no mutation surface.")
 

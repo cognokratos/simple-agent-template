@@ -464,9 +464,9 @@ def guardrail_policy_scores(outputs: Any, expectations: dict[str, Any]) -> list[
         _feedback(
             "guardrail_decision_event_present",
             decision_present,
-            "The live NAT stream included the explicit input Guardrails decision event."
+            "The live agent stream included the explicit input Guardrails decision event."
             if decision_present
-            else "The live NAT stream did not include an input Guardrails decision event.",
+            else "The live agent stream did not include an input Guardrails decision event.",
         ),
         _feedback(
             "guardrail_false_positive",

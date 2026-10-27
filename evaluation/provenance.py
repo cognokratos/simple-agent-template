@@ -67,11 +67,13 @@ def _sha256(text: str) -> str:
 
 
 def _canonical_sha256(value: Any) -> str:
-    """Mirror of ``nat_streaming_react.provenance.canonical_sha256``.
+    """Mirror of the retired NAT agent's ``canonical_sha256`` (``nat-1.9-final``).
 
-    Duplicated rather than imported: the evaluator image does not install the
-    agent package, and mounting the agent source into the harness to share one
-    helper would be a worse trade than two short identical functions.
+    Used only to digest that agent's rail-prompt layout, so the harness can
+    still evaluate the preserved NAT agent for a framework comparison; the
+    current Rust agent is digested with ``_canonical_json_sha256`` below.
+    Duplicated rather than imported: the evaluator never installs an agent
+    package.
 
     The duplication is not taken on trust. Both sides digest the same file, so
     every run compares the two results and reports ``prompt_matches_config`` /
@@ -86,16 +88,18 @@ def _canonical_sha256(value: Any) -> str:
 def _canonical_json_sha256(value: Any) -> str:
     """Digest of sorted-key, compact JSON — the form the Rust agent reports.
 
-    The ``rust-agent`` branch's agent digests its rail prompts this way
+    The agent digests its rail prompts this way
     (``guardrails_prompts_digest: "canonical-json"``), because reproducing
-    PyYAML's ``safe_dump`` byte for byte in Rust would be fragile. The same
-    ``prompt_matches_config`` comparison then holds across both runtimes.
+    PyYAML's ``safe_dump`` byte for byte in Rust would be fragile. The YAML
+    digest above is kept for the retired NAT runtime, so the same
+    ``prompt_matches_config`` comparison holds against either.
     """
     return _sha256(json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False))
 
 
 #: What ``agent_runtime`` is recorded as when a reachable agent does not say:
-#: the NAT agent on ``main`` predates the field.
+#: the retired NAT agent (tag ``nat-1.9-final``) predates the field. Kept so the
+#: harness can still evaluate that agent for a framework comparison.
 NAT_RUNTIME = "nat"
 
 
@@ -188,9 +192,9 @@ def _config_prompts(path: Path | None = None) -> dict[str, Any]:
         return {"available": False, "error": f"{type(exc).__name__}: {exc}"}
 
     system_prompt = (config.get("workflow") or {}).get("system_prompt")
-    # Two layouts: NAT's (`middleware.workflow_guardrails.guardrails.prompts`,
-    # on `main`) and the Rust agent's (`guardrails.prompts`, on rust-agent),
-    # each digested the way its agent digests it.
+    # Two layouts: the Rust agent's (`guardrails.prompts`) and the retired NAT
+    # runtime's (`middleware.workflow_guardrails.guardrails.prompts`, tag
+    # nat-1.9-final), each digested the way its agent digests it.
     nat_rails = (
         ((config.get("middleware") or {}).get("workflow_guardrails") or {}).get("guardrails")
         or {}
@@ -327,7 +331,7 @@ def mlflow_tags(record: dict[str, Any]) -> dict[str, str]:
     agent = record.get("agent", {})
     harness = record.get("harness", {})
     tags = {
-        # Which implementation answered: `nat` (main) or `rig-rust` (rust-agent).
+        # Which implementation answered: `rig-rust`, or `nat` for the retired runtime.
         "provenance.agent.runtime": agent_runtime(agent),
         "provenance.agent.build_commit": str(agent.get("build_commit", "unknown")),
         "provenance.agent.model": str(agent.get("model", "")),

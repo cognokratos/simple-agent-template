@@ -18,7 +18,7 @@ Requirements:
 - [ ] typed input struct with schema descriptions
 - [ ] every argument validated; numeric limits clamped
 - [ ] parameterized SQL only
-- [ ] listed in `include:` and discoverable by the agent (`Adding tool ... to group` in `make logs-agent`)
+- [ ] listed in `tools.mcp.include` and discoverable by the agent (`discovered MCP tools` in `make logs-agent`)
 - [ ] at least one evaluation case in `evaluation/datasets/tool_calling.json`, passing on your model
 - [ ] `EVALUATION_TOOL_NAMES` updated
 - [ ] a trace showing the call as a `tickets_mcp__<name>` span
@@ -35,7 +35,7 @@ Requirements:
 
 - [ ] schema with `CHECK` constraints for every enumerated field, and foreign keys
 - [ ] tools sized so the common cross-entity questions need **at most two** tool calls (justify your granularity)
-- [ ] system-prompt and `tool_overrides` guidance for when to use which tool
+- [ ] system-prompt and `tools.mcp.overrides` guidance for when to use which tool
 - [ ] `tools` and `grounding` dataset cases covering the new questions, including an absent-record case
 - [ ] an injection fixture in the new entity's free-text field, and an `injection` case for it
 - [ ] the read-only allow templates updated so that routine questions about the new entity are not blocked by the input rail
@@ -51,7 +51,7 @@ Requirements:
 - [ ] an entry in `mutation::ACTIONS` with an explicit `allowed_choices`
 - [ ] `apply_policy` rules for the action, each with a unit test (including at least one refusal)
 - [ ] `apply` performs the mutation and an audit insert in the caller's transaction
-- [ ] an agent-side approval step that takes identity from the trusted request context and signs the exact payload shown to the human (NAT: a registered function in `approval.py`; Rig: a gate in `agent/src/approval/`)
+- [ ] an agent-side approval step that takes identity from the trusted request context and signs the exact payload shown to the human, as a gate in `agent/src/approval/` with a `ToolSpec` in `agent/src/services.rs`
 - [ ] `POLICY_VERSION` bumped
 - [ ] `make verify-approvals-rust` and `make verify-approvals` pass
 - [ ] an `injection` dataset case where stored text claims your action was already approved, scored by `injection_no_action_claim`
@@ -64,7 +64,7 @@ preserving the infrastructure. See [lab 10](tutorials/10-build-your-own-domain-a
 
 Requirements:
 
-- [ ] no changes to `gateway/`, the agent's authentication, interaction and observability modules (NAT: `fastapi_worker.py`, `interaction_guard.py`, `observability/`; Rig: `api/auth.rs`, `approval/pending.rs`, `telemetry/`), or `evaluation/scorers.py`. Justify any you could not avoid.
+- [ ] no changes to `gateway/`, the agent's authentication, interaction and observability modules (`agent/src/api/auth.rs`, `agent/src/approval/pending.rs`, `agent/src/telemetry/`), or `evaluation/scorers.py`. Justify any you could not avoid.
 - [ ] all four evaluation suites with new datasets, passing their gates on your chosen model, with consistent provenance
 - [ ] domain-specific input policy (self-check prompt, critical patterns, anchored allow templates) and `make verify-input-guardrails` passing
 - [ ] injection fixtures and an `injection` suite for your domain's free-text fields
@@ -87,9 +87,11 @@ The labs surfaced real gaps. Each is a good self-directed project:
 - **Server-side fan-out.** Replace the model-driven `search_tickets` + N×`get_ticket`
   pattern for "history for all open tickets" with a single bounded tool, and show
   the latency and `TOOLS-FANOUT-OPEN-TICKETS` results before and after.
-- **Tool-span redaction.** Raw tool results reach the trace store (lab 06). Add
-  redaction for configured fields in tool spans, without breaking the
-  evaluation harness's ability to read tool results.
+- **Field-level tool-span redaction.** Tool spans record a copy of each tool
+  result with credential patterns redacted and configured PII masked, but every
+  other field reaches the trace store (lab 06). Add redaction for configured
+  domain fields, without breaking the evaluation harness's ability to read tool
+  results.
 - **Per-user data authorization.** Pass the authenticated identity to the MCP
   server out of band (never as a model-chosen argument) and enforce row-level
   access in SQL. [LIMITATIONS.md](LIMITATIONS.md#before-production) lists this
