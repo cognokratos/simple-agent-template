@@ -1,3 +1,14 @@
+# OpenTelemetry Collector: the one egress point for agent traces.
+#
+#   agent --OTLP/HTTP--> collector --OTLP/HTTP--> Phoenix          (always)
+#                                  \--OTLP/HTTP--> MLflow           (overlay)
+#
+# Phoenix ingests OTLP directly and reads the OpenInference attributes the
+# agent already sets (openinference.span.kind, input.value, output.value); no
+# Phoenix SDK runs anywhere. MLflow is added by otel-collector.mlflow.yml,
+# selected with OTEL_COLLECTOR_OVERLAY (`make dev-mlflow`), as a *second
+# pipeline* fed by the same receiver: each backend gets one copy of each span.
+
 receivers:
   otlp:
     protocols:
@@ -9,15 +20,35 @@ processors:
     check_interval: 1s
     limit_mib: 256
     spike_limit_mib: 64
+  # Defence in depth on the egress boundary. The agent never sets these (see
+  # agent/src/telemetry/mod.rs and the redaction tests), so this deletes
+  # nothing today; it exists so a future instrumentation change that did set
+  # one cannot ship it to any backend. Applied before the fan-out, so every
+  # exporter sees the scrubbed span.
+  attributes/scrub:
+    actions:
+      - {key: http.request.header.authorization, action: delete}
+      - {key: http.request.header.cookie, action: delete}
+      - {key: http.request.header.x-authenticated-user-id, action: delete}
+      - {key: authorization, action: delete}
+      - {key: approval.token, action: delete}
+      - {key: approval_token, action: delete}
+      - {key: enduser.id, action: delete}
+      - {key: user.id, action: delete}
   batch:
     timeout: 1s
     send_batch_size: 256
+  # Phoenix files spans by project. Inserted, not overwritten, so a caller that
+  # names its own project keeps it.
+  resource/phoenix:
+    attributes:
+      - key: openinference.project.name
+        value: ${env:PHOENIX_PROJECT_NAME}
+        action: insert
 
 exporters:
-  otlphttp/mlflow:
-    traces_endpoint: http://mlflow:5000/v1/traces
-    headers:
-      x-mlflow-experiment-id: "0"
+  otlphttp/phoenix:
+    traces_endpoint: http://phoenix:6006/v1/traces
     encoding: proto
     timeout: 10s
     retry_on_failure:
@@ -38,5 +69,5 @@ service:
   pipelines:
     traces:
       receivers: [otlp]
-      processors: [memory_limiter, batch]
-      exporters: [otlphttp/mlflow]
+      processors: [memory_limiter, attributes/scrub, resource/phoenix, batch]
+      exporters: [otlphttp/phoenix]

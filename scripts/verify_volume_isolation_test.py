@@ -2,7 +2,7 @@
 """Behavioral tests for Compose project/volume isolation.
 
 Two projects on the same Docker host must not collide on persistent storage.
-An unconditional literal default on `docker-compose.yml`'s four named volumes
+An unconditional literal default on `docker-compose.yml`'s named volumes
 would let changing `COMPOSE_PROJECT_NAME` or using `docker compose -p`
 separate containers and networks while still leaving every project pointing
 at the exact same volumes.
@@ -21,7 +21,10 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-VOLUME_KEYS = ("postgres-data", "mlflow-data", "keycloak-data", "keycloak-import")
+VOLUME_KEYS = ("postgres-data", "phoenix-data", "mlflow-data", "keycloak-data", "keycloak-import")
+#: mlflow-data is declared for the optional `mlflow` profile only, so every
+#: render here enables that profile; otherwise Compose omits the volume.
+PROFILE_ARGS = ("--profile", "mlflow")
 
 
 def _docker_available() -> bool:
@@ -34,7 +37,7 @@ def _render(*extra_args: str, env_overrides: dict | None = None) -> dict:
     env = dict(os.environ)
     env.update(env_overrides or {})
     result = subprocess.run(
-        ["docker", "compose", *extra_args, "config", "--format", "json"],
+        ["docker", "compose", *PROFILE_ARGS, *extra_args, "config", "--format", "json"],
         cwd=ROOT,
         capture_output=True,
         text=True,
@@ -99,13 +102,20 @@ def test_explicit_override_wins_and_is_not_project_scoped() -> None:
     config = _render(env_overrides={"COMPOSE_PROJECT_NAME": "proj-a", "POSTGRES_DATA_VOLUME": "pinned-pg-data"})
     names = _volume_names(config)
     assert names["postgres-data"] == "pinned-pg-data"
-    # The other three volumes are untouched by the override and still isolate.
+    # The other volumes are untouched by the override and still isolate.
+    assert names["phoenix-data"] == "proj-a-phoenix-data"
     assert names["mlflow-data"] == "proj-a-mlflow-data"
     print("PASS: an explicit volume-name override wins over the computed project-scoped default")
 
 
 def test_profiles_still_render() -> None:
-    for args in ([], ["--profile", "evaluation"], ["--profile", "dev"], ["--profile", "evaluation", "--profile", "dev"]):
+    for args in (
+        [],
+        ["--profile", "evaluation"],
+        ["--profile", "dev"],
+        ["--profile", "mlflow"],
+        ["--profile", "evaluation", "--profile", "dev", "--profile", "mlflow"],
+    ):
         subprocess.run(
             ["docker", "compose", *args, "config", "-q"],
             cwd=ROOT,
@@ -113,7 +123,7 @@ def test_profiles_still_render() -> None:
             capture_output=True,
             text=True,
         )
-    print("PASS: the default, evaluation and dev profiles all still render")
+    print("PASS: the default, evaluation, dev and mlflow profiles all still render")
 
 
 def main() -> None:

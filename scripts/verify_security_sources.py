@@ -235,8 +235,8 @@ def main() -> None:
     emitted = set(re.findall(r'"(guardrail_[a-z0-9_]+_decision)"', guardrails_source))
     require(len(emitted) == 2, f"expected an input and an output decision event, found {sorted(emitted)}")
     # Read the evaluator's prefixes from source rather than importing it: this
-    # check has to run with nothing but python3 installed, and evaluation.client
-    # imports mlflow at module scope.
+    # check has to run with nothing but python3 installed, and stays a pure
+    # source check whatever the evaluator happens to import.
     prefixes = set(
         re.findall(
             r'^(?:INPUT|OUTPUT)_GUARDRAIL_EVENT_PREFIX = "([a-z0-9_]+)"',
@@ -254,6 +254,22 @@ def main() -> None:
         require(
             event in exact or any(event.startswith(prefix) for prefix in prefixes),
             f"the agent emits {event!r} but the evaluator would not capture it",
+        )
+
+    # OpenTelemetry is the agent's only telemetry boundary. Phoenix is reached
+    # through the collector, never from the agent, so the authority/security
+    # path carries no Phoenix SDK, no OpenInference package and no
+    # backend-specific branch. (OpenInference *attribute names* such as
+    # `openinference.span.kind` are plain span attributes and are fine.)
+    cargo = text("agent/Cargo.toml").lower()
+    for forbidden in ("phoenix", "arize", "openinference", "mlflow"):
+        require(forbidden not in cargo, f"agent/Cargo.toml depends on a {forbidden} package")
+    agent_sources = "\n".join(path.read_text(encoding="utf-8").lower() for path in (ROOT / "agent" / "src").rglob("*.rs"))
+    for forbidden in ("phoenix", "arize"):
+        # Whole words: "summarize" is not a reference to Arize.
+        require(
+            not re.search(rf"\b{forbidden}\b", agent_sources),
+            f"agent/src references {forbidden}; route telemetry via the collector",
         )
 
     # /version must never be able to serve a credential or prompt text.

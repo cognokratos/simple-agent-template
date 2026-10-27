@@ -1,19 +1,22 @@
 #!/usr/bin/env python3
 """Live end-to-end observability check against the running cluster.
 
-Drives real requests to the agent and then asserts on what MLflow actually
-received. It asserts the attribute names the Rust agent emits
+Drives real requests to the agent and then asserts on what the trace backend
+actually received: Phoenix by default (``--backend phoenix``, over its REST API
+from the host), or the optional MLflow (``--backend mlflow``). It asserts the attribute names the Rust agent emits
 (``agent.event_type``, ``agent.runtime``, ``request.id``). This is the test that
 would have caught the disconnected traces that the retired NAT runtime's
 ``patch_nat_single_trace.py`` existed to fix.
 
 Run with the cluster up and a model available:
 
-    make trace-test
+    make trace-test            # Phoenix
+    make trace-test-mlflow     # MLflow, after make dev-mlflow
 
 Each scenario asserts the properties that matter for debugging an agent
 run: one trace per request, the workflow/tool hierarchy intact, Guardrails
-decisions in the same trace, and a readable question and answer on the root.
+decisions in the same trace, a readable question and answer on the root, and
+no credential, approval token or raw user identifier anywhere in the export.
 """
 
 from __future__ import annotations
@@ -23,8 +26,13 @@ import json
 import subprocess
 import sys
 import time
+from pathlib import Path
 
 COMPOSE = ["docker", "compose"]
+#: The principal this script asserts. It must never reach exported telemetry:
+#: the agent exports at most a pseudonym, and only with OTEL_TRACE_USER_ID=true.
+PRINCIPAL = "trace-test-support-rep"
+BACKEND = {"name": "phoenix", "url": "http://localhost:6006", "project": "tickets-agent"}
 
 
 def fail(message: str) -> None:
@@ -60,11 +68,11 @@ def ask(question: str, request_id: str, timeout: int) -> str:
     script = (
         'curl -sS -N --max-time {timeout} -X POST '
         '-H "Authorization: Bearer $AGENT_API_KEY" '
-        '-H "x-authenticated-user-id: trace-test-support-rep" '
+        '-H "x-authenticated-user-id: {principal}" '
         '-H "x-request-id: {request_id}" '
         '-H "content-type: application/json" '
         "-d '{payload}' http://agent:8000/v1/workflow/full"
-    ).format(timeout=timeout, request_id=request_id, payload=payload)
+    ).format(timeout=timeout, request_id=request_id, payload=payload, principal=PRINCIPAL)
 
     process = subprocess.Popen(
         COMPOSE + ["exec", "-T", "gateway", "sh", "-lc", script],
@@ -139,8 +147,20 @@ print(json.dumps(out, default=str))
 
 
 def recent_traces(limit: int = 5) -> list[dict]:
+    if BACKEND["name"] == "phoenix":
+        sys.path.insert(0, str(Path(__file__).resolve().parent))
+        from inspect_phoenix_traces import recent_traces as phoenix_traces
+
+        try:
+            return phoenix_traces(BACKEND["url"], BACKEND["project"], limit)
+        except OSError as error:
+            fail(f"could not query Phoenix at {BACKEND['url']}: {error}")
+    return mlflow_traces(limit)
+
+
+def mlflow_traces(limit: int = 5) -> list[dict]:
     result = subprocess.run(
-        COMPOSE + ["exec", "-T", "mlflow", "python", "-c", MLFLOW_QUERY, str(limit)],
+        COMPOSE + ["--profile", "mlflow", "exec", "-T", "mlflow", "python", "-c", MLFLOW_QUERY, str(limit)],
         capture_output=True,
         text=True,
         timeout=180,
@@ -159,12 +179,12 @@ def latest_trace(request_id: str, limit: int = 5) -> dict:
 
     for trace in recent_traces(limit):
         for span in trace["spans"]:
-            # MLflow parses JSON span attributes back into objects on read, so
-            # compare against the serialized form either way.
+            # Backends may parse JSON span attributes back into objects on
+            # read, so compare against the serialized form either way.
             value = span["attributes"].get("request.id")
             if value is not None and request_id in json.dumps(value, default=str):
                 return trace
-    fail(f"no MLflow trace found for request {request_id}")
+    fail(f"no {BACKEND['name']} trace found for request {request_id}")
     return {}
 
 
@@ -212,12 +232,40 @@ def check_readable_io(root: dict, question: str, label: str, expect_answer: bool
     print(f"  ok: readable answer on the root span ({len(answer)} chars)")
 
 
+def _configured_secrets() -> list[str]:
+    """The live values of the stack's secrets, read from .env, else defaults."""
+    values = {"dev-agent-api-key-change-me", "dev-mcp-api-key-change-me", "dev-gateway-client-secret-change-me"}
+    env_file = Path(__file__).resolve().parents[1] / ".env"
+    if env_file.is_file():
+        for line in env_file.read_text(encoding="utf-8").splitlines():
+            key, _, value = line.partition("=")
+            if key.strip() in {
+                "AGENT_API_KEY", "MCP_API_KEY", "HITL_APPROVAL_SECRET", "KEYCLOAK_GATEWAY_CLIENT_SECRET", "LLM_API_KEY",
+            } and len(value.strip()) >= 8:
+                values.add(value.strip())
+    return sorted(values)
+
+
 def check_no_credentials(trace: dict, label: str) -> None:
+    """Every exported attribute of every span, against every secret value.
+
+    The Phoenix backend returns all attributes, not a filtered subset, so this
+    is a check of the whole export rather than of the fields we chose to read.
+    """
     blob = json.dumps(trace)
-    for marker in ("Bearer ", "dev-agent-api-key", "dev-mcp-api-key", "authorization\": \"Bearer"):
+    for marker in ("Bearer ", "authorization\": \"Bearer", "approval_token", "x-authenticated-user-id"):
         if marker in blob:
             fail(f"{label}: a credential marker {marker!r} reached exported telemetry")
-    print("  ok: no credential material in the exported trace")
+    for value in _configured_secrets():
+        if value in blob:
+            fail(f"{label}: a configured secret value reached exported telemetry (value withheld)")
+    if PRINCIPAL in blob:
+        fail(f"{label}: the raw authenticated user id reached exported telemetry")
+    for span in trace["spans"]:
+        for key in span["attributes"]:
+            if key in {"enduser.id", "user.id"}:
+                fail(f"{label}: span {span['name']} carries a raw user attribute {key!r}")
+    print("  ok: no credential, approval token or raw user id in the exported trace")
 
 
 def streamed_chunks(stream: str) -> list[str]:
@@ -278,6 +326,7 @@ def scenario_tool_call(timeout: int) -> None:
         fail(f"no MCP tool spans in the trace: {names(trace)}")
     print(f"  ok: MCP tool spans preserved: {sorted(set(tools))}")
     check_readable_io(root, "Show me the complete details", "tool")
+    check_no_credentials(trace, "tool")
 
 
 def scenario_multiple_tool_calls(timeout: int) -> None:
@@ -331,6 +380,7 @@ def scenario_guardrail_block(timeout: int) -> None:
         print(f"  note: no span carried guardrail.blocked=true; decision spans present: {decisions}")
     else:
         print(f"  ok: the safety decision is observable ({[s['name'] for s in blocked]})")
+    check_no_credentials(trace, "guardrail")
 
 
 def scenario_large_response(timeout: int) -> None:
@@ -353,7 +403,12 @@ def scenario_large_response(timeout: int) -> None:
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--timeout", type=int, default=300, help="per-request timeout in seconds")
+    parser.add_argument("--backend", choices=["phoenix", "mlflow"], default="phoenix")
+    parser.add_argument("--phoenix-url", default=BACKEND["url"])
+    parser.add_argument("--phoenix-project", default=BACKEND["project"])
     args = parser.parse_args()
+    BACKEND.update(name=args.backend, url=args.phoenix_url, project=args.phoenix_project)
+    print(f"Trace backend: {args.backend}")
 
     scenario_basic(args.timeout)
     scenario_tool_call(args.timeout)

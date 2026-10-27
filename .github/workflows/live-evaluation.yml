@@ -1,7 +1,12 @@
 name: Live evaluation (manual)
 
-# The model-dependent half of the test suite: the MLflow suites driven against a
-# running cluster and a real LLM.
+# The model-dependent half of the test suite: the four deterministic evaluation
+# suites driven against a running cluster and a real LLM.
+#
+# The result is evaluation/results/*.json, produced by the repository's own
+# evaluator. No observability platform is consulted or required: reporting is
+# switched off here (EVAL_REPORTERS=none), and the gate summary below reads the
+# artifacts alone.
 #
 # Manual only, and required by nothing. It exists so the command is recorded and
 # runnable rather than folded into the pull-request gate, for two reasons:
@@ -32,6 +37,11 @@ on:
         default: "all"
         type: choice
         options: [all, guardrails, tools, grounding, injection]
+      enforce_gate:
+        description: "Fail the job when any suite's deterministic gate fails (release gating)"
+        required: false
+        default: false
+        type: boolean
 
 permissions:
   contents: read
@@ -98,21 +108,21 @@ jobs:
       - name: Report what is actually running
         run: make version
 
-      - name: Bootstrap the MLflow datasets
-        env:
-          SUITE_INPUT: ${{ inputs.suite }}
-        run: make eval-bootstrap SUITE="$SUITE_INPUT"
-
       # ALLOW_FAILURES=1 suppresses the *metric* gate only. It does not suppress
-      # an infrastructure failure: an unreachable agent, a missing dataset or a
-      # dead model raises out of the runner and this step fails regardless. That
+      # an infrastructure failure: a case the agent could not answer (an
+      # unreachable agent, a dead model) is recorded as unevaluated, fails its
+      # gate, and makes the evaluator exit 2, so this step fails regardless. That
       # separation is the whole reason the flag exists — a red metric is a
       # published finding, a broken cluster is a broken build, and the two must
       # not report identically.
+      #
+      # EVAL_REPORTERS=none: the result is the JSON artifact. Phoenix runs in
+      # the cluster but is torn down with it, so publishing there would add a
+      # dependency and nothing durable.
       - name: Run the suites
         env:
           SUITE_INPUT: ${{ inputs.suite }}
-        run: make eval SUITE="$SUITE_INPUT" ALLOW_FAILURES=1
+        run: make eval SUITE="$SUITE_INPUT" ALLOW_FAILURES=1 EVAL_REPORTERS=none
 
       # The single gate that decides whether anything gets published. Runs on
       # `always()` so a crash in "Run the suites" (an infra failure — a metric
@@ -176,14 +186,30 @@ jobs:
           path: evaluation/results/*.json
           if-no-files-found: error
 
+      # The decision, read from the validated artifacts alone. Report-only by
+      # default (a red metric is a finding, see ALLOW_FAILURES above); with
+      # enforce_gate it fails the job, which is how a release gate consumes it.
+      - name: Deterministic gate summary
+        if: ${{ !cancelled() && steps.validate.outputs.eligible == 'true' }}
+        env:
+          ENFORCE_GATE: ${{ inputs.enforce_gate }}
+        run: |
+          set -euo pipefail
+          python3 scripts/evaluation_gate.py evaluation/results --markdown >> "$GITHUB_STEP_SUMMARY"
+          if [[ "$ENFORCE_GATE" == "true" ]]; then
+            python3 scripts/evaluation_gate.py evaluation/results --enforce
+          else
+            python3 scripts/evaluation_gate.py evaluation/results
+          fi
+
       # Not `make logs-app`: that follows the stream and would never return.
       - name: Cluster logs on failure
         if: failure()
-        run: docker compose logs --no-color --tail=300 postgres mcp-server agent gateway ui
+        run: docker compose logs --no-color --tail=300 postgres mcp-server agent gateway ui otel-collector phoenix
 
-      # Containers and networks only. Volumes are deliberately left alone: a
-      # `down -v` here would delete the MLflow history this workflow exists to
-      # accumulate.
+      # Containers and networks only. Nothing durable lives in this cluster —
+      # the published artifact is the record — but volumes are left alone so a
+      # self-hosted runner reusing a Docker host keeps its own Phoenix history.
       - name: Tear down
         if: always()
         run: make down
