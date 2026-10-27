@@ -191,8 +191,8 @@ def main() -> None:
             f"{crate} is not pinned to an exact version in agent/Cargo.toml",
         )
 
-    # The MCP server is unchanged on this branch and stays the capability
-    # boundary: same checks as on `main`.
+    # The MCP server is the capability boundary, whatever agent framework
+    # sits in front of it.
     mcp = text("mcp-server/src/main.rs")
     require("MCP_API_KEY" in mcp, "MCP API-key environment variable missing")
     require("constant_time_eq" in mcp, "MCP key comparison is not constant time")

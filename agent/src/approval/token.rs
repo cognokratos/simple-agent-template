@@ -65,8 +65,8 @@ pub enum MintError {
 }
 
 /// Serialise with sorted keys and no insignificant whitespace — the one form
-/// the Python minter, this minter and the Rust verifier all produce
-/// identically. Mirrors `canonical_json` in `mcp-server/src/approval.rs`.
+/// this minter, the Rust verifier and the retired NAT agent's Python minter
+/// all produce identically, so tokens stay verifiable across implementations. Mirrors `canonical_json` in `mcp-server/src/approval.rs`.
 pub fn canonical_json(value: &Value) -> String {
     match value {
         Value::Object(map) => {
@@ -178,7 +178,7 @@ pub(super) mod tests {
         change.note.clear();
         let claims = Claims::for_change(&change, 600, Some(0), Some("n".into())).unwrap();
         assert_eq!(claims.payload, json!({}));
-        // sha256("{}"), the same digest the Python minter produces.
+        // sha256("{}"), the same digest the retired Python minter produced.
         assert_eq!(
             claims.payload_sha256.as_deref(),
             Some("44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a")

@@ -497,7 +497,8 @@ mod tests {
         }
     }
 
-    /// Cross-language: a token minted by the Python agent is accepted here.
+    /// Cross-language: a token minted by the retired NAT agent's Python minter
+    /// (tag `nat-1.9-final`) is still accepted here.
     ///
     /// Deliberately checks the signature and the payload digest directly rather
     /// than calling `decode`, because `decode` enforces expiry: a pinned token
@@ -510,7 +511,7 @@ mod tests {
     /// itself. `payload_sha256` is the one field both sides compute
     /// independently, so this is what proves the two canonical encoders agree.
     #[test]
-    fn a_token_minted_by_the_python_agent_is_accepted() {
+    fn a_token_minted_by_the_retired_python_agent_is_still_accepted() {
         // Produced by mint_token() in agent/src/nat_streaming_react/approval.py
         // with TEST_SECRET. Regenerate only if the claim format changes.
         const PYTHON_TOKEN: &str = "eyJhY3Rpb24iOiJzZXRfdGlja2V0X3ByaW9yaXR5IiwiYWN0b3JfaWQiOiJzdXBwb3J0LXJlcC0xIiwiY2hvaWNlIjoiaGlnaCIsImV4cCI6MTc4OTg5OTI4OCwiZXhwZWN0ZWRfY2hvaWNlIjoibWVkaXVtIiwibm9uY2UiOiJkYjVkM2U5OS01NDdlLTQ1OWQtYTIwZi1hOTVkNGRhOThmZDQiLCJvdmVycmlkZV9yZXF1ZXN0ZWQiOnRydWUsInBheWxvYWQiOnsibm90ZSI6IkRvY3VtZW50ZWQgYWZ0ZXIgdGhlIGN1c3RvbWVyJ3Mgc2Vjb25kIGZvbGxvdy11cC4gVW5pY29kZTogWm_DqyDinJMifSwicGF5bG9hZF9zaGEyNTYiOiI1MWFjYmIxMGNmY2YyZWE4MDBkMTI3NjI3YWZlY2FmZGJiNjVkN2IxNDJjOGQ3ZjdhMmJkMWY0NWNiOTFmMGEwIiwicmF0aW9uYWxlIjoiQ3VzdG9tZXIgaGFzIGZvbGxvd2VkIHVwIHR3aWNlIHdpdGggbm8gcmVzb2x1dGlvbi4iLCJyZXF1ZXN0X2lkIjoiMTExMTExMTEtMTExMS00MTExLTgxMTEtMTExMTExMTExMTExIiwicmVzb3VyY2VfaWQiOiJUS1QtMTAwMSIsInYiOjF9.X21SyZoYnU8OU8fYk23shsM6JugTdWQBhUuyWsNeWtc";

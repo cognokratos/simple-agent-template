@@ -278,7 +278,7 @@ mod tests {
     }
 
     #[test]
-    fn the_prompt_text_matches_main_line_for_line() {
+    fn the_prompt_text_is_pinned_line_for_line() {
         let proposal = Proposal::from_args(&args(json!({
             "ticket_id": " TKT-1001 ",
             "current_priority": "medium",

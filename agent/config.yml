@@ -18,6 +18,8 @@ workflow:
   max_history: 20
   temperature: 0.0
   max_tokens: 4096
+  # Parsed and validated, but not yet enforced: a run has no overall
+  # wall-clock bound. See docs/LIMITATIONS.md#deliberate-gaps.
   request_timeout_seconds: 300
   # {tools} and {tool_names} are filled at startup from MCP discovery, even
   # though the schemas also travel structurally with native tool calling: the

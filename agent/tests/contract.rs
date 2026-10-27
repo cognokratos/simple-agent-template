@@ -137,7 +137,7 @@ async fn the_evaluator_request_shape_is_accepted() {
 }
 
 #[tokio::test]
-async fn the_stream_speaks_mains_sse_vocabulary() {
+async fn the_stream_speaks_the_contract_sse_vocabulary() {
     let agent = agent(
         vec![call("get_ticket", json!({"ticket_id": "TKT-1001"})), text(&["TKT-1001 ", "is ", "medium."])],
         Options::default(),
