@@ -40,7 +40,13 @@ from evaluation.datasets import dataset_revision, load_cases  # noqa: E402
 from evaluation.domain import CaseResult, EvaluationCase, Score  # noqa: E402
 from evaluation.reporting.mlflow import MlflowReporter, active_model_name  # noqa: E402
 from evaluation.reporting.phoenix import PhoenixReporter  # noqa: E402
-from verify_evaluation_artifacts import validate  # noqa: E402
+
+# The publishing validator lives in scripts/, which the evaluator image does not
+# mount; the host and CI run this test with it.
+try:
+    from verify_evaluation_artifacts import validate  # noqa: E402
+except ModuleNotFoundError:  # pragma: no cover - evaluator-image path
+    validate = None
 
 PACKAGE = ROOT / "evaluation"
 PROVENANCE = {
@@ -200,6 +206,8 @@ class SuiteCompatibilityTests(unittest.TestCase):
 
 class ArtifactTests(unittest.TestCase):
     def test_the_artifact_is_written_and_valid_without_any_reporter(self) -> None:
+        if validate is None:
+            self.skipTest("scripts/verify_evaluation_artifacts.py is not mounted here")
         result = run("tools")
         self.assertEqual(result["reporting"], {})
         with tempfile.TemporaryDirectory() as directory:
