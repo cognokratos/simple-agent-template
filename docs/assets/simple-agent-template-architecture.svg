@@ -182,10 +182,10 @@
 <g class="node">
 <rect x="1510" y="650" width="305" height="92" rx="22" fill="#101821" stroke="#3D4B55" stroke-width="2"/>
 <text x="1662" y="685" font-family="Inter, Arial, sans-serif" font-size="23" font-weight="760" fill="#E6EDF3" text-anchor="middle">
-<tspan x="1662" dy="0">MLflow</tspan>
+<tspan x="1662" dy="0">Phoenix</tspan>
 </text>
 <text x="1662" y="715" font-family="Inter, Arial, sans-serif" font-size="15" font-weight="500" fill="#B6C2CF" text-anchor="middle">
-<tspan x="1662" dy="0">traces · evals · prompts</tspan>
+<tspan x="1662" dy="0">traces · experiments · MLflow optional</tspan>
 </text>
 </g>
 <g class="node">

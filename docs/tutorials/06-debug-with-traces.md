@@ -36,13 +36,19 @@ Show ticket TKT-GR-PII and quote its complete description exactly.
 Then:
 
 ```bash
-make open-mlflow   # Experiments → Default → Traces
+make open-phoenix  # Projects → tickets-agent → Traces
 make traces        # span trees of the latest traces, in the terminal
 ```
 
-`make traces` prints the full span hierarchy only if the `mlflow` Python
-package is installed on the host. Without it, it prints the trace summary and
-says so. Use the MLflow UI in that case.
+`make traces` ([`scripts/inspect_phoenix_traces.py`](../../scripts/inspect_phoenix_traces.py))
+reads Phoenix's REST API with the standard library, so it needs nothing
+installed on the host. In the Phoenix UI, open a trace to see the span tree;
+the root is tagged `AGENT` and the rails and tool-policy decisions `GUARDRAIL`
+because the agent sets `openinference.span.kind` on them; Rig's model calls
+show as `LLM` and `execute_tool` as `TOOL`, which Phoenix derives from their
+`gen_ai.*` attributes. The root shows the question and released
+answer from `input.value`/`output.value`. If you ran `make eval` (lab 05), the
+evaluation cases' traces also carry the deterministic scores as annotations.
 
 ## Observe
 
@@ -119,7 +125,7 @@ Then let the repository check the pipeline for you:
 
 ```bash
 make verify-trace-pipeline   # offline, on the host: one trace, traceparent, redaction
-make trace-test              # live: sends requests, asserts trace shape in MLflow
+make trace-test              # live: sends requests, asserts trace shape and privacy in Phoenix
 ```
 
 ## Why it failed
@@ -138,7 +144,8 @@ output rail, is exactly what the rails exist to withhold.
 flowchart LR
     ROOT["support-tickets-agent.invoke<br/>root span, opened by the workflow route"] --> SP["input rail · Rig chat / execute_tool ·<br/>tool.policy · MCP · output rail"]
     SP --> FILT["export filter<br/>fixed in code"] --> EXP[OTLP/HTTP exporter]
-    EXP --> COL[Collector] --> ML[(MLflow)]
+    EXP --> COL["Collector<br/>scrub · project · batch"] --> PH[(Phoenix)]
+    COL -.->|"overlay, optional"| ML[(MLflow)]
     SP -.->|"RUST_LOG"| LOG[container log]
 ```
 
@@ -162,5 +169,7 @@ approval token reaches a span.
 
 * [OBSERVABILITY.md](../OBSERVABILITY.md)
 * [`scripts/verify_traces_e2e.py`](../../scripts/verify_traces_e2e.py),
-  [`scripts/inspect_mlflow_traces.py`](../../scripts/inspect_mlflow_traces.py)
+  [`scripts/inspect_phoenix_traces.py`](../../scripts/inspect_phoenix_traces.py)
+  ([`inspect_mlflow_traces.py`](../../scripts/inspect_mlflow_traces.py) and
+  `make traces-mlflow` for the optional MLflow)
 * Next: [Lab 07 — Experiment with guardrails](07-experiment-with-guardrails.md)

@@ -3,7 +3,7 @@
 > *"Show me the complete details and history for ticket TKT-1001."*
 
 This walkthrough traces that prompt from the browser to PostgreSQL and back,
-through the actual code, and ends at the trace it leaves in MLflow. Read it with
+through the actual code, and ends at the trace it leaves in Phoenix. Read it with
 the source open: code → explanation → runtime behaviour → trace.
 
 The agent is the Rig + Rust service in [`agent/`](../../agent). Every timing
@@ -25,7 +25,7 @@ sequenceDiagram
     participant LLM
     participant MCP as MCP server (Rust)
     participant DB as PostgreSQL
-    participant OT as Collector → MLflow
+    participant OT as Collector → Phoenix
 
     B->>UI: POST /api/gateway/chat (cookies)
     UI->>GW: POST /api/chat (cookie, x-csrf-token)
@@ -317,9 +317,13 @@ runs), the raw user subject (only a pseudonym, and only with
 `OTEL_TRACE_USER_ID=true`) and, by default, raw model text before the output
 rail. The collector
 ([`observability/otel-collector.yml`](../../observability/otel-collector.yml))
-batches and forwards to MLflow's `/v1/traces`, experiment `0` (Default).
+scrubs a fixed list of credential and identity attributes as defence in depth,
+stamps the Phoenix project (`openinference.project.name`) and forwards over
+OTLP/HTTP to Phoenix's `/v1/traces`. The agent knows nothing about Phoenix:
+with `make dev-mlflow` the collector also forwards a copy to MLflow, and the
+agent is unchanged.
 
-## 17. MLflow lets you inspect it
+## 17. Phoenix lets you inspect it
 
 The trace recorded for this run:
 
@@ -335,7 +339,8 @@ support-tickets-agent.invoke                        15.59 s
   guardrail.output.stream    passed                 13.26 s  (overlaps the answer)
 ```
 
-Request preview: the question. Response preview: the released answer. The
+The root span's input is the question and its output the released answer
+(`input.value`/`output.value`, which Phoenix shows on the trace). The
 latency budget:
 
 | | This run |
@@ -351,7 +356,8 @@ The output rail's span overlaps the answer, because it runs on the stream. The
 agent model's calls are their own spans, so the split is read directly: almost
 all of the request was model time. Agent latency was model latency.
 
-Open it yourself: `make open-mlflow` → **Experiments → Default → Traces**. See
+Open it yourself: `make open-phoenix` → **tickets-agent → Traces**, or
+`make traces` in the terminal. See
 [lab 06](06-debug-with-traces.md).
 
 Steps 1–4 and 9–12 were the same code for the retired NeMo Agent Toolkit agent

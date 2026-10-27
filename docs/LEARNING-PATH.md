@@ -49,8 +49,8 @@ boundary ([FRAMEWORK-MIGRATION.md](FRAMEWORK-MIGRATION.md)).
 | 3 | MCP and capability boundaries | Rust MCP server, `include:` list | An agent that can do whatever its credentials can |
 | 4 | Grounding | Tools over the system of record | Confident answers from model memory |
 | 5 | Guardrails and untrusted data | Input/output rails as explicit Rust policy, deterministic patterns | Hostile input; leaked secrets and PII |
-| 6 | Evaluation | MLflow suites, deterministic scorers | "It worked when I tried it" |
-| 7 | Observability | OpenTelemetry → MLflow traces | Not knowing what the agent actually did |
+| 6 | Evaluation | Repository-owned suites, deterministic scorers and gates | "It worked when I tried it" |
+| 7 | Observability | OpenTelemetry → Phoenix traces | Not knowing what the agent actually did |
 | 8 | Identity and trust boundaries | Keycloak, gateway, service credentials, segmented networks | The model or the browser choosing who the user is |
 | 9 | Human-in-the-loop mutation | Signed approvals, point-of-mutation policy, audit | The model authorizing its own actions |
 | 10 | Production architecture | All of the above, composed — independent of the framework | Mistaking the framework for the architecture |
@@ -229,7 +229,10 @@ or hurt.
 
 **In this repo.** Four suites (`tools`, `guardrails`, `grounding`, `injection`),
 source-controlled datasets, deterministic scorers, gate metrics, latency
-percentiles and provenance, all in MLflow.
+percentiles and provenance, written as a JSON result the repository owns.
+Phoenix shows each run as an experiment, with the scores on the agent's traces;
+it displays the evidence and does not decide it. MLflow can receive the same
+result as an optional reference integration.
 
 **Failure it addresses.** Shipping on anecdotes. It also teaches its own lesson:
 a scorer only catches what it asserts.
@@ -248,8 +251,9 @@ time went.
 `chat` and `execute_tool` spans, the tool policy, the MCP call and any approval
 wait nest under it. Readable question and answer on the root, credentials and
 raw identity never exported, opt-in pseudonymous user attribution, exported
-over OTLP through the Collector to MLflow. OpenTelemetry is the boundary: the
-backend is replaceable without touching the agent.
+over OTLP through the Collector to Phoenix. OpenTelemetry is the boundary: the
+backend is replaceable without touching the agent, which is how MLflow remains
+available as an option (`make dev-mlflow`).
 → [OBSERVABILITY.md](OBSERVABILITY.md),
 [Internals 13](AGENT-INTERNALS.md#13--trace-and-evaluate-the-whole-lifecycle)
 
@@ -333,7 +337,8 @@ See the full diagram, with trust boundaries, in
 | Capability implementation | Rust MCP server (`rmcp`, `sqlx`) |
 | Guardrails | Explicit Rust policy modules + one LLM self-check |
 | Tracing | OpenTelemetry → OpenTelemetry Collector |
-| Experiment tracking, trace store | MLflow |
+| Trace store, evaluation workbench | Arize Phoenix (default); MLflow (optional reference) |
+| Evaluation engine and gates | This repository (`evaluation/`) |
 | Authentication | Keycloak (OIDC), Rust gateway (BFF) |
 | Persistence | PostgreSQL |
 | UI | assistant-ui on Next.js |

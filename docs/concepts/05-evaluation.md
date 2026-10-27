@@ -2,6 +2,18 @@
 
 This page covers learning-path stage 6.
 
+Four sentences to keep separate throughout:
+
+* **OpenTelemetry describes what happened.**
+* **Repository-owned deterministic evaluation decides whether known invariants
+  passed.**
+* **Phoenix is the default developer workbench** for exploring traces,
+  datasets, experiments and evaluation evidence.
+* **MLflow is an optional/reference integration.**
+
+External platforms display, store and augment evaluation evidence. They do not
+define correctness.
+
 ## Why manual prompting is not testing
 
 Typing five prompts into the UI and seeing good answers tells you those five
@@ -26,26 +38,33 @@ deterministic code. Evaluations (`make eval-all`) measure the agent.
 
 ```mermaid
 flowchart LR
-    DS[("Dataset<br/>evaluation/datasets/*.json")] -->|"make eval-bootstrap"| MD[(MLflow dataset)]
-    MD --> RUN["Runner<br/>evaluation/runner.py"]
-    RUN -->|"POST /v1/workflow/full<br/>service key + EVALUATION_PRINCIPAL"| AG[Live agent]
-    AG -->|"SSE: tool calls, tool results,<br/>answer, blocked?"| CL["Client parser<br/>evaluation/client.py"]
+    DS[("Dataset<br/>evaluation/datasets/*.json")] --> CORE["Evaluator<br/>evaluation/core.py"]
+    CORE -->|"POST /v1/workflow/full<br/>service key + EVALUATION_PRINCIPAL"| AG[Live agent]
+    AG -->|"SSE: tool calls, tool results,<br/>answer, blocked?, trace id"| CL["Client parser<br/>evaluation/client.py"]
     CL --> SC{"Deterministic scorers<br/>evaluation/scorers.py"}
-    SC --> MET["Metrics + latency p50/p95<br/>+ provenance"]
-    MET --> ML[(MLflow experiment)]
-    MET --> JSON["evaluation/results/<br/>suite-latest.json"]
-    AG -.->|"OTLP traces"| ML
-    MET --> GATE{"Gate: metric ≥ threshold?"}
+    SC --> MET["Metrics + latency p50/p95<br/>+ provenance + gate"]
+    MET --> JSON[("evaluation/results/<br/>suite-latest.json")]
+    JSON --> GATE{"Gate: metric ≥ threshold<br/>and every case evaluated?"}
     GATE -->|no| FAIL[non-zero exit]
+    JSON -->|"copy"| PH[(Phoenix experiment)]
+    JSON -.->|"copy, optional"| ML[(MLflow run)]
+    AG -.->|"OTLP via collector"| PH
 ```
+
+The JSON is written, and the gate decided, before any platform sees the result.
+Phoenix and MLflow receive a copy; nothing they do changes a score, and each
+case is put to the agent once however many of them are enabled.
 
 | Concept | Implementation in this repo |
 | --- | --- |
-| Experiment tracking | MLflow (experiments, datasets, prompt registry, traces) |
-| Datasets | Source-controlled JSON in [`evaluation/datasets/`](../../evaluation/datasets/), synced into MLflow |
+| Evaluation engine | [`evaluation/core.py`](../../evaluation/core.py): plain Python, no platform imports |
+| Result | [`evaluation/results/<suite>-latest.json`](../EVALUATION.md#result-artifact), schema version 2 |
+| Datasets | Source-controlled JSON in [`evaluation/datasets/`](../../evaluation/datasets/), digested; mirrored into Phoenix for display only |
 | Scorers | Pure Python functions in [`evaluation/scorers.py`](../../evaluation/scorers.py), one list per suite in `SCORERS` |
 | Gate metric per suite | `required_metric` in [`evaluation/config.py`](../../evaluation/config.py) |
 | Provenance | [`evaluation/provenance.py`](../../evaluation/provenance.py) |
+| Workbench (default) | Phoenix: experiments per run, scores as `CODE` evaluations and trace annotations |
+| Reference integration | MLflow, via [`evaluation/reporting/mlflow.py`](../../evaluation/reporting/mlflow.py) (`make eval-mlflow`) |
 
 ## The four suites
 
@@ -95,9 +114,12 @@ Each of these is explained in [EVALUATION.md](../EVALUATION.md#the-methodology-w
   deterministic checks.
 * **Manually or before release** with `make eval-all`, or with the manual
   [`.github/workflows/live-evaluation.yml`](../../.github/workflows/live-evaluation.yml).
-* `ALLOW_FAILURES=1` suppresses the *metric* gate only. A dead agent or missing
-  dataset still fails, because "the model got worse" and "the cluster is broken"
-  must never look the same.
+* `ALLOW_FAILURES=1` suppresses the *metric* gate only. A case the agent could
+  not answer is recorded as unevaluated, fails the gate and exits `2`, because
+  "the model got worse" and "the cluster is broken" must never look the same.
+* A release gate reads the artifact
+  ([`scripts/evaluation_gate.py`](../../scripts/evaluation_gate.py)), never a
+  platform.
 
 ## Evaluation outlives the framework
 

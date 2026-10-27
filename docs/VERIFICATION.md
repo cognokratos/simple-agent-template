@@ -98,8 +98,8 @@ subcommand rather than a shell (`make shell-agent` prints how).
 ## With a model available
 
 ```
-make trace-test              # real requests, asserted against MLflow
-make traces                  # print recent span trees
+make trace-test              # real requests, asserted against Phoenix
+make traces                  # print recent span trees from Phoenix
 make version                 # what the running agent reports about itself
 make eval SUITE=grounding    # one evaluation suite
 make eval-all                # all four, with gates

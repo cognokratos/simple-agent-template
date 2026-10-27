@@ -358,8 +358,9 @@ harness.
 boundary is tested, not the model.
 
 **Exercise.** Run `cargo test --test observability`. Then bring up the stack
-(`make dev`), run `make eval-all`, and find the run in MLflow by its
-`provenance.agent.runtime` tag ([EVALUATION.md](EVALUATION.md#comparing-runtimes)).
+(`make dev`), run `make eval-all`, and find the run in Phoenix — an experiment
+whose metadata carries the `provenance.agent.runtime` tag — or read it from
+`evaluation/results/` ([EVALUATION.md](EVALUATION.md#comparing-runtimes)).
 Open the trace of one prompt and match each span to the lesson that created it
 ([request walkthrough](tutorials/REQUEST-WALKTHROUGH.md)). For the framework
 comparison, repeat the evaluation at the `nat-1.9-final` tag and compare the

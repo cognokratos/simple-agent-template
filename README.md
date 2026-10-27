@@ -73,7 +73,8 @@ meant to be reused unchanged — see [docs/EXTENDING.md](docs/EXTENDING.md).
 
 **Resources.** The full stack runs several services at once: assistant-ui,
 the gateway, Keycloak, PostgreSQL, the MCP server, the agent, the
-OpenTelemetry Collector and MLflow. Plan for a Docker VM of about 8 GB; see
+OpenTelemetry Collector and Phoenix (MLflow is optional and off by default).
+Plan for a Docker VM of about 8 GB; see
 [LIMITATIONS.md — resource requirements](docs/LIMITATIONS.md#resource-requirements).
 To run the agent's own tests without Docker you need a Rust toolchain
 (≥ 1.95).
@@ -100,6 +101,12 @@ manages — see [docs/CONFIGURATION.md#model-endpoint](docs/CONFIGURATION.md#mod
 for what was observed and a tested alternative. The other two prompts are
 single-tool and answer reliably on the default.
 
+Each request leaves one trace: `make open-phoenix` (http://localhost:6006) →
+**tickets-agent** → **Traces**. `make eval-all` runs the four evaluation suites;
+the verdict is the JSON in `evaluation/results/`, and Phoenix shows each run as
+an experiment. MLflow is available as an optional reference integration with
+`make dev-mlflow` ([docs/EVALUATION.md](docs/EVALUATION.md#migrating-from-the-mlflow-default)).
+
 Changing a ticket's priority ("Mark it as high priority") is disabled by
 default: the sample application ships read-only. With the human-approval flow
 enabled, asking to change a ticket's priority shows an approval card requiring a
@@ -121,8 +128,8 @@ recreates the services whose settings changed). Details: [docs/APPROVALS.md](doc
 | **Isolation** | Seven Compose networks, one per trust relationship, asserted statically *and* at runtime |
 | **Agent** | Rig agent loop with streaming, an explicit execution state machine, a deterministic `ToolPolicy` over every model-proposed call, and an exact tool-call budget |
 | **Guardrails** | An LLM input self-check that fails closed, with deterministic override layers; streaming secret blocking; deterministic PII masking, also applied to the tool results people see |
-| **Observability** | One trace per request covering the agent run *and* the guardrail decisions, with readable question/answer and credential redaction |
-| **Evaluation** | Four MLflow suites with deterministic scorers, latency distributions, and provenance linking every result to the agent that produced it |
+| **Observability** | One trace per request covering the agent run *and* the guardrail decisions, with readable question/answer and credential redaction, exported over OpenTelemetry to Arize Phoenix (MLflow optional) |
+| **Evaluation** | Four backend-neutral suites with deterministic scorers and gates, latency distributions, and provenance linking every result to the agent that produced it; results are JSON in the repository's own format, shown in Phoenix |
 | **Approvals** | An optional, opt-in signed-approval boundary for state-changing actions — off by default |
 | **Learning layer** | A [learning path](docs/LEARNING-PATH.md), eight concept pages, an [end-to-end request walkthrough](docs/tutorials/REQUEST-WALKTHROUGH.md), ten [labs](docs/tutorials/README.md) and [challenges](docs/CHALLENGES.md), all grounded in this code and checked by `make docs-check` |
 
@@ -181,8 +188,8 @@ make docs-check     # documentation links, anchors and make targets (part of sta
 | `gateway/` | Rust backend-for-frontend: OIDC, sessions, CSRF, proxying |
 | `agent/` | The Rig + Rust agent: loop, tool policy, guardrails, identity, approvals, telemetry ([internals](docs/AGENT-INTERNALS.md)) |
 | `mcp-server/` | Rust MCP tools over PostgreSQL, and the approval verifier |
-| `evaluation/` | MLflow suites, deterministic scorers, provenance |
-| `db/`, `keycloak/`, `observability/` | Schema and seed data, realm generation, collector config |
+| `evaluation/` | Backend-neutral evaluator: datasets, deterministic scorers, gates, provenance; Phoenix and optional MLflow reporters |
+| `db/`, `keycloak/`, `observability/` | Schema and seed data, realm generation, collector config (Phoenix; MLflow overlay) |
 | `scripts/` | Checks that run without the cluster, and trace tooling |
 | `docs/` | [Learning path](docs/LEARNING-PATH.md), [concepts](docs/concepts/), [labs](docs/tutorials/), and the reference manual |
 

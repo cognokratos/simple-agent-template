@@ -14,7 +14,7 @@ history.
 
 | Start here | Then |
 | --- | --- |
-| [Learning path](LEARNING-PATH.md): 11 stages, each explaining why the next component exists | [Follow one request](tutorials/REQUEST-WALKTHROUGH.md): one prompt traced through the code to MLflow |
+| [Learning path](LEARNING-PATH.md): 11 stages, each explaining why the next component exists | [Follow one request](tutorials/REQUEST-WALKTHROUGH.md): one prompt traced through the code to Phoenix |
 
 Concepts, one page per stage, written for software engineers:
 

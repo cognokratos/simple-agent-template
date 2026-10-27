@@ -88,7 +88,7 @@ Status: **done** · **adapted** (taken, but changed materially) · **deferred**
 | Error and partial-stream capture | `trace_processor.py`, `text_guardrails.py`, `register.py` | adapted — a partial answer is kept *and* the error recorded, rather than the error replacing it; the answer is captured where the guardrail middleware actually releases text, not where the workflow function produces it, so a masked or blocked response cannot leak into the trace |
 | Credential-header redaction | `trace_processor.py` | done |
 | Registered OTLP exporter | `observability/otlp_exporter.py` | adapted — renamed from `etf_research_otlp` to `agent_otlp`; private `_span_prefix` read defensively |
-| Trace inspection and e2e tools | `scripts/inspect_mlflow_traces.py`, `verify_traces_e2e.py` | done |
+| Trace inspection and e2e tools | `scripts/inspect_mlflow_traces.py`, `verify_traces_e2e.py` | done; later moved to Phoenix (`inspect_phoenix_traces.py`), the MLflow inspector kept for the optional profile |
 | Configurable content capture | `NAT_TRACE_CAPTURE_CONTENT`, now `AGENT_TRACE_CAPTURE_CONTENT` ([renamed](CONFIGURATION.md#renamed-variables)) | adapted — the source captures unconditionally |
 
 ## Model configuration and provenance
@@ -111,7 +111,7 @@ Status: **done** · **adapted** (taken, but changed materially) · **deferred**
 | Latency distributions | `runner.py` | done |
 | JSON summaries with provenance | `runner.py` | done |
 | Deployed-vs-harness consistency | `provenance.py` | done |
-| MLflow prompt registry linkage | `provenance.py` | done |
+| MLflow prompt registry linkage | `provenance.py` | done; later moved to the optional MLflow reporter (`evaluation/reporting/mlflow.py`) — provenance now records prompt digests |
 | Parser/scorer/provenance tests | `evaluation/tests/` | done |
 | Grounding methodology | `scorers.grounding_scores` | adapted — generic; dataset supplies vocabulary. Fixed a digit-run false positive that would have made the gate permanently red |
 | Unsupported-action-claim detection | `scorers.action_claims` | adapted — domain-neutral verbs |
@@ -152,7 +152,7 @@ Status: **done** · **adapted** (taken, but changed materially) · **deferred**
 | Resolved-configuration topology checks | `scripts/verify_security_config.py` | adapted — extended with an explicit network matrix; also fixed the target, which had never passed |
 | Runtime reachability tests | `make network-test` | done |
 | MCP Inspector, authenticated, loopback | `mcp-server/inspector/`, `dev` profile | adapted — put behind an opt-in profile |
-| Configurable MLflow host port | `MLFLOW_PORT` | done |
+| Configurable MLflow host port | `MLFLOW_PORT` | done (MLflow is now the optional `mlflow` profile) |
 | Health/trace/verification/provenance targets | `Makefile` | done |
 | Ignore-file improvements | `.gitignore` | done |
 | Hardcoded `etf-research-agent` project name | — | rejected — pinned but overridable, so clones coexist |

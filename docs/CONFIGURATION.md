@@ -176,8 +176,9 @@ The other environment names (`LLM_*`, `MCP_API_KEY`, `HITL_*`, `GUARDRAILS_*`,
 `docker-compose.yml` pins the project name (`tickets-agent` by default) so
 container, network and volume names do not derive from the clone directory.
 `COMPOSE_PROJECT_NAME` and `docker compose -p` both override it, and that
-override reaches the four persistent volumes too: `postgres-data`,
-`mlflow-data`, `keycloak-data` and `keycloak-import` each default to
+override reaches the persistent volumes too: `postgres-data`,
+`phoenix-data`, `keycloak-data`, `keycloak-import` and (with the `mlflow`
+profile) `mlflow-data` each default to
 `${the-effective-project-name}-<volume>`, computed from whichever of `-p`,
 `COMPOSE_PROJECT_NAME`, or the `tickets-agent` default actually won for that
 invocation. That is what lets a template checkout and a domain fork run side
@@ -186,18 +187,26 @@ containers — setting the project name once is enough; nothing else needs to
 change per project.
 
 Each volume's computed default is still overridable
-(`POSTGRES_DATA_VOLUME`, `MLFLOW_DATA_VOLUME`, `KEYCLOAK_DATA_VOLUME`,
-`KEYCLOAK_IMPORT_VOLUME`) for a deployment that wants one specific, stable
+(`POSTGRES_DATA_VOLUME`, `PHOENIX_DATA_VOLUME`, `MLFLOW_DATA_VOLUME`,
+`KEYCLOAK_DATA_VOLUME`, `KEYCLOAK_IMPORT_VOLUME`) for a deployment that wants one specific, stable
 name regardless of project — an explicit override always wins over the
 computed default.
 
 ## Host ports
 
-Every published port binds to loopback by default (`PUBLIC_BIND_ADDRESS`). Only
-MLflow's host port is variable (`MLFLOW_PORT`), because 5000 is the one that
-reliably collides — macOS AirPlay Receiver holds it, as does any other MLflow on
-the machine. The container port stays 5000, so nothing inside the cluster
-changes.
+Every published port binds to loopback by default (`PUBLIC_BIND_ADDRESS`).
+The ones a person opens have overridable host ports; container ports never
+change, so nothing inside the cluster is affected.
+
+| Variable | Default | Service |
+| --- | --- | --- |
+| `UI_PORT` | `3000` | assistant-ui (set `UI_PUBLIC_URL` to match) |
+| `KEYCLOAK_PORT` | `8082` | Keycloak (set `KEYCLOAK_PUBLIC_URL` to match) |
+| `PHOENIX_PORT` | `6006` | Phoenix UI and REST API (also TensorBoard's default) |
+| `MLFLOW_PORT` | `5000` | optional MLflow; 5000 is held by macOS AirPlay Receiver |
+
+The collector publishes 4318 (OTLP/HTTP) and 13133 (health) on loopback.
+Phoenix's OTLP/gRPC port 4317 is not published.
 
 ## Security-critical settings
 
@@ -220,15 +229,82 @@ changing it means changing which header the agent believes, and that only makes
 sense together with the proxy that mints it.
 
 Guardrail and telemetry settings are in [GUARDRAILS.md](GUARDRAILS.md) and
-[OBSERVABILITY.md](OBSERVABILITY.md). Evaluation bindings are in
-[EVALUATION.md](EVALUATION.md).
+[OBSERVABILITY.md](OBSERVABILITY.md). Domain bindings for the evaluation are in
+[EVALUATION.md](EVALUATION.md#generalizing-for-a-domain-application).
+
+## Evaluation (core)
+
+What a suite is, its cases and its gate are defined in the repository
+(`evaluation/config.py`, `evaluation/datasets/*.json`), not in the environment.
+The variables below configure *how* the evaluator runs and where it publishes a
+copy; none of them can change a score or a gate.
+
+| Variable | Default | Notes |
+| --- | --- | --- |
+| `EVALUATION_REPORTERS` | `phoenix` (evaluator service), `phoenix,mlflow` (`evaluator-mlflow`) | Comma list of `phoenix`, `mlflow`, or `none`. The JSON result is written either way. `make eval EVAL_REPORTERS=...` overrides per run |
+| `EVALUATION_HTTP_TIMEOUT_SECONDS` | `360` | Per agent call |
+| `EVALUATION_HTTP_MAX_ATTEMPTS` | `4` | Retries on connection failure only |
+| `EVALUATION_TOOL_NAMES` | `search_tickets,get_ticket` | Tool names recognised as tool calls |
+| `EVALUATION_MUTATING_TOOLS` | empty | Tools that change state |
+| `EVALUATION_PRINCIPAL` | `evaluation-harness` | See above |
+| `*_EVALUATION_EXPERIMENT`, `*_EVALUATION_DATASET` | `tickets-agent-<suite>-…` | Display names a reporter uses for the experiment and the dataset mirror. They identify nothing |
+
+## Phoenix
+
+The default trace store and evaluation workbench, in the default stack. What it
+is and how it ingests: [OBSERVABILITY.md](OBSERVABILITY.md#phoenix).
+
+| Variable | Default | Notes |
+| --- | --- | --- |
+| `PHOENIX_PORT` | `6006` | Host port |
+| `PHOENIX_PROJECT_NAME` | `tickets-agent` | Project the collector files agent spans under |
+| `PHOENIX_PUBLIC_URL` | `http://localhost:6006` | Only used to print experiment links |
+| `PHOENIX_API_KEY` | empty | Bearer token the evaluator sends, for a Phoenix with authentication enabled. Never logged or written to a result |
+| `PHOENIX_DATA_VOLUME` | `<project>-phoenix-data` | See [volume identity](#project-and-volume-identity) |
+
+The in-cluster address (`http://phoenix:6006`) is fixed, not configurable.
+
+**Authentication is off** in the shipped stack: Compose sets
+`PHOENIX_ENABLE_AUTH: "false"` as a literal, and it is deliberately *not* read
+from `.env`. Phoenix rejects an empty `PHOENIX_SECRET` whenever that variable is
+present at all, so the two cannot be passed through as empty defaults. To enable
+authentication — required before Phoenix is reachable from anywhere but
+loopback — set both together in a `docker-compose.override.yml` beside
+`docker-compose.yml` (Compose loads it automatically whenever no `-f` is given,
+which covers every `make` target except `debug-up`/`debug-down`):
+
+```yaml
+services:
+  phoenix:
+    environment:
+      PHOENIX_ENABLE_AUTH: "true"
+      PHOENIX_SECRET: "<32+ random characters, with at least one digit and one lowercase letter>"
+```
+
+Then create a system API key in Phoenix and give it to the evaluator as
+`PHOENIX_API_KEY`. Phoenix's own usage telemetry stays disabled either way.
+
+## Optional MLflow
+
+A reference integration, not part of the default stack. `make dev-mlflow`
+starts the `mlflow` profile (the `mlflow` and `evaluator-mlflow` services) and
+recreates the collector with `OTEL_COLLECTOR_OVERLAY=otel-collector.mlflow.yml`.
+
+| Variable | Default | Notes |
+| --- | --- | --- |
+| `OTEL_COLLECTOR_OVERLAY` | `otel-collector.default.yml` (adds nothing) | Collector overlay file in `observability/`. Set by `make dev-mlflow`/`up-mlflow`; a bare `docker compose --profile mlflow up` without it runs MLflow with no agent traces, which `make health` reports |
+| `MLFLOW_PORT` | `5000` | Host port |
+| `MLFLOW_TRACKING_URI` | `http://mlflow:5000` | Used by the MLflow reporter |
+| `EVALUATION_MODEL_PREFIX` | `agent` | How the deployed agent is grouped as an MLflow model |
+| `MLFLOW_DATA_VOLUME` | `<project>-mlflow-data` | Created only when the profile first starts |
 
 ## Optional development profiles
 
 | Profile | Command | What |
 | --- | --- | --- |
 | `dev` | `make inspector` | MCP Inspector, loopback-bound and token-authenticated |
-| `evaluation` | `make eval` | The evaluator container |
+| `evaluation` | `make eval` | The backend-neutral evaluator container (Python + PyYAML) |
+| `mlflow` | `make dev-mlflow`, `make eval-mlflow` | Optional MLflow server and the MLflow-image evaluator; see [optional MLflow](#optional-mlflow) |
 
 The Inspector holds the real MCP service credential, so an unauthenticated one
 would bypass the MCP boundary outright; it is token-gated and never started by

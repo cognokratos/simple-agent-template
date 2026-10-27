@@ -169,8 +169,7 @@ In the UI: *"Which tickets have had refund updates?"*
 Then pin the behaviour:
 
 ```bash
-make eval-bootstrap SUITE=tools
-make eval-tools
+make eval-tools            # the edited tools.json is read directly; nothing to sync
 ```
 
 ## Observe
