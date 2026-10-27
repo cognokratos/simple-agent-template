@@ -47,34 +47,44 @@ agent  ──OTLP──▶  OpenTelemetry Collector  ──▶  MLflow
 evaluator ──▶  agent (service credential, bypassing the browser path)
 ```
 
-## One architecture, two agent runtimes
+## Inside the agent box
 
-The request path above is the architecture. The agent box in it has two
-implementations, and every boundary on this page is the same for both:
+The agent is a Rust service built on the [Rig](https://github.com/0xPlaygrounds/rig)
+agent framework. Rig runs the loop — model call, tool call, result, next model
+call. Everything that decides authority is ordinary, tested Rust around it:
 
 ```text
-Architecture                NAT implementation (main)          Rig implementation (rust-agent)
-
-Browser                     assistant-ui                       assistant-ui
-  ↓                           ↓                                  ↓
-Gateway                     Rust gateway                       Rust gateway
-  ↓                           ↓                                  ↓
-Agent runtime               FastAPI worker (auth, identity)    Axum router (auth, identity)
-                            NeMo Guardrails input rail         explicit input policy
-                            NAT ReAct loop on LangGraph        Rig agent loop
-                            (tools from configuration)         + tool-policy hook
-                            NeMo regex rail + Presidio         streaming output policy
-  ↓                           ↓                                  ↓
-MCP                         Rust MCP server                    Rust MCP server
-  ↓                           ↓                                  ↓
-Database                    PostgreSQL                         PostgreSQL
+Agent runtime (agent/)
+  Axum router            service credential, then gateway-minted identity
+  input policy           deterministic patterns + a self-check classifier call;
+                         fails closed
+  Rig agent loop         built per request; bounded by an exact tool-call budget
+    + tool-policy hook   one deterministic function decides every proposed call
+  MCP client             only the allow-listed tools are advertised or callable
+  output policy          credential patterns and PII recognisers over the stream
 ```
 
-The agent satisfies the same [agent-service contract](AGENT-SERVICE-CONTRACT.md)
-either way, which is why nothing around it changes. NAT is the canonical
-implementation; the Rig one exists to make the agent runtime's machinery
-explicit for comparison. What differs inside the box — and where one is
-stricter or narrower than the other — is in [NAT-VS-RIG.md](NAT-VS-RIG.md).
+**The framework is not the architecture.** The boundaries on this page —
+identity, the tool allow-list, approvals, network segmentation — sit outside the
+loop, and the agent satisfies a framework-neutral
+[agent-service contract](AGENT-SERVICE-CONTRACT.md). That is what let the agent
+be moved from NVIDIA NeMo Agent Toolkit to Rig without the UI, the gateway, the
+MCP server or the evaluation suites changing; see
+[FRAMEWORK-MIGRATION.md](FRAMEWORK-MIGRATION.md). Frameworks are replaceable;
+trust boundaries are architecture.
+
+Three boundaries in particular belong to the repository, not to any framework:
+
+* **MCP is the capability boundary.** The model can reach state only through
+  tools the MCP server exposes and `agent/config.yml` allow-lists
+  (`tools.mcp.include`). The MCP server authenticates the agent, owns the
+  database credential and re-checks policy at the point of mutation.
+* **OpenTelemetry is the telemetry boundary.** The agent exports spans over
+  OTLP to the Collector, which forwards them to MLflow. Nothing downstream
+  depends on how the agent produced them; see [OBSERVABILITY.md](OBSERVABILITY.md).
+* **Evaluation is repository-owned.** Datasets, deterministic scorers and
+  quality gates live in `evaluation/` and call the agent through the same
+  contract as the gateway; see [EVALUATION.md](EVALUATION.md).
 
 ## What each boundary is for
 
@@ -84,7 +94,7 @@ stricter or narrower than the other — is in [NAT-VS-RIG.md](NAT-VS-RIG.md).
 | UI → gateway | — | Server-side call; the UI is a proxy, not a trust boundary |
 | gateway → agent | Is this caller the gateway? | Static service credential, constant-time compared |
 | gateway → agent | Who is the user? | Gateway-minted `x-authenticated-*` headers |
-| model → tool call | May this proposed call run? | NAT: only configured tools exist and arguments are parsed by NAT; Rig: one deterministic policy function at Rig's dispatch hook |
+| model → tool call | May this proposed call run? | One deterministic policy function (`ToolPolicy::decide`) at Rig's dispatch hook: allow-listed tool, arguments valid against the published schema |
 | agent → MCP | Is this caller the agent? | Static service credential |
 | model → state | Did a human authorize this exact change? | Signed approval token (optional feature) |
 
@@ -129,8 +139,8 @@ choose:
   cannot mint (see [APPROVALS.md](APPROVALS.md));
 * **what a policy decides** — backend policy is re-evaluated at the point of
   mutation, after the human approves;
-* **what reaches the client** — output rails run between the model and the
-  stream.
+* **what reaches the client** — the output policy runs between the model and
+  the stream.
 
 The agent **runtime** is trusted, unlike the model. It holds the service
 credential for the MCP server (`MCP_API_KEY`) and, when approvals are enabled,
@@ -149,7 +159,7 @@ suite in [EVALUATION.md](EVALUATION.md).
 | --- | --- |
 | `ui/` | assistant-ui on Next.js. Proxies to the gateway; renders Markdown without raw HTML. |
 | `gateway/` | Rust BFF. OIDC, sessions, CSRF, proxying. Nine modules, see [SECURITY.md](SECURITY.md). |
-| `agent/` | The agent. NAT workflow, guardrail middleware, observability, optional approvals on `main`; the Rig + Rust service on [`rust-agent`](https://github.com/cognokratos/simple-agent-template/tree/rust-agent/agent). |
+| `agent/` | The agent: a Rig + Rust service — loop, tool policy, input and output policy, telemetry, optional approvals. See [AGENT-INTERNALS.md](AGENT-INTERNALS.md). |
 | `mcp-server/` | Rust MCP tools over PostgreSQL, plus the approval verifier. |
 | `evaluation/` | MLflow suites, deterministic scorers, provenance. |
 | `observability/` | OpenTelemetry Collector configuration. |

@@ -41,26 +41,27 @@ Split the change into steps that have different owners:
 sequenceDiagram
     autonumber
     participant LLM
-    participant NAT as NAT agent<br/>(approval.py)
+    participant AG as Agent<br/>(approval/gate.rs)
     participant UI as assistant-ui
     actor H as Human
     participant GW as Gateway
-    participant IG as Interaction guard
+    participant IR as Interaction registry<br/>(approval/pending.rs)
     participant MCP as MCP server<br/>(mutation.rs)
     participant DB as PostgreSQL
 
-    LLM->>NAT: call ticket_priority_change(ticket_id,<br/>current_priority, requested_priority, summary, note)
-    Note over LLM,NAT: A proposal. Every field is model-supplied.
-    NAT-->>UI: event: interaction_required (options, disclosed note)
+    LLM->>AG: call ticket_priority_change(ticket_id,<br/>current_priority, requested_priority, summary, note)
+    Note over LLM,AG: A proposal. Every field is model-supplied.
+    AG->>AG: tool policy: schema-valid, approvals enabled →<br/>into the gate only; run suspends (AwaitingApproval)
+    AG-->>UI: event: interaction_required (options, disclosed note)
     UI->>H: approval card
     H->>UI: choose priority, type a reason if it changes
     UI->>GW: POST interaction response (session cookie, CSRF)
     GW->>GW: authenticate session, validate shape and size
-    GW->>IG: forward with service key + x-authenticated-user-id
-    IG->>IG: responder owns execution?<br/>choice was actually offered?
-    IG->>NAT: resume workflow
-    NAT->>NAT: mint HMAC token: action, resource, actor (header),<br/>request id, choice, expected state, payload, exp, nonce
-    NAT->>MCP: POST /approvals/execute (Bearer MCP_API_KEY)
+    GW->>IR: forward with service key + x-authenticated-user-id
+    IR->>IR: responder owns interaction?<br/>right prompt kind? choice actually offered?
+    IR->>AG: VerifiedDecision; the run resumes
+    AG->>AG: mint HMAC token: action, resource, actor (header),<br/>request id, choice, expected state, payload, exp, nonce
+    AG->>MCP: POST /approvals/execute (Bearer MCP_API_KEY)
     MCP->>MCP: decode: signature, version, expiry, lifetime ceiling
     MCP->>DB: BEGIN
     MCP->>DB: INSERT nonce (single use)
@@ -69,8 +70,8 @@ sequenceDiagram
     MCP->>MCP: apply_policy() permits the transition?
     MCP->>DB: UPDATE tickets + INSERT ticket_audit
     MCP->>DB: COMMIT (any failure: ROLLBACK, nonce included)
-    MCP-->>NAT: ok / refused + reason
-    NAT-->>LLM: committed: true or false
+    MCP-->>AG: ok / refused + reason
+    AG-->>LLM: committed: true or false (actor_id removed)
     LLM-->>H: reports the outcome
 ```
 
@@ -78,10 +79,11 @@ The concepts this enforces, and where:
 
 | Property | Enforced by |
 | --- | --- |
-| Off unless deliberately enabled; no mutation surface by default | No `HITL_APPROVAL_SECRET` → MCP never routes `/approvals/execute` (`main.rs`). CI asserts the shipped config is read-only. |
-| Only the prompted user can answer the prompt | `OwnerAwareExecutionStore` in [`interaction_guard.py`](https://github.com/cognokratos/simple-agent-template/blob/main/agent/src/nat_streaming_react/interaction_guard.py). Stock NAT authorizes on knowledge of two UUIDs. |
-| The answer is one of the offered choices | Same guard: id and value must match an offered pair |
-| The actor is the authenticated human, not the model | `actor_id` comes from the gateway header (`_identity()` in [`approval.py`](https://github.com/cognokratos/simple-agent-template/blob/main/agent/src/nat_streaming_react/approval.py)) |
+| Off unless deliberately enabled; no mutation surface by default | No `HITL_APPROVAL_SECRET` → MCP never routes `/approvals/execute` (`main.rs`). The agent refuses to start with only some of the switches set. CI asserts the shipped config is read-only. |
+| The model can only *propose* the mutation | [`ToolPolicy::decide`](../../agent/src/guardrails/tools.rs) sends the state-changing tool only into the approval gate, and refuses it when approvals are off |
+| Only the prompted user can answer the prompt | The interaction registry records the owner when it opens the prompt and checks the responder's [`TrustedCaller`](../../agent/src/identity.rs) ([`approval/pending.rs`](../../agent/src/approval/pending.rs)). Knowing two UUIDs is not enough. |
+| The answer is one of the offered choices | Same registry: id and value must match an offered pair, and the response must be the kind the prompt asked for. Only then does it build a `VerifiedDecision`, a type nothing else can construct. |
+| The actor is the authenticated human, not the model | `actor_id` comes from the gateway header, via `TrustedCaller` ([`approval/gate.rs`](../../agent/src/approval/gate.rs)); the result returned to the model omits it |
 | The model cannot alter what was approved | The token *is* the payload. MCP reads every mutation parameter from the signed claims, not from tool arguments. |
 | The model's claim about current state is checked, not trusted | `expected_choice` starts as the model's `current_priority`. MCP compares it with the row it locked, so a wrong claim voids the token. |
 | Policy is re-evaluated after approval | `apply_policy` in [`mutation.rs`](../../mcp-server/src/mutation.rs): allowed choice, not a no-op, override requires a rationale |
@@ -93,9 +95,10 @@ The concepts this enforces, and where:
 ## Model advice versus authoritative policy
 
 The model's `requested_priority` is a recommendation and gets no special
-treatment. `priority_options` in `approval.py` offers every allowed priority plus
-Cancel. The current one is labelled "Keep (no change is applied)" and every
-other one "Change to (requires a reason, recorded against your identity)".
+treatment. `priority_options` in [`approval/gate.rs`](../../agent/src/approval/gate.rs)
+offers every allowed priority plus Cancel. The current one is labelled "Keep"
+("No change is applied.") and every other one "Change to" ("Requires a reason,
+recorded against your identity.").
 Keeping the current value is a decision, not a mutation, so no token is minted.
 The friction sits on *changing* state, not on declining the model's advice. See
 [EXTENDING.md](../EXTENDING.md#the-patterns-worth-keeping-even-if-you-do-not-use-approvals).
@@ -107,26 +110,25 @@ approval for TKT-1003 could be replayed, applied to TKT-1004, applied after the
 ticket had already changed, or edited between approval and execution. Each
 binding in the token removes one of those. The agent-side approval checks
 (`make verify-approvals`) and the MCP approval tests (`make verify-approvals-rust`)
-exercise each one, including a
-Python-minted token verified by the Rust verifier.
+exercise each one. The agent's tests compile the MCP verifier's source, so a
+token the agent mints is checked by the same code that will verify it in
+production.
 
-## On the Rig implementation
+## Explicit run state
 
-The security requirement is identical, and so is everything from the token
-onward: same claims, same MCP verifier, same single transaction, same audit
-row. What differs is how the agent waits and how it checks the answer:
+The run's lifecycle is a state machine in
+[`agent/state.rs`](../../agent/src/agent/state.rs):
+`Running ⇄ AwaitingApproval`, alongside `Blocked`, `Completed`, `Failed` and
+`Cancelled`. Making the state explicit is the instructive part: a blocked request
+cannot await approval, and a finished run cannot resume, because those
+transitions are illegal. An unanswered prompt expires as a cancellation after
+`HITL_INTERACTION_TIMEOUT_SECONDS`, and a browser disconnect abandons it.
+→ [Agent internals, lessons 10–12](../AGENT-INTERNALS.md#10--model-execution-as-an-explicit-state-machine)
 
-| Step | NAT | Rig |
-| --- | --- | --- |
-| Suspend | NAT pauses the workflow coroutine (`prompt_user_input`) | the approval gate awaits a `PendingTicket` ([`approval/gate.rs`](https://github.com/cognokratos/simple-agent-template/blob/rust-agent/agent/src/approval/gate.rs)) |
-| Check the answer | `interaction_guard.py` substitutes NAT's execution store to add owner and offer checks | the registry checks owner, prompt kind and offered pair, and only then builds a `VerifiedDecision` — a type nothing else can construct ([`approval/pending.rs`](https://github.com/cognokratos/simple-agent-template/blob/rust-agent/agent/src/approval/pending.rs)) |
-| Run state | implicit | explicit: `Running ⇄ AwaitingApproval` in [`agent/state.rs`](https://github.com/cognokratos/simple-agent-template/blob/rust-agent/agent/src/agent/state.rs) |
-| Unanswered prompt | waits until disconnect | expires as a cancellation |
-| What the model learns | the MCP result | the MCP result without `actor_id` |
-
-Making the state explicit is the instructive part: a blocked request cannot
-await approval, and a finished run cannot resume, because those states do not
-exist in the type. → [Rust lessons 10–12](../RUST-LEARNING-PATH.md#10--model-execution-as-an-explicit-state-machine)
+The retired NAT agent (`nat-1.9-final`) paused a framework coroutine and had to
+patch owner and offer checks into NAT's execution store; the token, verifier and
+transaction were the same. See
+[FRAMEWORK-MIGRATION.md](../FRAMEWORK-MIGRATION.md#human-in-the-loop).
 
 ## Go deeper
 
@@ -134,8 +136,8 @@ exist in the type. → [Rust lessons 10–12](../RUST-LEARNING-PATH.md#10--model
   [09 — Add human approval](../tutorials/09-add-human-approval.md)
 * Reference: [APPROVALS.md](../APPROVALS.md),
   [EXTENDING.md — adding an approval-gated action](../EXTENDING.md#adding-an-approval-gated-action)
-* Source: [`approval.py`](https://github.com/cognokratos/simple-agent-template/blob/main/agent/src/nat_streaming_react/approval.py),
-  [`interaction_guard.py`](https://github.com/cognokratos/simple-agent-template/blob/main/agent/src/nat_streaming_react/interaction_guard.py),
+* Source: [`agent/src/approval/`](../../agent/src/approval/),
+  [`agent/src/agent/state.rs`](../../agent/src/agent/state.rs),
   [`mcp-server/src/approval.rs`](../../mcp-server/src/approval.rs),
   [`mcp-server/src/mutation.rs`](../../mcp-server/src/mutation.rs)
 * Then: [ANTI-PATTERNS.md](ANTI-PATTERNS.md) and the

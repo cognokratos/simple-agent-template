@@ -65,18 +65,24 @@ Follow the optional approval implementation in the source, with
 [diagram G](../concepts/08-human-in-the-loop.md#diagram-g-the-approval-flow-in-this-repository)
 open:
 
-1. [`approval.py`](https://github.com/cognokratos/simple-agent-template/blob/main/agent/src/nat_streaming_react/approval.py),
-   `ticket_set_priority_approval`: the model's call is a *proposal*. The function
-   prompts a human (`_ask_choice`, `_ask_rationale`), takes `actor_id` and
-   `request_id` from gateway headers (`_identity`), and mints a token over the
-   exact claims (`build_claims`, `mint_token`).
-2. [`mcp-server/src/main.rs`](../../mcp-server/src/main.rs): `/approvals/execute`
+1. [`agent/src/guardrails/tools.rs`](../../agent/src/guardrails/tools.rs),
+   `ToolPolicy::decide`: the model's `ticket_priority_change` call is a
+   *proposal*. The policy lets it proceed only into the approval gate, and only
+   when the feature is enabled. Its schema has no field for a decision, an actor
+   or a token, and unknown fields are refused.
+2. [`agent/src/approval/gate.rs`](../../agent/src/approval/gate.rs), `run`:
+   prompts the human for a choice and, for a change, a reason; takes `actor_id`
+   and `request_id` from the trusted caller (`scope.caller()`), never from the
+   model; and mints a token over the exact claims
+   ([`approval/token.rs`](../../agent/src/approval/token.rs),
+   `Claims::for_change`, `mint`).
+3. [`mcp-server/src/main.rs`](../../mcp-server/src/main.rs): `/approvals/execute`
    is only routed when `HITL_APPROVAL_SECRET` is set. No secret means no endpoint
    at all.
-3. [`mcp-server/src/mutation.rs`](../../mcp-server/src/mutation.rs), `execute`:
+4. [`mcp-server/src/mutation.rs`](../../mcp-server/src/mutation.rs), `execute`:
    nonce, row lock, re-derived state, full token verification, `apply_policy`,
    `apply` (update + audit), commit. Any failure rolls everything back.
-4. `apply_policy`: a pure function of `(action, claims, current state)` that
+5. `apply_policy`: a pure function of `(action, claims, current state)` that
    returns permitted or a reason. Because it is pure, the whole policy matrix is
    unit-tested without a database.
 
@@ -137,8 +143,9 @@ Move the check somewhere weaker and ask what each placement protects against:
 | Placement | Bypassed by |
 | --- | --- |
 | A sentence in the system prompt ("never downgrade urgent tickets") | Any injection or model error |
-| The tool description in `approval.py` | Same |
+| The tool description (`TOOL_DESCRIPTION` in [`agent/src/approval/mod.rs`](../../agent/src/approval/mod.rs)) | Same |
 | `priority_options` (don't *offer* downgrades in the card) | A crafted interaction response, a state change after the card was rendered, or a second client |
+| The agent's `ToolPolicy` | A compromised or misconfigured agent; and it would judge the model's reported state, not the locked row |
 | `apply_policy` against the locked row | — |
 
 ## Why it failed
@@ -160,25 +167,6 @@ flowchart LR
 ```
 
 Revert your change when you're done unless you intend to keep the rule.
-
-## On the Rig implementation
-
-Parts 1 and 3 are identical: the naive tool is just as unsafe, and the policy
-rule belongs in `mcp-server/src/mutation.rs` on both branches. Part 2's agent
-step reads differently:
-
-1. [`guardrails/tools.rs`](https://github.com/cognokratos/simple-agent-template/blob/rust-agent/agent/src/guardrails/tools.rs): the model's
-   `ticket_priority_change` call is a *proposal*; the tool policy lets it
-   proceed only into the approval gate, and only when the feature is enabled.
-   Its schema has no field for a decision, an actor or a token, and unknown
-   fields are refused.
-2. [`approval/gate.rs`](https://github.com/cognokratos/simple-agent-template/blob/rust-agent/agent/src/approval/gate.rs): prompts the human, takes `actor_id`
-   and `request_id` from the trusted caller, and mints the same token
-   ([`approval/token.rs`](https://github.com/cognokratos/simple-agent-template/blob/rust-agent/agent/src/approval/token.rs)).
-
-For the **Break it** table, add one row: putting the rule in the Rig agent's
-`ToolPolicy` would be bypassed by a compromised or misconfigured agent, and
-would judge the model's reported state rather than the locked row.
 
 ## What you learned
 

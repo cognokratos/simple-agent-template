@@ -102,35 +102,46 @@ a dirty tree on account of the previous run's artifacts.
 credential. `scripts/verify_security_sources.py` asserts that.
 
 Each run is also tagged `provenance.agent.runtime`, from the `agent_runtime`
-field of `/version`: `nat` for the NAT agent on `main`, `rig-rust` for the Rig
-agent on `rust-agent`, and `unknown` when `/version` could not be read (a
-reachable agent that predates the field is recorded as `nat`). The harness
-reads either configuration layout — NAT's
-`middleware.workflow_guardrails.guardrails.prompts` or the Rig agent's
-`guardrails.prompts` — and digests the rail prompts the way that agent reports
-them (sorted YAML for NAT, canonical JSON for Rig, which the Rig agent announces
-as `guardrails_prompts_digest`), so `consistent` means the same thing for both.
+field of `/version`: `rig-rust` for this agent, and `unknown` when `/version`
+could not be read. A reachable agent that does not report the field is
+recorded as `nat`: that is the retired NAT agent (`nat-1.9-final`), which
+predates it. The harness reads the rail prompts from `guardrails.prompts` and
+digests them as canonical JSON, the form the agent announces as
+`guardrails_prompts_digest`; it still recognises the NAT agent's configuration
+layout and digest, so `consistent` means the same thing if that agent is
+evaluated ([`evaluation/provenance.py`](../evaluation/provenance.py)).
 
 ## Comparing runtimes
 
-The harness, datasets, scorers, gates and the system prompt are identical for
-the two agent implementations — `prompt_sha256` is the same value — so these
-suites are the fair comparison between NAT and Rig
-([NAT-VS-RIG.md](NAT-VS-RIG.md)):
+The agent framework is a dependency of the agent service, not the architecture
+([FRAMEWORK-MIGRATION.md](FRAMEWORK-MIGRATION.md)). The evaluation suites are
+how that claim is checked: the datasets, scorers and gates are owned by this
+repository, talk to the agent only through its
+[service contract](AGENT-SERVICE-CONTRACT.md), and contain nothing
+runtime-specific. The same suites therefore measure the current Rig agent and
+the retired NAT agent, and the `provenance.agent.runtime` tag keeps the two
+apart.
 
-1. run `make eval-all` on `main` and on `rust-agent` against the same model
-   endpoint;
-2. in MLflow, group or filter the runs by `provenance.agent.runtime`;
-3. compare the gate metrics and the latency distributions, and confirm
-   `provenance.consistent` is `true` for both.
+To reproduce the comparison:
 
-Nothing in the harness is runtime-specific. The one difference a reader may
-notice is an event name: the Rig agent's output decision is
-`guardrail_output_regex_pii_decision` (it does not use Presidio), captured by
-the same `guardrail_output_` prefix as NAT's
-`guardrail_output_regex_presidio_decision`. Observed on `rust-agent` with
-`qwen3:8b` on a local Ollama: all four suites at their gates (1.0), in one run;
-the figures move between runs of the same model.
+1. run `make eval-all` on this tree;
+2. check out `nat-1.9-final` (see
+   [FRAMEWORK-MIGRATION.md](FRAMEWORK-MIGRATION.md)), start that stack, and run
+   `make eval-all` there against the same model endpoint;
+3. in MLflow, group or filter the runs by `provenance.agent.runtime`
+   (`rig-rust` vs `nat`), compare the gate metrics and the latency
+   distributions, and confirm `provenance.consistent` is `true` for both.
+
+Two differences a reader will notice. The output decision event is
+`guardrail_output_regex_pii_decision` here (there is no Presidio) and was
+`guardrail_output_regex_presidio_decision` on NAT; the evaluator captures both
+by the `guardrail_output_` prefix. And `prompt_sha256` differs once between the
+two: the system prompt was carried over unchanged except for one runtime name,
+which this agent's prompt no longer mentions.
+
+Observed with `qwen3:8b` on a local Ollama: all four suites at their gates
+(1.0), in one run. The figures move between runs of the same model; a single
+run is an observation, not a benchmark.
 
 ## Latency
 

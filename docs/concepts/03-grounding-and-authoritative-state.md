@@ -89,7 +89,8 @@ Grounding guarantees the *inputs* to the model's reasoning are real. It does
 not guarantee the reasoning.
 
 Observed while writing this material, on the default `qwen3:8b` at temperature
-0, for *"Which ticket should we handle first, and why?"*:
+0 and on the retired NeMo Agent Toolkit agent (`nat-1.9-final`), for
+*"Which ticket should we handle first, and why?"*:
 
 * **On one agent build**, 3 of 3 runs made one correct
   `search_tickets(status="open")` call, whose result included `TKT-1002` with
@@ -101,7 +102,7 @@ Observed while writing this material, on the default `qwen3:8b` at temperature
   Every fact in that sentence is grounded. The conclusion is wrong, because
   `urgent` outranks `high`. The answer passes a "did it use the tools" check and
   fails an "is it right" check.
-* **On a rebuild from commit `af29ce0`**, with the same configuration digest and
+* **On a later rebuild**, with the same configuration digest and
   the same model, 4 of 4 runs fanned out to `get_ticket` for three tickets and
   then ended without an answer. That is the failure
   [CONFIGURATION.md](../CONFIGURATION.md#qwen38b-and-the-prioritization-prompt)
@@ -139,15 +140,15 @@ version, and the harness commit with every evaluation result. It flags when they
 disagree. A score you cannot attribute to a specific configuration is not
 evidence. See [EVALUATION.md — provenance](../EVALUATION.md#provenance).
 
-## On the Rig implementation
+## Grounding does not depend on the framework
 
-Grounding does not depend on the agent runtime: the same MCP tools return the
-same authoritative rows to either agent, and the same deterministic grounding
-scorers judge the answers. The Rig agent passes the grounding suite on the same
-model, and its tool-result events carry the same fields the scorers read. One
-detail differs: the *display copy* of a tool result shown in the UI and the
-trace is redacted on Rig, while the model and the evaluator's grounding data
-come from the raw result. → [EVALUATION.md](../EVALUATION.md#comparing-runtimes)
+The same MCP tools return the same authoritative rows whatever runs the agent
+loop, and the same deterministic grounding scorers judge the answers from the
+tool-result events on the agent's stream. One detail matters when you read a
+trace: the *display copy* of a tool result shown in the UI and recorded on the
+span is redacted, while the model and the evaluator's grounding data come from
+the raw result ([`mcp/tools.rs`](../../agent/src/mcp/tools.rs)).
+→ [EVALUATION.md](../EVALUATION.md)
 
 ## Go deeper
 

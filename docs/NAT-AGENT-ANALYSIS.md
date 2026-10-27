@@ -1,14 +1,22 @@
 # Mapping the NAT agent's responsibilities
 
-What the NeMo Agent Toolkit (NAT) agent on `main` actually does, traced through
-its code rather than inferred from file names. It was written **before** the Rig
-implementation on `rust-agent`, as the parity checklist that implementation is
-held to, and it is kept because it is also the most compact answer to *"what is
-an agent service responsible for?"* — a useful exercise for any runtime. Where
-the Rig agent deliberately differs, the difference is in
-[NAT-VS-RIG.md](NAT-VS-RIG.md) and [LIMITATIONS.md](LIMITATIONS.md), not here.
+> **Historical document.** This describes the retired NeMo Agent Toolkit (NAT)
+> agent, preserved at the tag
+> [`nat-1.9-final`](https://github.com/cognokratos/simple-agent-template/tree/nat-1.9-final).
+> The current agent is the Rig + Rust service in [`agent/`](../agent/). Paths
+> such as `fastapi_worker.py` or `text_guardrails.py` below exist only at that
+> tag.
 
-Base: `main` at `8ed2ceb` (NAT 1.9, NeMo Guardrails 0.21, Rig 0.44 evaluated).
+What the NAT agent actually did, traced through its code rather than inferred
+from file names. It was written **before** the Rig implementation, as the parity
+checklist that implementation was held to, and it is kept because it is also
+the most compact answer to *"what is an agent service responsible for?"* — a
+useful exercise for any runtime, and the evidence behind
+[FRAMEWORK-MIGRATION.md](FRAMEWORK-MIGRATION.md). Where the Rig agent
+deliberately differs, the difference is recorded there and in
+[LIMITATIONS.md](LIMITATIONS.md), not here.
+
+Base: the NAT tree at `8ed2ceb` (NAT 1.9, NeMo Guardrails 0.21, Rig 0.44 evaluated).
 
 ## 1. What the agent is responsible for
 
@@ -16,7 +24,7 @@ Traced from `agent/config.yml`, `agent/src/nat_streaming_react/*` and the two
 callers that exist: the gateway (`gateway/src/proxy.rs`) and the evaluator
 (`evaluation/client.py`).
 
-| # | Responsibility | Where on `main` | Deterministic? |
+| # | Responsibility | Where in the NAT tree | Deterministic? |
 | --- | --- | --- | --- |
 | R1 | Authenticate the caller as the gateway (static bearer key, constant time, stripped before anything else sees it) | `fastapi_worker.StaticServiceKeyMiddleware` | yes |
 | R2 | Require exactly one non-empty `x-authenticated-user-id`; 401 otherwise, *after* the key check | `fastapi_worker.RequireIdentityHeaderMiddleware` | yes |
@@ -80,14 +88,14 @@ to `filter_steps`, sends `x-authenticated-user-id: evaluation-harness`, **no
 ## 3. Identity
 
 Identity reaches the agent only as gateway-minted headers on a freshly built
-request. On `main` it is used for exactly three things: refusing an anonymous
+request. In the NAT tree it was used for exactly three things: refusing an anonymous
 request (R2), binding the approval owner and responder (§4), and the
 `actor_id` claim in the approval token, which the MCP server writes to
 `ticket_audit`. **Read-only MCP calls carry no user identity** — the MCP
 boundary authenticates the agent by service key only. The model never sees an
 identity, and no tool argument can carry one.
 
-## 4. The approval lifecycle on `main`
+## 4. The approval lifecycle in the NAT tree
 
 1. The model calls the agent-side function `ticket_priority_change(ticket_id,
    current_priority, requested_priority, summary, note?)` — not an MCP tool.
@@ -113,7 +121,7 @@ identity, and no tool argument can carry one.
 
 NAT's pending-interaction store is **in memory**, and the paused workflow is a
 suspended coroutine holding the open SSE stream. There is no durable
-suspension on `main`.
+suspension in the NAT tree.
 
 ## 5. Evaluation dependencies on the agent
 
@@ -140,23 +148,23 @@ from `data:` lines. Provenance comes from `/version` and from reading
 * Building an `Agent` spawns nothing, so one can be built per request with
   tools bound to that request's trusted context.
 
-## 7. Parity requirements and design decisions for `rust-agent`
+## 7. Parity requirements and design decisions for the Rust agent
 
 | Concern | Decision |
 | --- | --- |
-| Agent loop | Rig's runner owns it (as NAT/LangGraph does on `main`); a fresh `Agent` per request. |
+| Agent loop | Rig's runner owns it (as NAT/LangGraph did); a fresh `Agent` per request. |
 | Tool policy | An explicit Rig `AgentHook::on_dispatch` calling a pure `ToolPolicy::decide`; executors re-validate (defense in depth). Unknown tools resolved by `on_invalid_tool_call` as a deterministic skip. |
 | MCP | `rmcp` 2.2 client (same SDK version as the server), wrapped through `rig-rmcp`'s `McpTool`; strict schema validation before every call; allow-list and description overrides kept in `config.yml`. |
 | Identity | Gateway headers → typed `TrustedCaller`, owned by the request; never in prompt, tool schema or tool arguments. |
-| Approvals | Same tool name, schema, prompts, token format and MCP endpoint. The pending interaction is an explicit state machine owned by an `InteractionRegistry`; the run suspends inside the approval executor exactly as NAT's coroutine does; a decision value can only be constructed by the authorization check. In-memory, like `main`; `AgentRun` serializability is documented as the route to durable suspension, not implemented. |
+| Approvals | Same tool name, schema, prompts, token format and MCP endpoint. The pending interaction is an explicit state machine owned by an `InteractionRegistry`; the run suspends inside the approval executor exactly as NAT's coroutine did; a decision value can only be constructed by the authorization check. In-memory, like the NAT agent; `AgentRun` serializability is documented as the route to durable suspension, not implemented. |
 | Input rail | Same prompt, same deterministic patterns and templates, same precedence, same parser semantics, same event. |
 | Output rail | Same credential patterns. PII: deterministic recognisers (regex + checksums), applied in a bounded streaming window instead of buffering the whole answer. **Narrower than Presidio — documented, not claimed equivalent.** |
 | Wire | Same routes, same SSE vocabulary, same error classes. Only the routes the two consumers use are implemented. |
 | Observability | `tracing` + `tracing-opentelemetry` + OTLP/HTTP to the same collector; Rig's spans nest under the request root (measured during implementation: Rig adopts the root as its agent span, so its `chat` and `execute_tool` spans are direct children). |
-| Config | Same environment variable names, including the historical `NAT_*` ones. |
+| Config | Same environment variable names, including the historical `NAT_*` ones (renamed to `AGENT_*` when the Rust agent was promoted, with deprecated aliases: [CONFIGURATION.md](CONFIGURATION.md#renamed-variables)). |
 | Evaluation | Datasets and scorers untouched; `/version` reports `agent_runtime: "rig-rust"`; the evaluator learns the Rust config layout for prompt digests. |
 
-## 8. Implementation plan (as followed for `rust-agent`)
+## 8. Implementation plan (as followed for the Rust agent)
 
 1. **Skeleton** — Cargo crate, typed config (fail fast), errors, Axum routes,
    auth/identity middleware, health, `/version`, Docker image, Compose wiring.
@@ -171,6 +179,7 @@ from `data:` lines. Provenance comes from `/version` and from reading
 6. **Observability** — OTLP, request/trace correlation, spans, redaction.
 7. **Evaluation** — provenance, evaluator config layout, live runs.
 8. **Docs and labs** — README notice, contract, NAT vs Rig, maintenance policy,
-   Rust learning path, limitations.
+   Rust learning path, limitations. (Superseded when the Rust agent was
+   promoted: see FRAMEWORK-MIGRATION.md and AGENT-INTERNALS.md.)
 9. **Hardening** — fmt, clippy, tests, static checks, Compose end to end, user
    journeys, approve/cancel, adversarial variants.

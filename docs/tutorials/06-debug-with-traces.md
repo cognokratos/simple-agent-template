@@ -47,37 +47,47 @@ says so. Use the MLflow UI in that case.
 ## Observe
 
 **1. The single-ticket lookup.** Compare with the trace recorded in
-[concept 6](../concepts/06-observability.md#one-request-one-trace):
-`support-tickets-agent.invoke` → `<workflow>` → `tickets_mcp__get_ticket`, with
-`guardrail.input.self_check` and `guardrail.output.regex_presidio` as siblings
-of `<workflow>`. Find the latency budget. In the recorded cold run: 17.6 s total,
-2.79 s input rail, 0.03 s tool, 0.05 s output rails. A warm repeat: 12.8 s
-total, 0.24 s input rail. Either way, the rest is the agent model. Send the
-same prompt twice and compare your own cold and warm numbers.
+[concept 6](../concepts/06-observability.md#one-request-one-trace): under
+`support-tickets-agent.invoke`, `guardrail.input.self_check` (with
+`guard_model.call` inside it), a `chat` span for the turn that chose the tool,
+`execute_tool` containing `tool.policy` and `tickets_mcp__get_ticket`, a second
+`chat` for the turn that wrote the answer, and `guardrail.output.stream`. Find
+the latency budget. In the recorded run: 15.59 s total, 2.31 s input rail,
+0.05 s tool, and 13.24 s in the two agent-model `chat` spans. The model calls
+are their own spans, so the split is read directly. Send the same prompt twice
+and compare your own cold and warm numbers: the classifier call alone has been
+observed anywhere between 0.2 and 2.3 s.
 
 **2. The fan-out.** Count `tickets_mcp__get_ticket` spans and read their inputs.
 Compare with what `search_tickets` returned (its output is on its span). This is
 how you diagnose lab 04's incomplete trajectory: the trace shows *which* ids
-were skipped.
+were skipped. Each tool call also has its own `tool.policy` span with
+`policy.decision = allow`.
 
-**3. The blocked injection.** Open `guardrail.input.self_check`. Recorded
-attributes for this kind of request:
+**3. The blocked injection.** Open `guardrail.input.self_check`. Expected
+attributes for this request:
 
-| Attribute | Value observed |
+| Attribute | Value |
 | --- | --- |
 | `guardrail.outcome` | `blocked` |
-| `guardrail.decision_source` | `llm_and_deterministic_block` |
-| `guardrail.llm.blocked` | `true` |
-| `guardrail.deterministic.matches` | `["prompt_injection", "system_prompt_or_tool_secret_extraction"]` |
+| `guardrail.decision_source` | `llm_and_deterministic_block` (or `deterministic_block_fallback` if the guard model voted to allow) |
+| `guardrail.llm.blocked` | `true`, if the guard model voted to block |
+| `guardrail.llm.response` | the classifier's raw reply, e.g. `Yes` |
+| `guardrail.deterministic.matches` | `["prompt_injection","system_prompt_or_tool_secret_extraction"]` |
 
-There are **no** MCP spans, because the workflow never ran.
+There are **no** `chat`, `execute_tool` or MCP spans, because the agent model
+was never called, and the root records `agent.execution.state = blocked`.
 
-**4. The PII fixture.** `guardrail.output.regex_presidio` has
-`guardrail.outcome = modified`. The released answer (root span output) contains
-`<EMAIL_ADDRESS>`, `<PHONE_NUMBER>` and `<IBAN_CODE>`. Now open the
-`tickets_mcp__get_ticket` span's output: the **raw** synthetic email, phone and
-IBAN are there. Output rails protect the answer, not the trace. See
-[TEST-SCENARIOS.md scenario 10](../TEST-SCENARIOS.md#10-presidio-masking).
+**4. The PII fixture.** `guardrail.output.stream` has
+`guardrail.outcome = modified`, and `guardrail.masked_entities` counts what was
+masked — counts only, never the text. The released answer (root span
+`output.value`) contains `<EMAIL_ADDRESS>`, `<PHONE_NUMBER>` and `<IBAN_CODE>`.
+Now open the `tickets_mcp__get_ticket` span's `output.value`: it is the
+*display copy* of the tool result, with the same entities masked, exactly as
+the UI's tool card shows it. The model itself read the raw record. Output
+protection here covers the answer, the tool card and the trace — but only as
+far as the deterministic recognisers reach. See
+[TEST-SCENARIOS.md scenario 10](../TEST-SCENARIOS.md#10-pii-masking).
 
 The full checklist of span attributes per scenario is in
 [TEST-SCENARIOS.md](../TEST-SCENARIOS.md#guardrails-observability-acceptance-checks).
@@ -87,19 +97,28 @@ The full checklist of span attributes per scenario is in
 Change what the trace pipeline records. Each is an `.env` change followed by
 `make up`. Revert afterwards.
 
-**A. Turn off readable content.** `NAT_TRACE_CAPTURE_CONTENT=false`. Send a
-prompt. The root span's readable question and answer disappear. Errors are
-still recorded.
+**A. Turn off readable content.** `AGENT_TRACE_CAPTURE_CONTENT=false`. Send a
+prompt. The root span's `input.value` and `output.value` disappear, and so do
+the tool spans' inputs and outputs. A failed run still records
+`error.message`.
 
 **B. Turn on per-user attribution.** `OTEL_TRACE_USER_ID=true`. Sign in, send a
-prompt, and look for `user.id` on the spans. Then read
+prompt, and look for `enduser.pseudonym` on the root span. It is not your user
+id. Then read
 [OBSERVABILITY.md — per-user attribution](../OBSERVABILITY.md#per-user-attribution)
 on why it is off by default.
+
+**C. Raise the log level.** `AGENT_RUST_LOG=tickets_agent=info,rig=trace`.
+Send a prompt and compare `make logs-agent` with the exported trace. Rig's raw
+provider request — system prompt, conversation, tool results — appears in the
+container log and never in the trace, because the export filter is fixed in
+code ([OBSERVABILITY.md](../OBSERVABILITY.md#what-never-reaches-a-span)).
+Revert this one promptly: the container log now holds everything.
 
 Then let the repository check the pipeline for you:
 
 ```bash
-make verify-trace-pipeline   # offline: context, bounds, redaction, errors
+make verify-trace-pipeline   # offline, on the host: one trace, traceparent, redaction
 make trace-test              # live: sends requests, asserts trace shape in MLflow
 ```
 
@@ -110,40 +129,24 @@ trace store that holds every question, every answer and a stable per-user id is
 a per-person history of what people asked. Whether that is acceptable depends on
 the store's access controls and retention, which is why the template makes it a
 deliberate switch rather than a default. The same reasoning explains
-`GUARDRAILS_TRACE_CAPTURE_RAW_OUTPUT=false`.
+`AGENT_TRACE_CAPTURE_MODEL_CONTENT=false`: the model's own output, before the
+output rail, is exactly what the rails exist to withhold.
 
 ## Architecture after
 
 ```mermaid
 flowchart LR
-    NAT[NAT spans] --> P1[WorkflowContentProcessor] --> P2[SensitiveHeaderRedactionProcessor] --> P3[UserIdentityProcessor] --> EXP[OTLP exporter]
-    GR[Guardrails spans] --> SDK[OTel SDK]
-    TC["trace_context.py<br/>one trace id per request"] -.-> NAT
-    TC -.-> GR
+    ROOT["support-tickets-agent.invoke<br/>root span, opened by the workflow route"] --> SP["input rail · Rig chat / execute_tool ·<br/>tool.policy · MCP · output rail"]
+    SP --> FILT["export filter<br/>fixed in code"] --> EXP[OTLP/HTTP exporter]
     EXP --> COL[Collector] --> ML[(MLflow)]
-    SDK --> COL
+    SP -.->|"RUST_LOG"| LOG[container log]
 ```
 
-## On the Rig implementation
-
-The same trace, from one tracing model: Rig adopts the request's root span, so
-its `chat` (one per model call) and `execute_tool` spans sit directly under
-`support-tickets-agent.invoke`, with `tool.policy` and `tickets_mcp__<tool>`
-inside `execute_tool`, and the rails beside them
-([OBSERVABILITY.md](../OBSERVABILITY.md#on-the-rig-implementation)). Because the
-model calls are their own spans, the latency split between "the model" and
-"everything else" is read directly off the trace. For **Break it**:
-
-* **A** works the same (`NAT_TRACE_CAPTURE_CONTENT` keeps its name);
-* **B** adds `enduser.pseudonym` to the root span instead of `user.id`;
-* also try raising `AGENT_RUST_LOG` to `rig=trace` and compare the container log
-  with the exported trace: Rig's raw provider request appears in the former and
-  never in the latter, because the export filter is fixed in code.
-
-`make verify-trace-pipeline` on `rust-agent` runs the production tracing layer
-against an in-memory exporter and asserts one trace per request, `traceparent`
-propagation, and that no credential, raw identity or approval token reaches a
-span.
+One tracing model in one process: every span is a child of the root because it
+was created while the root was current. `make verify-trace-pipeline` runs the
+production tracing layer against an in-memory exporter and asserts one trace
+per request, `traceparent` propagation, and that no credential, raw identity or
+approval token reaches a span.
 
 ## What you learned
 
@@ -151,8 +154,9 @@ span.
   budget in one view.
 * Agent latency is dominated by model round trips. Tool and rail time is usually
   small.
-* Tool spans can hold raw sensitive data that output rails never see. Decide
-  deliberately what your trace store keeps.
+* What a trace store keeps is a decision: readable content, per-user
+  attribution and model content are switches, and redaction only reaches as far
+  as the output policy's patterns and recognisers.
 
 ## Go deeper
 

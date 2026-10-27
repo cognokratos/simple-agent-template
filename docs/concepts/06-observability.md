@@ -21,19 +21,20 @@ of timed spans, so the shape of the agent's decision appears directly.
 | Concept | Implementation in this repo |
 | --- | --- |
 | Tracing standard | OpenTelemetry (OTLP/HTTP) |
-| Span source: agent | NAT intermediate steps → NAT spans → `agent_otlp` exporter ([`otlp_exporter.py`](https://github.com/cognokratos/simple-agent-template/blob/main/agent/src/nat_streaming_react/observability/otlp_exporter.py)) |
-| Span source: guardrails | NeMo Guardrails, through the process-wide OTel SDK |
+| Span source | Rust `tracing` spans in the agent, Rig's own `chat`/`execute_tool` spans among them, exported by `tracing-opentelemetry` ([`telemetry/mod.rs`](../../agent/src/telemetry/mod.rs)) |
 | Collector | OpenTelemetry Collector ([`observability/otel-collector.yml`](../../observability/otel-collector.yml)) |
 | Trace store and UI | MLflow |
 
 ## One request, one trace
 
-On the NAT implementation, NAT and NeMo Guardrails emit spans through two different exporters. Left alone,
-they produce two unrelated traces per request.
-[`trace_context.py`](https://github.com/cognokratos/simple-agent-template/blob/main/agent/src/nat_streaming_react/observability/trace_context.py)
-establishes one `(trace_id, root_span_id)` at the HTTP boundary, before either
-sees the request, so both join the same tree. This took some engineering. The
-reasons, and the private NAT attributes it relies on, are documented in
+The workflow route ([`api/workflow.rs`](../../agent/src/api/workflow.rs)) opens
+the root span `support-tickets-agent.invoke` and runs the whole request inside
+it. Every span created while it is current becomes its child: the input rail,
+the classifier call, Rig's model calls and tool executions (Rig adopts the
+current span), each `tool.policy` decision, the MCP call and the output rail.
+One tracing model in one process means one tree, with nothing to join after
+the fact. An inbound W3C `traceparent` is honoured, so an instrumented caller's
+trace is joined. Why this matters, and what each span carries:
 [OBSERVABILITY.md](../OBSERVABILITY.md#the-problem-this-solves).
 
 The trace recorded for the [request walkthrough](../tutorials/REQUEST-WALKTHROUGH.md)
@@ -41,35 +42,28 @@ The trace recorded for the [request walkthrough](../tutorials/REQUEST-WALKTHROUG
 local Ollama):
 
 ```text
-support-tickets-agent.invoke                        17.6 s   workflow root (NAT)
-  fastapi.dependencies / fastapi.endpoint
-  <workflow>                                        17.6 s   the ReAct loop (NAT)
-    guardrail_input_self_check_decision                      decision event
-    tickets_mcp__get_ticket                         0.03 s   MCP tool call
-    guardrail_output_regex_presidio_decision                 decision event
-  guardrail.input.self_check     outcome=passed     2.79 s   input rail
-    guardrails.request
-      guardrails.rail
-        guardrails.action
-          self_check_input qwen3:8b                 2.78 s   guard-model call
-  guardrail.output.regex_presidio  outcome=passed   0.05 s   output rails
-    guardrails.request
-      guardrails.rail → guardrails.action                    regex check
-      guardrails.rail → guardrails.action           0.04 s   Presidio masking
+support-tickets-agent.invoke                        15.59 s   workflow root
+  guardrail.input.self_check   llm_and_deterministic_allow   2.31 s   input rail
+    guard_model.call → chat  qwen3:8b                2.31 s   guard-model call
+  chat  qwen3:8b             (chooses get_ticket)    2.71 s   agent model, turn 1
+  execute_tool                                       0.05 s   Rig runs the tool
+    tool.policy              allow                  <0.01 s   deterministic verdict
+    tickets_mcp__get_ticket  ok                      0.05 s   MCP tool call
+  chat  qwen3:8b             (writes the answer)    10.53 s   agent model, turn 2
+  guardrail.output.stream    passed                 13.26 s   output rail (overlaps the answer)
 ```
 
-The trace answers the latency question. The tool call took 30 ms and the rails
-under 3 s combined, so most of the remaining ~14.7 s was the agent model. A warm
-repeat on commit `af29ce0` had the same shape: 12.8 s total, 0.24 s input rail,
-and still ~12.5 s of agent model. A
-one-tool ReAct turn makes at least two model calls: one to choose the tool, one to
-write the answer. In these runs, agent latency was model latency, so the
-fix is fewer model round trips, not faster SQL.
+The trace answers the latency question. The tool call took 50 ms and the
+policy decision under 10 ms; the two agent-model calls and the classifier call
+account for 15.55 s of 15.59 s. A one-tool turn makes at least two agent-model
+calls: one to choose the tool, one to write the answer. In this run, agent
+latency was model latency, so the fix is fewer model round trips, not faster
+SQL. The output-rail span is long because it lives as long as the answer
+streams, not because the rail is slow.
 
-In this observed trace, the agent model's own calls did **not** appear as
-separately named spans. Their time shows up only inside `<workflow>`. The
-guard-model call did appear (`self_check_input qwen3:8b`). Check what *your*
-trace contains rather than assuming.
+Check what *your* trace contains rather than assuming: a refused request has
+no `chat` span at all, and an approval adds `approval.gate` and
+`human_approval.wait` under `execute_tool`.
 
 ## What gets recorded, and what does not
 
@@ -78,14 +72,16 @@ data store with a retention and access problem. Decisions this repository makes:
 
 | Data | Default | Why |
 | --- | --- | --- |
-| Readable question and *released* answer on the root span | on (`NAT_TRACE_CAPTURE_CONTENT`) | The answer is captured where the output rail releases it, so a masked or blocked answer never leaks into the root span |
-| Credential headers (`authorization`, `cookie`, `x-api-key`, `x-csrf-token`, ...) | redacted | `SensitiveHeaderRedactionProcessor` in [`trace_processor.py`](https://github.com/cognokratos/simple-agent-template/blob/main/agent/src/nat_streaming_react/observability/trace_processor.py) |
-| Raw gateway identity (`x-authenticated-user-id`, `-username`, `-email`) | redacted, whatever `OTEL_TRACE_USER_ID` says | NAT copies request headers into span metadata; attribution is the pseudonym below, never the raw subject |
+| Readable question and *released* answer on the root span | on (`AGENT_TRACE_CAPTURE_CONTENT`) | The answer recorded is what the output rail released, so a masked or blocked answer never leaks into the root span |
+| Service credential (`Authorization`) | never recorded | Removed from the request once verified, before any handler runs ([`api/auth.rs`](../../agent/src/api/auth.rs)) |
+| Raw gateway identity (`x-authenticated-user-id`, `-username`, `-email`) | never recorded, whatever `OTEL_TRACE_USER_ID` says | Attribution is the pseudonym below, never the raw subject. Roles and the request id are kept. |
 | Per-user identifier | **off** (`OTEL_TRACE_USER_ID=false`) | A stable pseudonym turns a trace corpus into a per-person history |
-| Pre-mask guardrail output | **off** (`GUARDRAILS_TRACE_CAPTURE_RAW_OUTPUT=false`) | It contains exactly what the rails exist to stop |
-| Raw tool results in tool spans | **recorded** | Not covered by output rails. Use synthetic data, or add tool-span redaction before real PII reaches a shared backend. |
+| Tool results in tool spans | **redacted display copy** | The same copy the UI's tool card shows: secrets redacted, PII masked by the deterministic recognisers |
+| Model prompts and completions on Rig's spans | **off** (`AGENT_TRACE_CAPTURE_MODEL_CONTENT=false`) | Model output there is pre-output-rail: it can carry exactly what the rails exist to stop |
+| Rig's full provider request (logged at TRACE) | never exported | The export filter is fixed in code; `AGENT_RUST_LOG` affects only the container log |
 
-The last row is the honest gap. Header redaction is not content redaction. See
+The honest gaps: redaction is only as good as the output policy's patterns and
+recognisers, and the user's own question is recorded as typed, unmasked. See
 [OBSERVABILITY.md — redaction](../OBSERVABILITY.md#redaction-and-what-it-does-not-cover).
 
 ## Traces and evaluations reinforce each other
@@ -99,19 +95,6 @@ The last row is the honest gap. Header redaction is not content redaction. See
 * `make trace-test` ([`scripts/verify_traces_e2e.py`](../../scripts/verify_traces_e2e.py))
   sends real requests and asserts on the resulting trace shape: one tree,
   guardrail spans present, readable I/O, no credentials.
-
-## On the Rig implementation
-
-The goal — one trace per request with the decisions in it — is the same; the
-mechanism is much simpler. The Rig agent uses one tracing model in one
-process: Rust `tracing` spans exported by `tracing-opentelemetry`
-([`telemetry/mod.rs`](https://github.com/cognokratos/simple-agent-template/blob/rust-agent/agent/src/telemetry/mod.rs)). The workflow route opens the root
-span and Rig adopts it, so Rig's own `chat` and `execute_tool` spans,
-`tool.policy`, the MCP call and the rails all nest under it with no
-private-attribute workaround. Raw identity headers are never recorded, tool
-results appear redacted, and the export filter is fixed in code because Rig
-logs whole provider requests at TRACE.
-→ [OBSERVABILITY.md](../OBSERVABILITY.md#on-the-rig-implementation)
 
 ## Go deeper
 

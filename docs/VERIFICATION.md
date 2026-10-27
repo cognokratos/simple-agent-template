@@ -2,9 +2,8 @@
 
 What you can check, what it needs, and what it proves.
 
-The commands are the same on both branches. The tables describe the canonical
-NAT implementation; [On the Rig implementation](#on-the-rig-implementation)
-covers what the agent checks run on `rust-agent`.
+`make help` lists every target; [`.github/workflows/ci.yml`](../.github/workflows/ci.yml)
+is the authoritative list of what gates a pull request.
 
 ## Without Docker, a cluster or a model
 
@@ -14,11 +13,12 @@ make static-check
 
 | Step | Proves |
 | --- | --- |
-| `npm run verify:nat-wire` | Scalar SSE chunks (`"100"`, `"true"`, dates) survive the wire contract |
-| evaluator unit tests | Parser, scorers and provenance (`evaluation/tests/`) |
-| `verify_security_config.py` | Resolved Compose topology: ports, network membership, credential agreement |
-| `verify_security_sources.py` | Source wiring: gateway routes and properties, the patch scripts stay deleted, the guardrail event-name contract, every gateway identity header has a telemetry decision, FastAPI native telemetry stays off, no credential in `/version`, no workflow input interpolated into a shell command |
-| `docs-check` (`verify_docs.py`) | Every relative Markdown link and heading anchor resolves, and every `make <target>` named in the docs exists. `verify_docs_test.py` plants broken references to prove the checker fails on them. |
+| `make verify-stream-adapter` (`ui/scripts/verify-agent-wire.mjs`) | Scalar SSE chunks (`"100"`, `"true"`, dates) survive the wire contract |
+| `make eval-test-host` | Evaluator parser, scorers and provenance (`evaluation/tests/`) |
+| `verify_security_config.py` (in `make security-config-test`) | Resolved Compose topology: ports, network membership, credential agreement |
+| `verify_security_sources.py` (in `make security-config-test`) | Source wiring: gateway routes and properties; the retired NAT agent's files stay deleted; the agent requires its service key and an asserted identity, compares the key in constant time and strips it before handlers; Rig is pinned exactly; tool policy runs at the dispatch hook and is re-checked by executors; the shipped configuration exposes no mutation tool; the guardrail event-name contract with the evaluator; every gateway identity header has a telemetry decision; no credential or prompt text in `/version`; the OTLP export filter is fixed in code; no workflow input interpolated into a shell command, and `ci.yml` reads no secret |
+| `make docs-check` (`verify_docs.py`) | Every relative Markdown link and heading anchor resolves, and every `make <target>` named in the docs exists. `verify_docs_test.py` plants broken references to prove the checker fails on them. |
+| `make license-check` | The licence copies in `agent/` match the repository-root originals |
 
 Needs only `python3`, `node` and the Docker CLI (for `docker compose config` —
 no daemon interaction, no containers).
@@ -29,40 +29,51 @@ that external URLs resolve.
 
 ## With the Rust toolchain
 
+The agent's checks need only a Rust toolchain (≥ 1.95), no cluster and no
+model. The integration suites drive the real service against a fake
+OpenAI-compatible endpoint and an in-process MCP server.
+
 ```
-cd gateway    && cargo test && cargo clippy --all-targets -- -D warnings
-cd mcp-server && cargo test && cargo clippy --all-targets -- -D warnings
-make verify-approvals-rust
+make agent-check     # cargo fmt --check, cargo clippy --locked -D warnings, cargo test --locked
+make agent-test      # the tests alone
+```
+
+| Suite | Proves |
+| --- | --- |
+| unit tests (`agent/src`) | config fail-fast, input precedence and verdict parsing (matching NeMo Guardrails 0.21's documented parser), strict schemas, tool policy, the streaming window across every chunk split, PII recognisers on the repository's fixtures, the state machine, the interaction registry, token minting |
+| `against_the_mcp_verifier` | tokens minted by the agent verify against `mcp-server/src/approval.rs` itself, compiled into the test |
+| [`tests/contract.rs`](../agent/tests/contract.rs) | the [agent-service contract](AGENT-SERVICE-CONTRACT.md) over HTTP |
+| [`tests/agent_loop.rs`](../agent/tests/agent_loop.rs) | a scripted adversarial model: unknown tools, invented privileged arguments, forged identity, split secrets, endless tool calls, provider and MCP errors, disconnect, and the input rail end to end |
+| [`tests/approvals.rs`](../agent/tests/approvals.rs) | the whole approval flow and its attacks through the real service |
+| [`tests/observability.rs`](../agent/tests/observability.rs) | one trace per request with Rig's spans, `traceparent`, no credential, identity or token in any span |
+
+The `verify-*` targets run named subsets of the same suites on the host:
+
+| Target | Runs | Proves |
+| --- | --- | --- |
+| `make verify-llm-config` | `config::` unit tests | Configuration parsing fails fast; an empty optional parameter is omitted and a set one (`none` included) is sent verbatim. Each case pins its own input, so the result does not depend on the caller's `.env` |
+| `make verify-input-guardrails` | `guardrails::input` and `config::` | Decision precedence, forged assistant history, strict verdict parsing, the per-layer switches |
+| `make verify-output-guardrails` | `guardrails::output` and `guardrails::pii` | Progressive release, cross-chunk secret blocking, PII masking |
+| `make verify-rails` | `tests/agent_loop.rs` | Both rails through the real service with a scripted model, so what is under test is the wiring rather than a model. It needs no network |
+| `make verify-guardrails` | the three above | |
+| `make verify-approvals` | `approval::` and `tests/approvals.rs` | The approval boundary, agent side |
+| `make verify-trace-pipeline` | `tests/observability.rs` | Trace context, redaction (in both `OTEL_TRACE_USER_ID` modes), released rather than raw text on a block |
+
+The other two crates:
+
+```
+cd gateway    && cargo clippy --locked --all-targets --all-features -- -D warnings && cargo test --locked
+cd mcp-server && cargo clippy --locked --all-targets --all-features -- -D warnings && cargo test --locked
+make verify-approvals-rust   # the MCP approval verifier and mutation-policy subsets
 ```
 
 The gateway test suite covers cookies, CSRF, session generation discipline, PKCE, issuer
 selection, message validation, identity-header encoding, routing and hardening.
 
 The MCP test suite covers approval signature, binding, lifetime, payload digest, the action
-registry and every transition rule, plus the cross-language check that a
-Python-minted token is accepted.
-
-## On the Rig implementation
-
-The agent's checks need only a Rust toolchain (≥ 1.95), no cluster and no model:
-
-```
-make agent-check     # cargo fmt --check, clippy -D warnings, every agent test
-make docs-parity     # README.md and docs/ identical to origin/main
-```
-
-| Suite | Proves |
-| --- | --- |
-| unit tests (`agent/src`) | config fail-fast, input precedence and NeMo 0.21 verdict parsing, strict schemas, tool policy, the streaming window across every chunk split, PII recognisers on the repository's fixtures, the state machine, the interaction registry, token minting |
-| `against_the_mcp_verifier` | tokens minted by the agent verify against `mcp-server/src/approval.rs` itself, compiled into the test |
-| [`tests/contract.rs`](https://github.com/cognokratos/simple-agent-template/blob/rust-agent/agent/tests/contract.rs) | the [agent-service contract](AGENT-SERVICE-CONTRACT.md) over HTTP |
-| [`tests/agent_loop.rs`](https://github.com/cognokratos/simple-agent-template/blob/rust-agent/agent/tests/agent_loop.rs) | a scripted adversarial model: unknown tools, invented privileged arguments, forged identity, split secrets, endless tool calls, provider and MCP errors, disconnect |
-| [`tests/approvals.rs`](https://github.com/cognokratos/simple-agent-template/blob/rust-agent/agent/tests/approvals.rs) | the whole approval flow and its attacks through the real service |
-| [`tests/observability.rs`](https://github.com/cognokratos/simple-agent-template/blob/rust-agent/agent/tests/observability.rs) | one trace per request with Rig's spans, `traceparent`, no credential, identity or token in any span |
-
-The `verify-*` targets keep their names there and run the matching subsets.
-`make test`, `make security-test`, `make trace-test` and `make eval-all` run
-against the cluster unchanged.
+registry and every transition rule, plus a fixed token from the retired Python
+minter, which proves the token format did not change when the agent was
+rewritten.
 
 ## With the cluster running
 
@@ -70,24 +81,19 @@ against the cluster unchanged.
 make dev          # build and start
 make wait         # readiness
 make health       # endpoints
-make test         # everything below, in order
+make test         # eval-test, agent-test, verify-approvals-rust, security-test
 ```
 
 | Target | Needs | Proves |
 | --- | --- | --- |
-| `make verify-llm-config` | cluster | The LLM client builds; an empty optional parameter is omitted and a set one (`none` included) is sent verbatim. Each case pins its own input, so the result does not depend on the caller's `.env` |
-| `make verify-mcp` | cluster | MCP refuses a missing key and accepts the agent's |
-| `make verify-input-guardrails` | cluster | Decision precedence, forged assistant history, strict boolean parsing |
-| `make verify-output-guardrails` | cluster | Config invariants, secret patterns, real Presidio masking |
-| `make verify-rails` | cluster | The real NeMo runtime: blocking, split credentials, reuse, concurrency |
-| `make verify-trace-pipeline` | cluster | Trace context, bounds, redaction (raw identity in both `OTEL_TRACE_USER_ID` modes), error capture, FastAPI native telemetry off |
-| `make verify-approvals` | cluster | The approval boundary, agent side |
+| `make verify-mcp` | cluster | MCP refuses a missing key and accepts the agent's (probed from the agent container) |
 | `make network-test` | cluster | Runtime east-west reachability |
 | `make auth-test` | cluster | Every authentication boundary end to end |
-| `make security-test` | cluster | The three above plus topology |
+| `make security-test` | cluster | The three above plus `security-config-test` |
+| `make eval-test` | Docker | The evaluator unit tests inside the evaluator image |
 
-`verify-rails` replaces the rail LLM with a deterministic fake, so what is under
-test is the rail wiring rather than the model. It needs no network.
+The agent image is distroless, so in-container checks use the binary's `probe`
+subcommand rather than a shell (`make shell-agent` prints how).
 
 ## With a model available
 
@@ -111,16 +117,13 @@ and trace shape.
 
 ## CI
 
-`.github/workflows/ci.yml` runs the deterministic half on every push and pull
-request: Python, both Rust crates with Clippy, the UI typecheck/contract/build,
-and Compose topology. It reads no secret and works on a fork. On `rust-agent` it
-also runs the agent crate (fmt, Clippy, tests) and the documentation-parity
-check.
-
-`.github/workflows/rust-agent-drift.yml` checks on every push to `main` or
-`rust-agent`, and daily, that `rust-agent` is still one commit on the current
-`main` with identical documentation. It only reports; see
-[RUST-BRANCH-MAINTENANCE.md](RUST-BRANCH-MAINTENANCE.md#knowing-when-rust-agent-is-stale).
+`.github/workflows/ci.yml` runs the deterministic half on every push to `main`
+and every pull request: the Python checks (evaluator tests, source wiring,
+documentation, licence copies, evaluation-artifact gate), all three Rust crates
+(`agent`, `gateway`, `mcp-server`: Clippy with warnings denied, tests, a
+current lockfile, and `cargo fmt --check` for the agent), the UI
+typecheck/wire contract/build, and the Compose topology. It reads no secret and
+works on a fork.
 
 `.github/workflows/live-evaluation.yml` is manual, takes the endpoint per run,
 and reads its key from a named environment that is absent by default.

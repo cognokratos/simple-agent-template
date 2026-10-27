@@ -93,38 +93,34 @@ make network-test
 
 ## Why it failed
 
-Two independent checks, in order
-([`fastapi_worker.py`](https://github.com/cognokratos/simple-agent-template/blob/main/agent/src/nat_streaming_react/fastapi_worker.py)):
-`StaticServiceKeyMiddleware` asks *"are you the gateway?"* and
-`RequireIdentityHeaderMiddleware` asks *"who are you acting for?"*. Being on the
-right network answers neither. NAT trusts the identity header it receives, so it
-must only accept it from a caller that has proved it is the gateway.
+Two independent checks, in order, in the agent's own middleware
+(`require_gateway` in [`agent/src/api/auth.rs`](../../agent/src/api/auth.rs)):
+the constant-time service-key comparison asks *"are you the gateway?"*, and the
+identity-header check asks *"who are you acting for?"*. Only when both pass is
+a `TrustedCaller` built. Being on the right network answers neither. The agent
+trusts the identity header it receives, so it must only accept it from a caller
+that has proved it is the gateway.
+
+Two more things worth seeing:
+
+* `make version` prints the agent's provenance from its authenticated
+  `/version`: `"agent_runtime": "rig-rust"`, the Rig and MCP SDK versions, and
+  the `prompt_sha256` of the system prompt;
+* the agent image is distroless — there is no shell in it — so in-container
+  checks use the binary itself, for example
+  `docker compose exec agent /usr/local/bin/tickets-agent probe mcp-auth`
+  (what `make verify-mcp` runs).
 
 ## Architecture after
 
 ```mermaid
 flowchart LR
-    B([Browser]) --> UI[assistant-ui] --> GW[gateway] --> AG[NAT agent] --> MCP[MCP server] --> DB[(PostgreSQL)]
+    B([Browser]) --> UI[assistant-ui] --> GW[gateway] --> AG[Rust agent] --> MCP[MCP server] --> DB[(PostgreSQL)]
     KC[Keycloak] --- GW
     AG -. OTLP .-> OT[collector] -.-> ML[MLflow]
 ```
 
 Full version with trust boundaries: [concept 7](../concepts/07-security-and-trust-boundaries.md#diagram-d-trust-boundaries).
-
-## On the Rig implementation
-
-Same commands, same results: `401` with no credential, then
-`{"error":"missing or ambiguous authenticated identity"}` with the credential
-but no identity, and `make auth-test` / `make network-test` pass unchanged.
-The two checks live in the service's own middleware,
-[`api/auth.rs`](https://github.com/cognokratos/simple-agent-template/blob/rust-agent/agent/src/api/auth.rs), rather than around a framework. Two things to
-notice on `rust-agent`:
-
-* `make version` reports `"agent_runtime": "rig-rust"`, the Rig and rmcp
-  versions, and the same `prompt_sha256` as on `main`;
-* the agent image is distroless — there is no shell in it — so in-container
-  checks use the binary itself, for example
-  `docker compose exec agent /usr/local/bin/tickets-agent probe mcp-auth`.
 
 ## What you learned
 

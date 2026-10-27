@@ -3,65 +3,59 @@
 **Optional, and off in the shipped configuration.** The sample application is
 read-only and the model has no capability to change state.
 
-The approval boundary — token format, MCP verifier, transaction, audit trail —
-is identical for both agent implementations. What differs is how the agent
-pauses, checks the human's answer and resumes; those parts are labelled **NAT**
-and **Rig** below.
+The agent-side flow lives in [`agent/src/approval/`](../agent/src/approval/);
+the verifier and the mutation in
+[`mcp-server/src/approval.rs`](../mcp-server/src/approval.rs) and
+[`mcp-server/src/mutation.rs`](../mcp-server/src/mutation.rs).
 
 ## Enabling it
-
-### On the NAT implementation
-
-All four are required; no single one opens the path:
-
-1. uncomment the `functions:` block in `agent/config.yml`;
-2. add `ticket_priority_change` to `workflow.tool_names`;
-3. set `HITL_APPROVAL_SECRET` (≥ 24 characters, identical for the agent and the
-   MCP server);
-4. set `HITL_ENABLE_INTERACTIVE=true` so NAT mounts its interaction endpoints.
-
-### On the Rig implementation
 
 All three are required, and the agent **refuses to start** with only some of
 them — whoever sets one switch believes approvals are on:
 
-1. uncomment the `tools.approval` block in `agent/config.yml` on `rust-agent`
-   (declaring the tool is its registration), then `make rebuild-agent`;
-2. set `HITL_APPROVAL_SECRET` as above;
-3. set `HITL_ENABLE_INTERACTIVE=true`, which mounts the interaction route.
+1. set `HITL_APPROVAL_SECRET` (≥ 24 characters, identical for the agent and the
+   MCP server);
+2. set `HITL_ENABLE_INTERACTIVE=true`, which mounts the interaction route;
+3. uncomment the `tools.approval` block in `agent/config.yml` (declaring the
+   tool is its registration).
 
-A secret alone is valid there: the MCP server can route its endpoint beside a
+Then `make up-build`: the agent image bakes in `config.yml`, and the agent and
+MCP server must be recreated to see the secret.
+
+A secret alone is valid: the MCP server can route its endpoint beside a
 read-only agent. `HITL_INTERACTION_TIMEOUT_SECONDS` (default 600) bounds how long
 a prompt waits before it counts as a cancellation.
 
-### Either way
-
 Without the secret the MCP server routes **no execution endpoint at all** — there
 is no mutation surface rather than a disabled one. CI asserts the shipped
-default is read-only.
+default is read-only (`scripts/verify_read_only_default.py`).
 
 ## The flow
 
 ```
-model calls the approval function with its proposal
-  → NAT pauses the workflow and emits `event: interaction_required`
+model calls ticket_priority_change with its proposal
+  → the tool policy lets it through only into the approval gate
+  → the gate suspends the run and emits `event: interaction_required`
   → the UI renders an approval card in the thread
   → the human chooses; a change requires them to type a reason
   → the response is proxied: authenticated, CSRF-checked
-  → the interaction guard checks ownership and the offered choice
-  → the workflow resumes and mints a signed token
+  → the interaction registry checks ownership and the offered choice
+  → the run resumes and mints a signed token
   → the MCP server verifies it and applies the change in one transaction
   → the model is told what happened; it never restates the payload
 ```
 
-On the Rig implementation the same flow is explicit code: the tool-policy hook
-lets `ticket_priority_change` proceed only into
-[`approval/gate.rs`](https://github.com/cognokratos/simple-agent-template/blob/rust-agent/agent/src/approval/gate.rs), which suspends the run on a
-`PendingTicket`; [`approval/pending.rs`](https://github.com/cognokratos/simple-agent-template/blob/rust-agent/agent/src/approval/pending.rs)
+Each step is explicit code. The tool-policy hook
+([`guardrails/tools.rs`](../agent/src/guardrails/tools.rs)) lets
+`ticket_priority_change` proceed only into
+[`approval/gate.rs`](../agent/src/approval/gate.rs), which suspends the run on a
+`PendingTicket`; [`approval/pending.rs`](../agent/src/approval/pending.rs)
 checks the answer and only then builds a `VerifiedDecision` (a type with a
-private constructor); [`approval/token.rs`](https://github.com/cognokratos/simple-agent-template/blob/rust-agent/agent/src/approval/token.rs)
-mints the same token. The model's result omits `actor_id`, and the run's states
-are explicit in [`agent/state.rs`](https://github.com/cognokratos/simple-agent-template/blob/rust-agent/agent/src/agent/state.rs).
+private constructor); [`approval/token.rs`](../agent/src/approval/token.rs)
+mints the token from it, and
+[`approval/execute.rs`](../agent/src/approval/execute.rs) sends it to the MCP
+server. The model's result omits `actor_id`, and the run's states are explicit
+in [`agent/state.rs`](../agent/src/agent/state.rs).
 
 Authorization and effect are one step. Nothing between the human's confirmation
 and the state change depends on further model output, so a request can never end
@@ -73,40 +67,25 @@ what was approved.
 | Layer | Checks | Does not check |
 | --- | --- | --- |
 | **Gateway** | shape, size, encoding, UUID form, protocol-level confirm/cancel consistency | which choices are legitimate — it cannot know, for an arbitrary application |
-| **Interaction check** (NAT: interaction guard; Rig: interaction registry) | the interaction is pending (single use); the responder owns the execution; the submitted id **and** value, together, are one *this* prompt actually offered as a pair; the response type matches the prompt type | anything about the resulting mutation |
+| **Interaction registry** | the interaction is pending (single use); the responder owns the execution; the submitted id **and** value, together, are one *this* prompt actually offered as a pair; the response type matches the prompt type | anything about the resulting mutation |
 | **Agent** | mints a token binding action, resource, actor, request, the current state as the model reported it, exact payload | nothing about current state — that has moved by the time it is applied |
 | **MCP server** | signature, every binding, lifetime ceiling, re-derived state under a row lock, transition policy, single use | that a human actually made the choice: any token signed with `HITL_APPROVAL_SECRET` is accepted as one (see [the trust model](#the-trust-model)) |
 
-### The gap the interaction guard closes
+### Ownership is built in
 
-NAT's `POST /executions/{e}/interactions/{i}/response` calls
-`ExecutionStore.resolve_interaction` and nothing else. It does not consider who
-is asking, and `ExecutionRecord` carries no owner. In stock NAT, **knowing two
-UUIDs is sufficient authority to answer somebody else's approval prompt**, with
-any choice the schema permits.
-
-`OwnerAwareExecutionStore` substitutes for NAT's store — a supported extension
-point, since the worker assigns `self._execution_store` in `__init__` — and
-checks both properties before resolution. Ownership is captured where each side
-can see it: the prompt's actor from the workflow task's inherited contextvars,
-the responder's from a pure-ASGI middleware on the response request.
-
-An interaction this guard never saw created (NAT's OAuth consent flow) has no
-recorded owner; those are allowed through and logged, because refusing them
-would break a NAT feature. `HITL_STRICT_INTERACTION_OWNERSHIP=true` makes even
-that case fail closed, for a deployment where approvals are the only interaction
-type.
-
-### On the Rig implementation: ownership is built in
-
-There is nothing to patch: the registry records the owner and the offer when it
-opens an interaction and checks them when the answer arrives, before the run
-waiting on it can resume. Every interaction has an owner by construction, so
-`HITL_STRICT_INTERACTION_OWNERSHIP` has nothing to make stricter. A refused answer
-leaves the prompt pending for its owner: another user gets `403`; an unoffered
-choice, a wrong prompt kind or an empty reason `422`; a fabricated, answered,
-abandoned or expired interaction `404`
+The registry records the owner and the offer when it opens an interaction and
+checks them when the answer arrives, before the run waiting on it can resume.
+Every interaction has an owner by construction, so knowing two UUIDs is never
+enough to answer somebody else's prompt, and
+`HITL_STRICT_INTERACTION_OWNERSHIP` is accepted but has nothing to make
+stricter. A refused answer leaves the prompt pending for its owner: another user
+gets `403`; an unoffered choice, a wrong prompt kind or an empty reason `422`; a
+fabricated, answered, abandoned or expired interaction `404`
 ([contract](AGENT-SERVICE-CONTRACT.md)).
+
+The retired NAT agent (`nat-1.9-final`) had to add this check: stock NAT's
+interaction endpoint resolved a prompt for anyone who knew its two UUIDs
+([FRAMEWORK-MIGRATION.md](FRAMEWORK-MIGRATION.md#human-in-the-loop)).
 
 ## The token
 
@@ -150,7 +129,7 @@ leniency on expiry would extend the window an approval stays spendable.
 The four layers defend against an untrusted **model** and an untrusted
 **browser**. They do not defend against a compromised **agent runtime**:
 
-* The NAT process is a trusted component. It holds `MCP_API_KEY` (to call the
+* The agent process is a trusted component. It holds `MCP_API_KEY` (to call the
   MCP server) and, with approvals enabled, `HITL_APPROVAL_SECRET` (to sign
   tokens). Neither ever enters the model's context or a tool argument; that is
   what "the model cannot mint a token" means. It does not mean the secrets are
@@ -216,11 +195,10 @@ that can be edited or deleted is not an audit trail.
 | `low` / `medium` / `high` / `urgent` | your `allowed_choices` |
 | `payload.note` | your payload fields |
 
-Adding an action: on NAT, a request model and a registered function in
-`agent/src/nat_streaming_react/approval.py`; on Rig, a proposal schema and a gate
-in `agent/src/approval/` plus a `ToolSpec` in `agent/src/services.rs`
-([EXTENDING.md](EXTENDING.md#adding-an-approval-gated-action)). Either way, an
-entry in `mutation::ACTIONS` on the MCP side, and the mutation itself. Nothing in the token format or the
+Adding an action: a proposal schema and a gate in `agent/src/approval/` plus a
+`ToolSpec` in `agent/src/services.rs`
+([EXTENDING.md](EXTENDING.md#adding-an-approval-gated-action)), an entry in
+`mutation::ACTIONS` on the MCP side, and the mutation itself. Nothing in the token format or the
 verification changes.
 
 The action registry is a fixed list rather than configuration: the set of things
@@ -229,7 +207,7 @@ a human can authorize is a security property of the deployment.
 ## Verifying it
 
 ```
-make verify-approvals        # agent-side approval checks (NAT: in the agent container; Rig: on the host)
+make verify-approvals        # agent-side approval checks, on the host (no cluster, no model)
 make verify-approvals-rust   # MCP-side approval and policy tests
 ```
 
@@ -238,10 +216,10 @@ skew tolerance, wrong action/resource/request, moved authoritative state,
 payload-digest disagreement, missing identity, replay, cancellation, invalid and
 unoffered choices, unauthorized interaction responses, every transition rule, and
 that a token minted by the agent is accepted by the Rust verifier — including a
-non-ASCII payload, which proves the canonical JSON encoders agree. On
-`rust-agent` the agent's tests compile `mcp-server/src/approval.rs` itself, so
+non-ASCII payload, which proves the canonical JSON encoders agree. The agent's
+tests compile `mcp-server/src/approval.rs` itself, so
 minter and verifier cannot disagree about a byte without a test failing, and
-[`agent/tests/approvals.rs`](https://github.com/cognokratos/simple-agent-template/blob/rust-agent/agent/tests/approvals.rs) drives the whole flow
+[`agent/tests/approvals.rs`](../agent/tests/approvals.rs) drives the whole flow
 through the real service: approve, cancel at either prompt, keep, another user,
 unoffered and half-cancel choices, fabricated ids, replay, a model that supplies
 approval fields, no gateway request id, disconnect, expiry, concurrent users,

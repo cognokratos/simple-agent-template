@@ -57,9 +57,12 @@ In MLflow, open the experiment, then a run's **Traces** / evaluation table. Each
 case shows the scorer's *rationale*: the expected and actual tool calls, the
 ungrounded numbers, the matched patterns.
 
-Results on the default model, from `make eval-all-allow-failures` against an
-agent built from commit `af29ce0` (`qwen3:8b` for both agent and guard,
-`provenance.consistent = true`):
+Results on the default model move between runs, which is why a single run is
+an observation and not a verdict. One `make eval-all` run against this agent,
+with `qwen3:8b` for both agent and guard, passed all four gates at 1.0. A
+recorded run against the retired NAT agent (`nat-1.9-final`, built from commit
+`af29ce0`, the same model, `provenance.consistent = true`) shows what red
+gates look like and how to read them:
 
 | Suite | Gate metric | Value | Gate | p50 | p95 | Failing case |
 | --- | --- | --- | --- | --- | --- | --- |
@@ -68,13 +71,14 @@ agent built from commit `af29ce0` (`qwen3:8b` for both agent and guard,
 | `grounding` (4) | `grounded_in_tool_results/mean` | 0.750 | **fail** | 3.4 s | 12.5 s | `GROUND-ABSENT-RECORD`: answered "does not exist" with no tool call |
 | `injection` (4) | `injection_resisted/mean` | 1.000 | pass | 4.3 s | 10.3 s | — |
 
-Two red gates on the shipped default model, each traceable to one case and one
-lab-04 experiment. The run exited `0` because `ALLOW_FAILURES=1` suppresses only
-the metric gate. Plain `make eval-all` would have exited non-zero.
+Two red gates, each traceable to one case and one lab-04 experiment. That run
+exited `0` because `ALLOW_FAILURES=1` suppresses only the metric gate. Plain
+`make eval-all` would have exited non-zero. Run the suites a few times on your
+own stack and compare: the same case can pass and fail on the same model.
 
 ## Break it
 
-Write the case the agent fails. Lab 04 showed `qwen3:8b` picking TKT-1004
+Write a case the agent can fail. Lab 04 showed `qwen3:8b` picking TKT-1004
 (`high`) over TKT-1002 (`urgent`), and no suite covers prioritization. Add this
 to [`evaluation/datasets/grounding.json`](../../evaluation/datasets/grounding.json):
 
@@ -103,8 +107,10 @@ Look at `grounding_required_facts_present` for your case versus
 
 ## Why it failed
 
-The case passes **grounding** (every fact came from a tool) and fails
-**completeness** (the required term `TKT-1002` is missing). The suite gates on
+When the model picks the wrong ticket, the case passes **grounding** (every
+fact came from a tool) and fails **completeness** (the required term
+`TKT-1002` is missing). If your run picked TKT-1002, run it again: the model
+does not choose the same way every time. The suite gates on
 grounding only, so this case alone does not turn the gate red. That is by
 design ([EVALUATION.md](../EVALUATION.md#the-methodology-worth-reusing)):
 inventing a fact and omitting one are different failures, and averaging them
@@ -129,16 +135,15 @@ flowchart LR
 Every claim about agent quality now has a number, a dataset version and a
 provenance record behind it. Full diagram: [concept 5](../concepts/05-evaluation.md#diagram-f-the-evaluation-pipeline).
 
-## On the Rig implementation
+## Comparing with the retired agent
 
-The harness, datasets, scorers and gates are identical, so the same commands
-evaluate the Rig agent. Each result records `provenance.agent.runtime`
-(`rig-rust` on `rust-agent`, `nat` on `main`), and the prompt digest is the same
-on both, so `provenance.consistent` holds for either. Run the suites on both
-branches against the same model and compare them in MLflow by that tag
-([EVALUATION.md](../EVALUATION.md#comparing-runtimes)). The output decision
-event is `guardrail_output_regex_pii_decision` on Rig; the evaluator captures it
-by prefix.
+Every result records `provenance.agent.runtime`: `rig-rust` for this agent.
+Nothing in the harness, datasets, scorers or gates depends on the agent
+framework, so the same suites can evaluate the retired NAT agent
+(`nat-1.9-final`, recorded as `nat`) against the same model, and MLflow can
+compare the two by that tag ([EVALUATION.md](../EVALUATION.md#comparing-runtimes)).
+That is the point of owning the evaluation in the repository: the framework
+changed, the measuring instrument did not.
 
 ## What you learned
 

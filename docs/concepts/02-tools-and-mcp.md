@@ -23,7 +23,7 @@ manipulated by text it read a moment ago. Design for that client:
 | Narrow capabilities | Each tool is a *permission*. The model can do whatever the union of its tools can do. | Two read-only tools. No `run_sql`, no update tool. |
 | Bounded results | The model pays (in latency and context) for every byte you return. | `limit` defaults to 50 and is clamped to `1..=100` |
 | Errors as data | An error the model can read becomes an observation it can explain. | Unknown ticket → `invalid_params` "Ticket 'TKT-9999' was not found" |
-| Descriptions are documentation | The description is where you tell the model *when* to call a tool. | `#[tool(description = ...)]` in Rust, overridden by `tool_overrides` in [`agent/config.yml`](../../agent/config.yml) |
+| Descriptions are documentation | The description is where you tell the model *when* to call a tool. | `#[tool(description = ...)]` in Rust, overridden by `tools.mcp.overrides` in [`agent/config.yml`](../../agent/config.yml) |
 | Granularity | Too fine-grained and the model must chain many calls. Too coarse and you lose least privilege. | `search_tickets` returns priority and `created_at`, so prioritization *can* be answered without fan-out (see below) |
 
 ### The tool cannot be talked out of its own rules
@@ -58,12 +58,12 @@ agent, the agent is an MCP *client*: it asks the server for its tool list
 | --- | --- |
 | Tool interoperability | MCP over streamable HTTP |
 | MCP server (capability implementation) | Rust, [`rmcp`](https://github.com/modelcontextprotocol/rust-sdk), [`mcp-server/src/main.rs`](../../mcp-server/src/main.rs) |
-| MCP client | NAT's `mcp_client` function group `tickets_mcp` in [`agent/config.yml`](../../agent/config.yml) (Rig: `rmcp` + `rig-rmcp`, see below) |
-| Which tools the agent may use | `include: [search_tickets, get_ticket]` in that function group |
+| MCP client | `rmcp` 2.2 for discovery and `rig-rmcp` for calls, in [`agent/src/mcp/client.rs`](../../agent/src/mcp/client.rs); configured under `tools.mcp` in [`agent/config.yml`](../../agent/config.yml) |
+| Which tools the agent may use | `tools.mcp.include: [search_tickets, get_ticket]` |
 | Service-to-service authentication | `Authorization: Bearer ${MCP_API_KEY}`, checked in constant time by `require_api_key` |
 | Persistence | PostgreSQL, reachable **only** from the MCP server (`data_net`) |
 
-Why a separate process and protocol, rather than Python functions inside the
+Why a separate process and protocol, rather than functions inside the
 agent?
 
 * **A process boundary is a capability boundary.** The agent container holds no
@@ -79,7 +79,7 @@ agent?
 ```mermaid
 flowchart LR
     subgraph agent_net_zone [agent container]
-        RT[NAT ReAct runtime] --> C[tickets_mcp<br/>MCP client]
+        RT[Rig loop +<br/>tool policy] --> C[tickets_mcp<br/>MCP client]
     end
     subgraph mcp_zone [mcp-server container]
         AUTH[require_api_key<br/>constant-time Bearer check] --> R[tool router]
@@ -97,8 +97,8 @@ flowchart LR
 The tools carry descriptions in two places:
 
 1. In Rust, `#[tool(description = "...")]`. This is what any MCP client sees.
-2. In `tool_overrides` in `agent/config.yml`. NAT replaces the description the
-   model sees with this one.
+2. In `tools.mcp.overrides` in `agent/config.yml`. The agent replaces the
+   description the model sees with this one.
 
 The override for `get_ticket` says: *"When the user asks for history across
 multiple tickets, call this tool separately once for every ticket ID returned by
@@ -114,8 +114,9 @@ must be evaluated the same way (the `tools` suite in
 a full model round trip. This is an N+1 query pattern, and the model is the one
 issuing it.
 
-Observed on the default `qwen3:8b` (every run made while writing the labs, on two
-agent builds, and in the `tools` evaluation suite, see
+Observed on the default `qwen3:8b` on the retired NeMo Agent Toolkit agent
+(every run made while writing the labs, on two agent builds, and in the `tools`
+evaluation suite, see
 [lab 04](../tutorials/04-break-the-agent.md#experiment-2-tool-call-explosion)):
 the model called `search_tickets`, then `get_ticket` for only **three of the
 five** open tickets, and ended without a usable answer. Every call it made was
@@ -145,16 +146,17 @@ Every tool call costs a model round trip. The defences are layered:
 
 | Control | Where | Effect |
 | --- | --- | --- |
-| `max_tool_calls: 20` | `workflow` in `agent/config.yml` | Hard ceiling on loop iterations |
-| `tool_call_timeout: 30` | `function_groups.tickets_mcp` | Per-call ceiling |
+| `max_tool_calls: 20` | `workflow` in `agent/config.yml` | Exact ceiling on tool calls per request, enforced at Rig's dispatch hook |
+| `tool_call_timeout_seconds: 30` | `tools.mcp` in `agent/config.yml` | Per-call ceiling |
 | `limit` clamp `1..=100` | `search_tickets` in Rust | Bounded result size, whatever the model asks for |
 | Tool granularity | your API design | Fewer calls needed in the first place |
 
 ## What this repository does not do
 
 * **No dynamic tool loading.** The agent uses exactly the tools listed in
-  `include`. Adding a tool to the MCP server does nothing until it is also added
-  there. That is deliberate: the capability surface is reviewed configuration.
+  `tools.mcp.include`, discovered once at startup. Adding a tool to the MCP
+  server does nothing until it is also added there. That is deliberate: the
+  capability surface is reviewed configuration.
 * **No per-user authorization in the tools.** The MCP tools return any matching
   row. Scoping queries to the user is listed under "before production" in
   [LIMITATIONS.md](../LIMITATIONS.md#before-production). The identity *is*
@@ -167,23 +169,22 @@ Every tool call costs a model round trip. The defences are layered:
   unstructured knowledge (manuals, policies), retrieval becomes another tool with
   the same design concerns.
 
-## On the Rig implementation
+## The agent checks the contract too
 
-The capability boundary is the same Rust MCP server with the same tools; only
-the client differs. The Rig agent discovers tools over `rmcp` 2.2 at startup
-and invokes them through `rig-rmcp` ([`mcp/client.rs`](https://github.com/cognokratos/simple-agent-template/blob/rust-agent/agent/src/mcp/client.rs)), with
-the same allow-list and description overrides from `agent/config.yml`. Two
-things are stricter there:
+The MCP server is authoritative, but the agent does not forward whatever the
+model proposes. Two deterministic checks sit on its side of the boundary:
 
-* a tool whose published schema uses a keyword the agent cannot enforce, or
-  declares an argument such as `user_id` or `approval_token`, **stops startup**
-  ([`mcp/schema.rs`](https://github.com/cognokratos/simple-agent-template/blob/rust-agent/agent/src/mcp/schema.rs));
-* every proposed call passes one deterministic policy function before it runs
-  — closed registry, no unknown arguments, no type coercion
-  ([`guardrails/tools.rs`](https://github.com/cognokratos/simple-agent-template/blob/rust-agent/agent/src/guardrails/tools.rs)).
+* at startup, a tool whose published schema uses a keyword the agent cannot
+  enforce, or declares an argument reserved for trusted context such as
+  `user_id` or `approval_token`, **stops startup**
+  ([`mcp/schema.rs`](../../agent/src/mcp/schema.rs));
+* every proposed call passes one deterministic policy function before it runs —
+  closed registry, no unknown arguments, no type coercion
+  ([`guardrails/tools.rs`](../../agent/src/guardrails/tools.rs)), called from
+  Rig's dispatch hook and again by the executor.
 
 The MCP server still re-validates every argument and remains authoritative.
-→ [Rust lessons 04–06](../RUST-LEARNING-PATH.md#04--discover-tools-through-mcp)
+→ [Agent internals, lessons 04–06](../AGENT-INTERNALS.md#04--discover-tools-through-mcp)
 
 ## Go deeper
 
@@ -192,5 +193,5 @@ The MCP server still re-validates every argument and remains authoritative.
 * Reference: [EXTENDING.md](../EXTENDING.md),
   [SECURITY.md — service credentials](../SECURITY.md#service-credentials)
 * Source: [`mcp-server/src/main.rs`](../../mcp-server/src/main.rs),
-  `function_groups` in [`agent/config.yml`](../../agent/config.yml)
+  `tools.mcp` in [`agent/config.yml`](../../agent/config.yml)
 * Next concept: [3. Grounding and authoritative state](03-grounding-and-authoritative-state.md)

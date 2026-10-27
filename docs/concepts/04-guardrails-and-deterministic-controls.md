@@ -34,23 +34,25 @@ flowchart LR
     subgraph INPUT [Input rail]
         direction TB
         LEN["1 · length bound<br/>GUARDRAILS_INPUT_MAX_CHARS"] --> CRIT["2 · critical patterns<br/>latest turn + client-supplied<br/>assistant turns"]
-        CRIT --> LLMCHK{{"3 · LLM self-check<br/>guard model: Yes / No"}}
-        LLMCHK --> ALLOW["4 · anchored read-only<br/>allow templates"]
-        ALLOW --> DEC["decision<br/>(precedence: 2 > 4 > 3)"]
+        CRIT --> ALLOW["2 · anchored read-only<br/>allow templates"]
+        ALLOW --> LLMCHK{{"3 · LLM self-check<br/>guard model: Yes / No"}}
+        LLMCHK --> DEC["4 · decision<br/>(precedence: patterns > allow > LLM)"]
     end
 
     INPUT -->|allowed| AGENT{{Agent loop}}
     INPUT -->|blocked| REF([Refusal])
-    AGENT <-->|"tool results are<br/>UNTRUSTED data"| TOOLS[MCP tools]
+    AGENT -->|proposed call| POLICY["tool policy<br/>ToolPolicy::decide"]
+    POLICY -->|allowed| TOOLS[MCP tools]
+    TOOLS -->|"tool results are<br/>UNTRUSTED data"| AGENT
     AGENT --> OUTPUT
 
-    subgraph OUTPUT [Output rails]
+    subgraph OUTPUT [Output rails, while streaming]
         direction TB
-        RX["regex check output<br/>credentials, prompt leakage"] --> PII["mask sensitive data<br/>Presidio, buffered"]
+        RX["secret patterns<br/>credentials, prompt leakage"] --> PII["PII masking<br/>deterministic recognisers"]
     end
 
     OUTPUT -->|released| USER([User])
-    OUTPUT -->|regex match| BLK([Blocked])
+    OUTPUT -->|secret match| BLK([Rest withheld])
 
     NOTE["Guardrails are NOT authorization.<br/>Identity, permissions, capability and<br/>approvals are enforced elsewhere."]
     NOTE -.- AGENT
@@ -59,33 +61,33 @@ flowchart LR
     classDef det fill:#bfdbfe,stroke:#1d4ed8,color:#000
     classDef warn fill:#fecaca,stroke:#b91c1c,color:#000
     class LLMCHK,AGENT prob
-    class LEN,CRIT,ALLOW,DEC,RX,PII,TOOLS det
+    class LEN,CRIT,ALLOW,DEC,POLICY,RX,PII,TOOLS det
     class NOTE warn
 ```
 
-Decision precedence for the input rail is deliberately asymmetric
-(`_resolve_input_policy` in
-[`text_guardrails.py`](https://github.com/cognokratos/simple-agent-template/blob/main/agent/src/nat_streaming_react/text_guardrails.py)):
+Decision precedence for the input rail is deliberately asymmetric (`resolve` in
+[`guardrails/input.rs`](../../agent/src/guardrails/input.rs)):
 
 1. a deterministic **critical-pattern** match always blocks;
 2. otherwise a fully anchored **read-only allow template** can overrule an LLM
    false positive;
 3. otherwise the **LLM verdict** stands.
 
-Each decision is recorded on the `guardrail.input.self_check` span as
-`guardrail.decision_source`. In the live trace behind the
-[request walkthrough](../tutorials/REQUEST-WALKTHROUGH.md) it was
-`llm_and_deterministic_allow`: the guard model said "allow", and an allow
+The rules are pure functions, so the whole precedence table is a unit test
+that needs no model. Each decision is recorded on the
+`guardrail.input.self_check` span as `guardrail.decision_source`. In the live
+trace behind the [request walkthrough](../tutorials/REQUEST-WALKTHROUGH.md) it
+was `llm_and_deterministic_allow`: the guard model said "allow", and an allow
 template agreed.
 
-| Concept | On the NAT implementation (`main`) |
+| Concept | Implementation in this repo |
 | --- | --- |
-| Guardrail framework | NeMo Guardrails 0.21, configured under `middleware.workflow_guardrails` in [`agent/config.yml`](../../agent/config.yml) |
-| Where rails attach | NAT middleware `text_guardrails`, which wraps the whole workflow ([`text_guardrails.py`](https://github.com/cognokratos/simple-agent-template/blob/main/agent/src/nat_streaming_react/text_guardrails.py)) |
-| LLM input check | `self check input` flow, prompt `self_check_input` |
-| Deterministic input checks | `_CRITICAL_INPUT_PATTERNS`, `_READ_ONLY_TICKET_TEMPLATES` |
-| Deterministic output blocking | `regex_detection.output.patterns` |
-| PII masking | Presidio via `sensitive_data_detection.output.entities` |
+| Where the rails live | Plain Rust in [`agent/src/guardrails/`](../../agent/src/guardrails), run by [`input_rail.rs`](../../agent/src/agent/input_rail.rs) and [`execution.rs`](../../agent/src/agent/execution.rs); no guardrail framework |
+| LLM input check | one classifier call with the `self_check_input` prompt from [`agent/config.yml`](../../agent/config.yml); refuses if the classifier is unreachable |
+| Deterministic input checks | `CRITICAL_PATTERNS` and `ALLOW_TEMPLATES` in [`guardrails/input.rs`](../../agent/src/guardrails/input.rs) |
+| Tool-call policy | [`ToolPolicy::decide`](../../agent/src/guardrails/tools.rs), called from Rig's dispatch hook for every proposed call |
+| Deterministic output blocking | `guardrails.output.secret_patterns`, applied in a bounded streaming window ([`guardrails/output.rs`](../../agent/src/guardrails/output.rs)) |
+| PII masking | `guardrails.output.pii_entities`, pattern-and-checksum recognisers ([`guardrails/pii.rs`](../../agent/src/guardrails/pii.rs)) |
 
 ## Why both deterministic and LLM checks
 
@@ -93,7 +95,7 @@ template agreed.
 | --- | --- | --- |
 | Recall on paraphrase | Low. Misses rewordings. | Higher. Understands intent. |
 | Precision | High on what it targets | Has false positives on benign domain queries |
-| Latency | Microseconds | One model call: 0.24 s warm, 2.79 s cold in the [walkthrough](../tutorials/REQUEST-WALKTHROUGH.md#17-mlflow-lets-you-inspect-it) traces |
+| Latency | Microseconds | One model call: 0.2–2.3 s in the runs [recorded](../FRAMEWORK-MIGRATION.md#what-was-measured) on the default model |
 | Can be argued with | No | Yes. It reads attacker-controlled text. |
 | Fails | Closed, predictably | Unpredictably. The parser treats unrecognised output as unsafe. |
 
@@ -106,19 +108,26 @@ prompt" does not inherit the allow (case `GR-BLOCK-APPENDED-INJECTION`).
 
 ## Output controls
 
-* **`regex check output`** blocks credential-shaped strings (`api_key=...`,
-  `Bearer ...`, `AKIA...`, private-key headers) and prompt-leakage phrases. It is
-  deterministic and needs no LLM.
-* **`mask sensitive data on output`** replaces emails, phone numbers, IBANs and
-  similar with `<ENTITY_TYPE>`. Because NeMo's streaming runner cannot rewrite
-  text, the middleware buffers the complete answer and masks it once. The cost is
-  that the answer no longer streams token by token. See
-  [GUARDRAILS.md](../GUARDRAILS.md#mask-sensitive-data-on-output--masks-the-complete-answer-buffered).
+Both output rails are deterministic and run while the answer streams. The guard
+holds back the most recent 320 characters and scans them together with the
+last 512 already released, so a secret split across model chunks is in view
+before any of it could be sent.
 
-Output rails run on what the model *says*. They do not run on what a tool
-*returned* to the model, and that raw tool result can still appear in tool spans
-in the trace. See scenario 10 in
-[TEST-SCENARIOS.md](../TEST-SCENARIOS.md#10-presidio-masking).
+* **Secret patterns** block credential-shaped strings (`api_key=...`,
+  `Bearer ...`, `AKIA...`, private-key headers) and prompt-leakage phrases.
+  A match withholds the rest of the answer and sends a notice instead.
+* **PII masking** replaces emails, phone numbers, IBANs and similar with
+  `<ENTITY_TYPE>`. The recognisers are patterns tightened with checksums, not
+  an NER model: stricter where an entity has a checksum, and blind to
+  free-form entities a model-based detector would catch. What that buys is an
+  output path that needs no model and never buffers the whole answer. See
+  [GUARDRAILS.md](../GUARDRAILS.md#pii--mask).
+
+Output rails run on what the model *says*. A tool result the model *read* is
+not screened before the model sees it. What people see of it — the UI's tool
+card and the tool span in the trace — is a separate display copy with secrets
+redacted and PII masked; the model still reasons over the raw record. See
+[GUARDRAILS.md](../GUARDRAILS.md#tool-results-shown-to-people).
 
 ## What guardrails cannot do
 
@@ -141,33 +150,20 @@ That is the deterministic control that held. See
 
 ## Fail closed, and measure the parser
 
-Two details that are easy to miss:
+Three details that are easy to miss:
 
 * The self-check verdict parser treats **anything unrecognised as unsafe**. An
   empty reply, a refusal or "Maybe" all block. This is asserted by
   `make verify-input-guardrails`, not assumed. See
   [GUARDRAILS.md](../GUARDRAILS.md#what-the-llm-verdict-actually-is).
+* **No verdict is a block.** If the classifier cannot be reached, the request is
+  refused rather than waved through.
 * Every boolean switch is parsed strictly. A typo in
-  `GUARDRAILS_INPUT_DETERMINISTIC_FALLBACK` keeps the secure default. It does
-  not silently disable the patterns.
+  `GUARDRAILS_INPUT_DETERMINISTIC_FALLBACK` stops the agent from starting. It
+  does not silently disable the patterns.
 
-## On the Rig implementation
-
-The same layered design as explicit Rust code ([GUARDRAILS.md](../GUARDRAILS.md#on-the-rig-implementation)):
-
-| Control | NAT | Rig | Relation |
-| --- | --- | --- | --- |
-| Input deny patterns, allow templates, precedence | `text_guardrails.py` | [`guardrails/input.rs`](https://github.com/cognokratos/simple-agent-template/blob/rust-agent/agent/src/guardrails/input.rs), pure functions | equivalent |
-| LLM self-check | NeMo `self check input` | one classifier call, parsed as NeMo 0.21 does; fails closed if unreachable | equivalent |
-| Credential blocking in the stream | NeMo regex rail, rolling chunk window | bounded hold-back window ([`guardrails/output.rs`](https://github.com/cognokratos/simple-agent-template/blob/rust-agent/agent/src/guardrails/output.rs)) | equivalent |
-| PII masking | Presidio NER, whole answer buffered | deterministic recognisers in the stream ([`guardrails/pii.rs`](https://github.com/cognokratos/simple-agent-template/blob/rust-agent/agent/src/guardrails/pii.rs)) | **narrower** |
-| Tool-call policy | — | [`guardrails/tools.rs`](https://github.com/cognokratos/simple-agent-template/blob/rust-agent/agent/src/guardrails/tools.rs) at Rig's dispatch hook | stricter |
-
-The lesson is the same on both: the classifier's reply is the only
-probabilistic element, and every layer records which one decided. The
-difference worth studying is PII: a model-based detector catches more and
-forces buffering; a deterministic one streams and misses free-form entities.
-→ [NAT vs Rig](../NAT-VS-RIG.md#output-guardrails-and-pii)
+The classifier's reply is the only probabilistic element of the rails, and
+every layer records which one decided.
 
 ## Go deeper
 
@@ -175,7 +171,10 @@ forces buffering; a deterministic one streams and misses free-form entities.
   [04 — Break the agent](../tutorials/04-break-the-agent.md)
 * Reference: [GUARDRAILS.md](../GUARDRAILS.md),
   [TEST-SCENARIOS.md — input guardrails](../TEST-SCENARIOS.md#input-guardrails-scenarios)
-* Source: [`text_guardrails.py`](https://github.com/cognokratos/simple-agent-template/blob/main/agent/src/nat_streaming_react/text_guardrails.py),
-  [`guardrails_compat.py`](https://github.com/cognokratos/simple-agent-template/blob/main/agent/src/nat_streaming_react/guardrails_compat.py),
+* Source: [`guardrails/input.rs`](../../agent/src/guardrails/input.rs),
+  [`guardrails/output.rs`](../../agent/src/guardrails/output.rs),
+  [`guardrails/pii.rs`](../../agent/src/guardrails/pii.rs),
   [`db/injection_test_fixtures.sql`](../../db/injection_test_fixtures.sql)
+* History: what the migration from NeMo Guardrails and Presidio changed —
+  [FRAMEWORK-MIGRATION.md](../FRAMEWORK-MIGRATION.md#output-guardrails-and-pii)
 * Next concept: [5. Evaluation](05-evaluation.md)

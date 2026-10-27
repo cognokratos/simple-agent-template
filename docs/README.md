@@ -2,12 +2,13 @@
 
 Three paths, depending on what you are asking, plus an optional fourth.
 
-These documents describe the shared architecture and **both** agent
-implementations — the canonical NeMo Agent Toolkit agent on `main` and the
-Rig + Rust agent on
-[`rust-agent`](https://github.com/cognokratos/simple-agent-template/tree/rust-agent).
-They are maintained on `main` and identical on both branches; where the two
-implementations differ, the text says which is which.
+These documents describe the architecture and its implementation: an agent
+service in Rust on the Rig framework, between a Rust gateway and a Rust MCP
+server. The agent was previously implemented on NVIDIA NeMo Agent Toolkit
+(NAT); that implementation is deprecated and preserved at the tag
+[`nat-1.9-final`](https://github.com/cognokratos/simple-agent-template/tree/nat-1.9-final)
+for comparison only. Where a document mentions NAT, it is describing that
+history.
 
 ## LEARN: "Teach me how production AI agents work"
 
@@ -34,17 +35,16 @@ Concepts, one page per stage, written for software engineers:
 * [Lab 10 — Build your own domain agent](tutorials/10-build-your-own-domain-agent.md)
 * [CHALLENGES.md](CHALLENGES.md): competency milestones without step-by-step solutions
 
-## COMPARE: "What changes with a thinner agent runtime?"
+## GO DEEPER: "Show me the agent's internals, and why the framework is replaceable"
 
 Optional, after the LEARN path.
 
 | Document | For |
 | --- | --- |
-| [NAT-VS-RIG.md](NAT-VS-RIG.md) | The same architecture on two runtimes, concern by concern: equivalent, stricter, narrower or different |
-| [RUST-LEARNING-PATH.md](RUST-LEARNING-PATH.md) | Thirteen lessons following the architecture through the Rig + Rust implementation |
-| [AGENT-SERVICE-CONTRACT.md](AGENT-SERVICE-CONTRACT.md) | The stable boundary both implementations satisfy |
-| [RUST-AGENT-ANALYSIS.md](RUST-AGENT-ANALYSIS.md) | What an agent service is responsible for, traced through the NAT agent |
-| [RUST-BRANCH-MAINTENANCE.md](RUST-BRANCH-MAINTENANCE.md) | How `main` and `rust-agent` are kept in step |
+| [AGENT-INTERNALS.md](AGENT-INTERNALS.md) | Thirteen lessons through the Rust agent's source: the loop, tool policy, streaming, identity, state, suspension and tracing |
+| [FRAMEWORK-MIGRATION.md](FRAMEWORK-MIGRATION.md) | The move from NeMo Agent Toolkit to Rig, concern by concern: what changed, what was held constant, and why no trust boundary moved |
+| [AGENT-SERVICE-CONTRACT.md](AGENT-SERVICE-CONTRACT.md) | The stable boundary every agent implementation must satisfy |
+| [NAT-AGENT-ANALYSIS.md](NAT-AGENT-ANALYSIS.md) | Historical: what an agent service is responsible for, traced through the retired NAT agent |
 
 ## REFERENCE: "Tell me precisely how this implementation works"
 
@@ -76,9 +76,9 @@ There are deliberately few, and each points back to its concept page:
 | Tag | Marks | Where |
 | --- | --- | --- |
 | `SECURITY-BOUNDARY:` | where identity or authority crosses a trust boundary | `identity_headers` in `gateway/src/proxy.rs` |
-| `DETERMINISTIC-CONTROL:` | a decision made by code, not by the model | `apply_policy` in `mcp-server/src/mutation.rs`; on `rust-agent` also the input rules, `ToolPolicy::decide`, the tool budget and interaction ownership |
+| `DETERMINISTIC-CONTROL:` | a decision made by code, not by the model | `apply_policy` in `mcp-server/src/mutation.rs`; in the agent, the input rules, `ToolPolicy::decide`, the tool budget and interaction ownership |
 | `AGENT-CONCEPT:` | an agent-specific design choice | `max_tool_calls` in `agent/config.yml` |
-| `OBSERVABILITY:` | where one-trace-per-request is established | `build_app` in `agent/src/nat_streaming_react/fastapi_worker.py` (NAT); the root span in `agent/src/api/workflow.rs` (Rig) |
+| `OBSERVABILITY:` | where one-trace-per-request is established | the root span in `agent/src/api/workflow.rs` |
 
 `git grep -nE "(SECURITY-BOUNDARY|DETERMINISTIC-CONTROL|AGENT-CONCEPT|OBSERVABILITY):"`
 lists them.
@@ -88,9 +88,6 @@ lists them.
 `make docs-check` (part of `make static-check` and CI) verifies that every
 relative link and heading anchor in the Markdown resolves, and that every
 `make <target>` written in the docs exists. See
-[`scripts/verify_docs.py`](../scripts/verify_docs.py). It runs on both branches,
-so a relative link is only valid if its target exists on both; implementation
-source is linked with an explicit `blob/main` or `blob/rust-agent` URL. On
-`rust-agent`, `make docs-parity` additionally fails if `README.md` or `docs/`
-differs from `main`
-([RUST-BRANCH-MAINTENANCE.md](RUST-BRANCH-MAINTENANCE.md#checks-that-keep-the-model-honest)).
+[`scripts/verify_docs.py`](../scripts/verify_docs.py). Source in this
+repository is linked relatively; source of the retired NAT implementation is
+linked at the `nat-1.9-final` tag, which never moves.
