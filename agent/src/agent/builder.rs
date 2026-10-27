@@ -32,8 +32,8 @@ pub fn build_agent(scope: &Arc<RequestScope>) -> Agent {
         .preamble(services.system_prompt.clone())
         .temperature(workflow.temperature)
         .max_tokens(workflow.max_tokens)
-        // Rig counts model calls; NAT's recursion limit allows one more model
-        // call than tool calls. Same budget, same meaning.
+        // Rig counts model calls: one more model call than tool calls lets the
+        // model answer after its last permitted tool call.
         .default_max_turns(workflow.max_tool_calls + 1)
         .record_content_telemetry(services.settings.telemetry.capture_model_content);
     if let Some(params) = additional_params(&services.settings.agent) {
@@ -86,8 +86,7 @@ async fn run_approval(scope: &RequestScope, args: Value) -> Result<ToolOutput, T
         ToolDecision::Deny(reason) => return Ok(ToolOutput::text(format!("Tool call refused: {reason}"))),
         ToolDecision::Allow { .. } => return Ok(ToolOutput::text("Tool call refused: not an approval-gated tool")),
     };
-    // An agent-side function, not an MCP tool: announced as FUNCTION steps,
-    // as NAT announces its functions on `main`.
+    // An agent-side function, not an MCP tool: announced as FUNCTION steps.
     let step_id = uuid::Uuid::new_v4().to_string();
     let input = Value::Object(args.clone());
     scope

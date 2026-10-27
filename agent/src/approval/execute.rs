@@ -11,7 +11,7 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 
 /// The MCP endpoint that applies an approved mutation, derived from the MCP
-/// URL exactly as on `main`, so there is nothing extra to configure.
+/// URL, so there is nothing extra to configure.
 pub fn execute_url(mcp_url: &str) -> String {
     let base = mcp_url.trim_end_matches('/');
     let base = base.strip_suffix("/mcp").unwrap_or(base);

@@ -4,7 +4,7 @@ import "./globals.css";
 
 export const metadata: Metadata = {
   title: "Support Ticket Assistant",
-  description: "assistant-ui + NeMo Agent Toolkit + Ollama proof of concept",
+  description: "assistant-ui + Rig agent + MCP proof of concept",
 };
 
 export default function RootLayout({ children }: Readonly<{ children: ReactNode }>) {

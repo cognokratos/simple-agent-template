@@ -1,14 +1,14 @@
-# Behavioural configuration for the Rig-based Rust agent (rust-agent branch).
+# Behavioural configuration for the Rig-based Rust agent.
 #
-# Secrets and endpoints are NOT here: they come from the environment, under the
-# same variable names as on `main` (docs/CONFIGURATION.md). This file holds
-# behaviour only, and every key is validated at startup -- an unknown key is an
-# error, so a typo cannot silently drop a policy.
+# Secrets and endpoints are NOT here: they come from the environment
+# (docs/CONFIGURATION.md). This file holds behaviour only, and every key is
+# validated at startup -- an unknown key is an error, so a typo cannot silently
+# drop a policy.
 #
-# The system prompt and the self-check prompt are byte-identical to `main`'s
-# agent/config.yml, so `prompt_sha256` matches across branches and an
-# evaluation difference cannot be blamed on the prompt. The variable under
-# study is the runtime (NAT + Python vs Rig + Rust), not the instructions.
+# The system prompt and the self-check prompt were carried over unchanged from
+# the retired NeMo Agent Toolkit runtime (tag nat-1.9-final), apart from one
+# runtime name, so an evaluation difference across the migration cannot be
+# blamed on the instructions. See docs/FRAMEWORK-MIGRATION.md.
 
 workflow:
   name: support-tickets-agent.invoke
@@ -19,9 +19,9 @@ workflow:
   temperature: 0.0
   max_tokens: 4096
   request_timeout_seconds: 300
-  # {tools} and {tool_names} are filled at startup from MCP discovery, as
-  # NAT does, even though the schemas also travel structurally with native
-  # tool calling. Keeping them keeps the prompt identical to `main`.
+  # {tools} and {tool_names} are filled at startup from MCP discovery, even
+  # though the schemas also travel structurally with native tool calling: the
+  # model sees its capabilities described in prose and in the tool schemas.
   system_prompt: |
     You are a customer-support ticket-triage assistant for a fictional online
     shop. You must use the available tools for every factual statement about
@@ -65,11 +65,11 @@ workflow:
       responsible for blocking credential-shaped values and masking configured
       PII entities.
     - Never expose internal chain-of-thought. Tool names, inputs, and results are
-      displayed separately by the UI from NAT intermediate-step events.
+      displayed separately by the UI from intermediate-step events.
 
 tools:
   mcp:
-    # Step and span names are `<function_group>__<tool>`, as on `main`.
+    # Step and span names are `<function_group>__<tool>`.
     function_group: tickets_mcp
     tool_call_timeout_seconds: 30
     # The allow-list. A tool the MCP server offers that is not listed here is
@@ -160,7 +160,7 @@ guardrails:
   output:
     # Deterministic credential and prompt-leakage patterns, matched
     # case-insensitively over a bounded streaming window. Any match blocks the
-    # rest of the answer. Same list as `main`'s `regex check output`.
+    # rest of the answer.
     secret_patterns:
       - '\b(?:api[_-]?key|access[_-]?token|client[_-]?secret|password)\s*[:=]\s*["'']?[A-Za-z0-9._~+/=-]{8,}'
       - '\bBearer\s+[A-Za-z0-9._~+/=-]{16,}'
@@ -171,8 +171,8 @@ guardrails:
       - '\b(?:system|developer)\s+(?:prompt|message)\s*[:=]'
       - '\b(?:ignore|override)\s+(?:all\s+)?(?:previous|prior|system|developer)\s+instructions\b'
 
-    # Deterministic PII recognisers, replaced by `<ENTITY_TYPE>`. Same entity
-    # list as `main`; NOT the same detector -- see docs/LIMITATIONS.md. PERSON
+    # Deterministic PII recognisers, replaced by `<ENTITY_TYPE>`. Pattern and
+    # checksum detectors, not an NER model -- see docs/LIMITATIONS.md. PERSON
     # and ORGANIZATION stay visible on purpose: names are part of triage.
     pii_entities:
       - EMAIL_ADDRESS

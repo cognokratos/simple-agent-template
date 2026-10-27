@@ -15,9 +15,9 @@ use serde_json::json;
 /// The error classes of the agent-service contract (docs/AGENT-SERVICE-CONTRACT.md).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ApiError {
-    /// Not the gateway: missing or wrong service credential. Same body as `main`.
+    /// Not the gateway: missing or wrong service credential.
     InvalidServiceKey,
-    /// The gateway did not assert exactly one identity. Same body as `main`.
+    /// The gateway did not assert exactly one identity.
     MissingIdentity,
     /// The request does not fit the schema or its bounds.
     BadRequest(String),

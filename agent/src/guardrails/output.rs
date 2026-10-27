@@ -1,6 +1,6 @@
 //! Output policy: what may leave this service, applied *while streaming*.
 //!
-//! Two deterministic rails, as on `main`:
+//! Two deterministic rails:
 //!
 //! * **credential / prompt-leakage patterns block** the rest of the answer;
 //! * **PII entities are masked** with `<ENTITY_TYPE>`.
@@ -25,14 +25,14 @@
 //! is inside the scanned window and the stream is blocked first. The release
 //! cut is also moved back so it never splits a PII entity. What this does not
 //! cover, and says so: a match whose own span exceeds the window (for example a
-//! keyword separated from its value by hundreds of spaces). `main`'s NeMo rail
-//! scans a rolling window of chunks with the same class of bound.
+//! keyword separated from its value by hundreds of spaces).
 //!
-//! Unlike `main`, PII masking does **not** force the whole answer to be
-//! buffered first: the recognisers here are deterministic and run inside the
-//! same window. That is a latency difference and a detection difference
-//! (Presidio is not used — see `pii.rs` and docs/LIMITATIONS.md), not a
-//! difference in what is promised about what is released.
+//! PII masking does **not** force the whole answer to be buffered first: the
+//! recognisers here are deterministic and run inside the same window. The
+//! retired NAT runtime buffered the whole answer for Presidio instead; that is
+//! a latency difference and a detection difference (see `pii.rs` and
+//! docs/LIMITATIONS.md), not a difference in what is promised about what is
+//! released.
 
 use regex::{Regex, RegexBuilder};
 use serde::Serialize;
@@ -110,12 +110,11 @@ impl OutputPolicy {
     /// Redact a tool result for *display*: the copy that goes to the client's
     /// tool card and to the trace, never the copy the model reasons over.
     ///
-    /// On `main`, tool steps reach the browser and the trace unfiltered — NAT's
-    /// output rails see only assistant text — so a credential in a ticket
-    /// description is shown in the UI's tool card even though the answer that
-    /// quotes it is blocked. Here every string in the result has secret
-    /// matches replaced and PII masked before it leaves the process. Stricter
-    /// than `main`, deliberately; see docs/NAT-VS-RIG.md.
+    /// Every string in the result has secret matches replaced and PII masked
+    /// before it leaves the process, so a credential in a ticket description
+    /// is not shown in the UI's tool card while the answer that quotes it is
+    /// blocked. (The retired NAT runtime's output rails saw only assistant
+    /// text; see docs/FRAMEWORK-MIGRATION.md.)
     pub fn redact_for_display(&self, value: &serde_json::Value) -> serde_json::Value {
         use serde_json::Value;
         match value {

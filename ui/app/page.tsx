@@ -364,7 +364,7 @@ function Chat() {
         <AuiIf condition={(state) => state.thread.isEmpty}>
           <div className="welcome">
             <h1>Support Ticket Assistant</h1>
-            <p>Keycloak → Rust gateway → NAT ReAct → Rust MCP → Postgres</p>
+            <p>Keycloak → Rust gateway → Rig agent → Rust MCP → Postgres</p>
             <p className="scenario-subtitle">
               Customer support tickets for a fictional online shop.
             </p>

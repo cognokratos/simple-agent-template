@@ -1,5 +1,5 @@
 {
-  "name": "assistant-ui-nemo-poc",
+  "name": "simple-agent-template-ui",
   "version": "0.1.0",
   "private": true,
   "license": "MIT",
@@ -8,7 +8,7 @@
     "build": "next build",
     "start": "next start -H 0.0.0.0 -p 3000",
     "typecheck": "tsc --noEmit",
-    "verify:nat-wire": "node --experimental-strip-types scripts/verify-nat-wire.mjs"
+    "verify:agent-wire": "node --experimental-strip-types scripts/verify-agent-wire.mjs"
   },
   "dependencies": {
     "@ai-sdk/react": "^4.0.0",

@@ -1,9 +1,8 @@
 //! Pending human interactions: the suspension point of an agent run.
 //!
 //! When the approval gate needs a human, it *opens* an interaction here and
-//! awaits its [`PendingTicket`]. The run is suspended inside that await — the
-//! same shape as NAT's paused coroutine on `main` — and the SSE stream stays
-//! open. The only way to resume it with a decision is
+//! awaits its [`PendingTicket`]. The run is suspended inside that await and
+//! the SSE stream stays open. The only way to resume it with a decision is
 //! [`InteractionRegistry::respond`], called by the authenticated response
 //! route, which checks, in order:
 //!
@@ -21,7 +20,7 @@
 //! response leaves the interaction pending, so the legitimate owner can still
 //! answer it.
 //!
-//! State is in memory, like NAT's execution store on `main`. The run itself is
+//! State is in memory. The run itself is
 //! a live task holding the client's stream, so durable storage of the pending
 //! record alone would not let anything resume after a restart; see
 //! docs/LIMITATIONS.md for what durable suspension would require.

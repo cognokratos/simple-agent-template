@@ -1,9 +1,8 @@
 # syntax=docker/dockerfile:1.7
 
-# The Rig-based Rust agent (rust-agent branch). Two stages: a full Rust
-# toolchain to build, and a distroless runtime with nothing but the binary,
-# the behavioural config and the licence texts — no shell, no package manager,
-# no Python, no NAT. Health checks and the Makefile's in-container probes use
+# The Rig-based Rust agent. Two stages: a full Rust toolchain to build, and a
+# distroless runtime with nothing but the binary, the behavioural config and the
+# licence texts — no shell, no package manager, no interpreter. Health checks and the Makefile's in-container probes use
 # the binary's own `probe` subcommand.
 
 # rig-core 0.44 requires Rust >= 1.95; pinned rather than `rust:1` so a

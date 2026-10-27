@@ -396,7 +396,7 @@ pub async fn agent(script: Vec<Turn>, options: Options) -> Agent {
     let mcp = fake_mcp().await;
     let mut file = AgentConfigFile::parse(include_str!("../../config.yml")).expect("config.yml parses");
     let mut env: BTreeMap<String, String> = [
-        ("NAT_GATEWAY_API_KEY", GATEWAY_KEY.to_string()),
+        ("AGENT_API_KEY", GATEWAY_KEY.to_string()),
         ("MCP_API_KEY", MCP_KEY.to_string()),
         ("TICKETS_MCP_URL", mcp.url.clone()),
         ("LLM_BASE_URL", llm.url.clone()),

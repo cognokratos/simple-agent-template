@@ -2,17 +2,17 @@
 """Live end-to-end observability check against the running cluster.
 
 Drives real requests to the agent and then asserts on what MLflow actually
-received. Runtime-neutral: on `main` the agent is NAT, on the `rust-agent`
-branch it is the Rig-based Rust service, and each check accepts either
-runtime's attribute names for the same property. This is the test that would have caught the disconnected
-traces the removed ``patch_nat_single_trace.py`` existed to fix.
+received. It asserts the attribute names the Rust agent emits
+(``agent.event_type``, ``agent.runtime``, ``request.id``). This is the test that
+would have caught the disconnected traces that the retired NAT runtime's
+``patch_nat_single_trace.py`` existed to fix.
 
 Run with the cluster up and a model available:
 
     make trace-test
 
 Each scenario asserts the properties that matter for debugging an agent
-run: one trace per request, NAT's workflow/tool hierarchy intact, Guardrails
+run: one trace per request, the workflow/tool hierarchy intact, Guardrails
 decisions in the same trace, and a readable question and answer on the root.
 """
 
@@ -119,14 +119,11 @@ for trace in traces:
                 if key in (
                     "input.value",
                     "output.value",
-                    "nat.event_type",
-                    "nat.trace.content_truncated",
                     "agent.event_type",
                     "agent.runtime",
                     "request.id",
                     "guardrail.blocked",
                     "guardrail.outcome",
-                    "nat.metadata",
                 )
             },
         })
@@ -164,12 +161,9 @@ def latest_trace(request_id: str, limit: int = 5) -> dict:
         for span in trace["spans"]:
             # MLflow parses JSON span attributes back into objects on read, so
             # compare against the serialized form either way.
-            # NAT records the request headers in nat.metadata; the Rust agent
-            # records the request id as its own attribute.
-            for key in ("nat.metadata", "request.id"):
-                value = span["attributes"].get(key)
-                if value is not None and request_id in json.dumps(value, default=str):
-                    return trace
+            value = span["attributes"].get("request.id")
+            if value is not None and request_id in json.dumps(value, default=str):
+                return trace
     fail(f"no MLflow trace found for request {request_id}")
     return {}
 
@@ -189,9 +183,9 @@ def check_single_tree(trace: dict, label: str) -> dict:
         fail(f"{label}: expected one root span, found {len(root_spans)}: {[s['name'] for s in root_spans]}")
     root = root_spans[0]
     attributes = root["attributes"]
-    if "WORKFLOW_START" not in (attributes.get("nat.event_type"), attributes.get("agent.event_type")):
+    if attributes.get("agent.event_type") != "WORKFLOW_START":
         fail(f"{label}: the root span is not the agent's workflow span ({root['name']})")
-    runtime = attributes.get("agent.runtime") or "nat"
+    runtime = attributes.get("agent.runtime") or "unknown"
     print(f"  ok: one trace, one root span ({root['name']}, runtime {runtime})")
     return root
 

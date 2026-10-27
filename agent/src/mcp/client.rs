@@ -1,10 +1,9 @@
 //! The MCP client: one session to the Rust MCP server, shared by all requests.
 //!
-//! MCP stays the capability boundary on this branch. The agent never talks to
+//! MCP is the capability boundary. The agent never talks to
 //! PostgreSQL; it discovers tools from the existing MCP server, checks their
 //! published schemas, and invokes them over MCP with the service credential
-//! (`Authorization: Bearer $MCP_API_KEY`), exactly as NAT's `mcp_client`
-//! function group does on `main`.
+//! (`Authorization: Bearer $MCP_API_KEY`).
 //!
 //! Transport and result conversion use Rig's MCP integration (`rig-rmcp`'s
 //! [`McpTool`], over `rmcp` 2.2 — the same SDK line as the server). Which tools
@@ -58,7 +57,7 @@ pub struct DiscoveredTool {
 }
 
 /// Why one MCP call failed. Rendered to the model as a tool error it can
-/// correct, as `pass_tool_call_errors_to_agent: true` does on `main`.
+/// correct.
 #[derive(Debug, thiserror::Error)]
 pub enum CallError {
     #[error("{0}")]

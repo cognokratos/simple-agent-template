@@ -102,10 +102,10 @@ def main() -> None:
 
     require("Policy::none()" in text("gateway/src/main.rs"), "gateway HTTP redirects are not disabled")
 
-    # rust-agent branch: the agent is the Rig-based Rust service in agent/. The
-    # properties asserted against NAT's front-end worker on `main` are asserted
-    # here against the Rust modules that own them. A property that moves must
-    # move deliberately, not silently.
+    # The agent is the Rig-based Rust service in agent/. The properties below are
+    # asserted against the Rust modules that own them; a property that moves
+    # must move deliberately, not silently. The retired NAT runtime is preserved
+    # at the nat-1.9-final tag, not in this tree.
     for removed in (
         "agent/src/nat_streaming_react",
         "agent/pyproject.toml",
@@ -113,11 +113,15 @@ def main() -> None:
     ):
         require(
             not (ROOT / removed).exists(),
-            f"{removed} is back; the NAT agent belongs to `main`, not this branch",
+            f"{removed} is back; the retired NAT agent lives at nat-1.9-final, not here",
         )
 
     agent_settings = text("agent/src/config.rs")
-    require('"NAT_GATEWAY_API_KEY"' in agent_settings, "agent service-key environment variable missing")
+    require('("AGENT_API_KEY", "NAT_GATEWAY_API_KEY")' in agent_settings, "agent service-key environment variable missing")
+    require(
+        'required_secret(env, "AGENT_API_KEY")' in agent_settings and "conflicts with the deprecated" in agent_settings,
+        "the agent service key is not required, or its deprecated alias can silently disagree",
+    )
     require('"MCP_API_KEY"' in agent_settings, "agent MCP-key environment variable missing")
     require(
         "pub fn parse_bool" in agent_settings and "is not a recognised boolean" in agent_settings,

@@ -92,7 +92,7 @@ endif
 	logs-db logs-gateway logs-keycloak logs-mlflow logs-otel logs-observability build \
 	rebuild-agent rebuild-ui rebuild-mcp rebuild-gateway verify-mcp fixtures \
 	print-provenance version static-check license-check package-license-check logs-inspector network-test eval-test-host \
-	verify-approvals verify-approvals-rust verify-llm-config agent-test agent-check docs-parity rust-agent-drift \
+	verify-approvals verify-approvals-rust verify-llm-config agent-test agent-check \
 	verify-input-guardrails verify-output-guardrails verify-rails verify-guardrails \
 	verify-stream-adapter verify-trace-pipeline trace-test traces \
 	inspector open-inspector inspector-tools network-test \
@@ -285,17 +285,11 @@ agent-check: ## Agent formatting, clippy with warnings denied, and the full test
 	cd agent && cargo clippy --locked --all-targets --all-features -- -D warnings
 	$(CARGO_AGENT)
 
-docs-parity: ## README.md and docs/ are identical to origin/main (documentation is edited on main only)
-	python3 scripts/verify_docs_parity.py
-
-rust-agent-drift: ## Is origin/rust-agent still one commit on origin/main with identical docs? (detection only)
-	python3 scripts/verify_rust_agent_drift.py
-
 verify-input-guardrails: ## Run the input-policy tests: precedence, history forgery, verdict parsing, switches
 	$(CARGO_AGENT) --lib guardrails::input config::
 
-verify-stream-adapter: ## Verify the NAT SSE adapter preserves numeric/scalar answer chunks
-	cd ui && node --experimental-strip-types scripts/verify-nat-wire.mjs
+verify-stream-adapter: ## Verify the UI's SSE adapter preserves numeric/scalar answer chunks
+	cd ui && node --experimental-strip-types scripts/verify-agent-wire.mjs
 
 verify-output-guardrails: ## Verify streamed output release, cross-chunk secret blocking, and PII masking
 	$(CARGO_AGENT) --lib guardrails::output guardrails::pii

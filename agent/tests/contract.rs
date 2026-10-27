@@ -1,8 +1,8 @@
 //! The agent-service contract, asserted over HTTP (docs/AGENT-SERVICE-CONTRACT.md).
 //!
 //! Written against the contract, not the implementation: every assertion
-//! here holds for NAT on `main` too, and `make auth-test` checks the same
-//! statuses against whichever agent the cluster runs.
+//! here held for the retired NAT runtime too, and `make auth-test` checks the
+//! same statuses against the running cluster.
 
 mod support;
 
@@ -39,7 +39,7 @@ async fn the_service_key_is_checked_before_the_identity() {
     // Wrong key.
     let wrong = client().post(&url).bearer_auth("not-the-key").header("x-authenticated-user-id", "u").json(&body);
     assert_eq!(status(wrong).await, 401);
-    // Key without identity: still 401, as `make auth-test` asserts on main.
+    // Key without identity: still 401, as `make auth-test` asserts.
     let anonymous = client().post(&url).bearer_auth(GATEWAY_KEY).json(&body);
     assert_eq!(status(anonymous).await, 401);
     // Key with an ambiguous, repeated identity.
@@ -60,7 +60,7 @@ async fn the_service_key_is_checked_before_the_identity() {
 }
 
 #[tokio::test]
-async fn the_unauthorised_bodies_match_main() {
+async fn the_unauthorised_bodies_match_the_contract() {
     let agent = agent(vec![], Options::default()).await;
     let response = client().get(format!("{}/version", agent.base)).send().await.unwrap();
     assert_eq!(response.headers().get("www-authenticate").unwrap(), "Bearer");
@@ -172,7 +172,7 @@ async fn the_stream_speaks_mains_sse_vocabulary() {
 }
 
 #[tokio::test]
-async fn filter_steps_selects_step_types_like_nat() {
+async fn filter_steps_selects_step_types() {
     let agent =
         agent(vec![call("get_ticket", json!({"ticket_id": "TKT-1001"})), text(&["Done."])], Options::default()).await;
     let request = client()

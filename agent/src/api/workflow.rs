@@ -58,8 +58,8 @@ pub struct ChatMessage {
 }
 
 /// Validate and normalise: roles, emptiness, bounds, the final user turn, and
-/// `main`'s history trimming (the last `max_history` messages, starting on a
-/// user turn).
+/// history trimming (the last `max_history` messages, starting on a user
+/// turn).
 pub fn conversation(request: WorkflowRequest, max_history: usize) -> Result<Conversation, ApiError> {
     if request.messages.is_empty() {
         return Err(ApiError::BadRequest("at least one chat message is required".into()));

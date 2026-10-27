@@ -1,9 +1,11 @@
-//! Rig-based agent service for the support-ticket template (`rust-agent` branch).
+//! Rig-based agent service for the support-ticket template.
 //!
-//! The canonical implementation of this service is the NeMo Agent Toolkit
-//! agent on `main`. This crate implements the same agent-service contract
-//! (docs/AGENT-SERVICE-CONTRACT.md) in Rust, with Rig as the agent framework,
-//! so the two can be compared with everything around them held fixed.
+//! This crate implements the agent-service contract
+//! (docs/AGENT-SERVICE-CONTRACT.md) in Rust, with Rig as the agent framework.
+//! Rig runs the loop; it does not own the architecture. The same contract was
+//! previously implemented on NVIDIA NeMo Agent Toolkit (tag `nat-1.9-final`),
+//! and replacing that framework moved no trust boundary
+//! (docs/FRAMEWORK-MIGRATION.md).
 //!
 //! > Intelligence does not imply authority.
 //!

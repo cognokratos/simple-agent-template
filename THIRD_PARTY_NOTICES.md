@@ -11,24 +11,27 @@ build sees only that directory; `scripts/verify_agent_package_licenses.py`
 checks that they match, and with `--image` that the built image carries them.
 Paths below are relative to the repository root.
 
-## This branch (`rust-agent`)
+## The agent
 
-This branch replaces the NeMo Agent Toolkit (NAT) agent with a Rust service
-built on Rig. **None of the Apache-2.0 files derived from NVIDIA NeMo Agent
-Toolkit exist on this branch**: `agent/src/nat_streaming_react/register.py`,
+The agent in `agent/src/` is a Rust service built on Rig, written for this
+repository. It replaced an earlier implementation on NVIDIA NeMo Agent Toolkit
+(NAT), preserved at the tag
+[`nat-1.9-final`](https://github.com/cognokratos/simple-agent-template/tree/nat-1.9-final)
+and the branch `legacy/nat`. **None of the Apache-2.0 files derived from NeMo
+Agent Toolkit exist in the current tree**: `agent/src/nat_streaming_react/register.py`,
 `text_guardrails.py` and `observability/otlp_exporter.py` were removed with the
 rest of the Python agent. They, their NVIDIA notices and their provenance
-record remain on the `main` branch, where those files live; consult `main`'s
-`THIRD_PARTY_NOTICES.md` for them.
+record remain at that tag; consult its
+[`THIRD_PARTY_NOTICES.md`](https://github.com/cognokratos/simple-agent-template/blob/nat-1.9-final/THIRD_PARTY_NOTICES.md)
+for them.
 
-The Rust agent in `agent/src/` was written for this branch. It reproduces the
-*behaviour* of the NAT agent — the same contract, policies, prompts and token
-format — but contains no code copied from NeMo Agent Toolkit, NeMo Guardrails or
-Presidio:
+The Rust agent reproduces the *behaviour* of the NAT agent — the same contract,
+policies, prompts and token format — but contains no code copied from NeMo Agent
+Toolkit, NeMo Guardrails or Presidio:
 
 * the system prompt, self-check prompt, tool descriptions and output patterns
   in `agent/config.yml` are this repository's own MIT-licensed configuration,
-  carried over byte for byte from `main`'s `agent/config.yml`;
+  carried over from the NAT agent's `agent/config.yml`;
 * the input classifier's verdict parsing reimplements the documented behaviour
   of NeMo Guardrails 0.21's `is_content_safe` parser, and the PII recognisers
   are independent deterministic implementations of the same entity list, not
@@ -44,7 +47,7 @@ licensed `MIT OR Apache-2.0` or `Apache-2.0`, and the image ships the text.
 ## Dependencies
 
 Dependencies installed at build or run time are not part of this repository.
-Each is used under its own licence. For the agent on this branch that means
+Each is used under its own licence. For the agent that means
 the Rust crates locked in `agent/Cargo.lock` — at the time of writing 298 in the
 runtime dependency closure, all under permissive licences (MIT, Apache-2.0,
 BSD-2/3-Clause, ISC, Zlib, Unicode-3.0, Unlicense, CC0-1.0, BSL-1.0), with one
@@ -58,5 +61,5 @@ data licence:
 
 Reproduce the inventory with `cargo metadata --format-version 1 --locked` in
 `agent/`. Keycloak, PostgreSQL, MLflow, the OpenTelemetry Collector,
-assistant-ui and the gateway's and MCP server's crates are unchanged from
-`main` and used under their own licences.
+assistant-ui and the gateway's and MCP server's crates are used under their own
+licences.

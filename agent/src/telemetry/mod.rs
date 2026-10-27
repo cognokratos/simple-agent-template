@@ -7,7 +7,7 @@
 //! of it, because each is created while that span is current. An inbound W3C
 //! `traceparent` is honoured, so an instrumented caller's trace is joined.
 //!
-//! Exported over OTLP/HTTP to the same collector as on `main`. What never
+//! Exported over OTLP/HTTP to the OpenTelemetry Collector. What never
 //! reaches a span: the service credentials (stripped before any handler
 //! runs), the raw user subject (only a pseudonym, and only with
 //! `OTEL_TRACE_USER_ID=true`), approval tokens and secrets, and — by default —
@@ -116,7 +116,7 @@ pub fn current_trace_id() -> String {
     if id == opentelemetry::trace::TraceId::INVALID { String::new() } else { id.to_string() }
 }
 
-/// Bound a text attribute, marking truncation as `main` does.
+/// Bound a text attribute, marking the truncation.
 pub fn bounded(text: &str, limit: usize) -> String {
     if text.chars().count() <= limit {
         text.to_string()

@@ -1,8 +1,10 @@
 //! The SSE vocabulary of `POST /v1/workflow/full`.
 //!
 //! This is the agent-service contract as its two consumers actually parse it
-//! (`ui/app/api/gateway/chat/route.ts` and `evaluation/client.py`), and it is the
-//! same vocabulary NAT's `/v1/workflow/full` emits on `main`:
+//! (`ui/app/api/gateway/chat/route.ts` and `evaluation/client.py`). The
+//! vocabulary is inherited unchanged from the retired NeMo Agent Toolkit
+//! runtime, which is why the framework could be replaced without touching
+//! either consumer:
 //!
 //! ```text
 //! intermediate_data: {"id","parent_id","type","name","payload"}   a step
@@ -11,8 +13,8 @@
 //! {"error":"...","message":"..."}                                  workflow error
 //! ```
 //!
-//! The last one is not a well-formed SSE field. It is what NAT emits for a
-//! workflow error, and both consumers detect it by its leading `{`, so it is
+//! The last one is not a well-formed SSE field. It is the contract's workflow
+//! error shape, and both consumers detect it by its leading `{`, so it is
 //! reproduced exactly rather than "fixed" into a form neither would read.
 //!
 //! Every event is a typed enum variant and serialisation lives in one place,
@@ -23,7 +25,7 @@ use std::collections::BTreeSet;
 use serde::Serialize;
 use serde_json::{Value, json};
 
-/// Step types, as NAT names them. The consumers match on these strings.
+/// Step types. The consumers match on these strings.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum StepType {
@@ -61,9 +63,9 @@ impl StepType {
 }
 
 /// The `filter_steps` query parameter: which step types the caller wants.
-/// Absent means all of them, as with NAT. Unknown names are ignored, so a
-/// caller asking for a NAT step type this service does not emit (`LLM_START`,
-/// say) simply receives none.
+/// Absent means all of them. Unknown names are ignored, so a caller asking for
+/// a step type this service does not emit (`LLM_START`, say) simply receives
+/// none.
 #[derive(Debug, Clone)]
 pub struct StepFilter(Option<BTreeSet<StepType>>);
 
@@ -84,8 +86,7 @@ impl StepFilter {
     }
 }
 
-/// One intermediate step. `payload` follows the shape NAT's
-/// `IntermediateStepPayload` gives the fields the consumers read:
+/// One intermediate step. `payload` carries the fields the consumers read:
 /// `data.input`, `data.output`, `metadata.tool_inputs`, `metadata.tool_outputs`.
 #[derive(Debug, Clone, Serialize)]
 pub struct Step {
@@ -223,7 +224,7 @@ mod tests {
     #[test]
     fn answer_text_is_a_json_string_even_when_it_looks_like_a_number() {
         // `100`, `true` and dates must stay strings: the UI and the evaluator
-        // only parse JSON *containers* inside `value` (ui/lib/nat-wire.ts).
+        // only parse JSON *containers* inside `value` (ui/lib/agent-wire.ts).
         for text in ["100", "true", "20260920", "null"] {
             let sse = WireEvent::Answer(text.to_string()).to_sse();
             assert_eq!(sse, format!("data: {{\"value\":\"{text}\"}}\n\n"));
@@ -259,7 +260,7 @@ mod tests {
     }
 
     #[test]
-    fn a_workflow_error_is_a_bare_json_block_as_on_main() {
+    fn a_workflow_error_is_a_bare_json_block() {
         let sse = WireEvent::Error { message: "boom".into() }.to_sse();
         assert!(sse.starts_with('{'));
         let body: Value = serde_json::from_str(sse.trim()).unwrap();
@@ -267,7 +268,7 @@ mod tests {
     }
 
     #[test]
-    fn step_filters_follow_nat_semantics() {
+    fn step_filters_select_known_types_and_ignore_unknown_ones() {
         let all = StepFilter::parse(None);
         assert!(all.allows(StepType::WorkflowStart));
         let gateway = StepFilter::parse(Some("TOOL_START,TOOL_END,FUNCTION_START,FUNCTION_END"));

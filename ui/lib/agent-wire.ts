@@ -1,7 +1,7 @@
 /**
- * Helpers for the NAT (NeMo Agent Toolkit) streaming wire format.
+ * Helpers for the agent's streaming wire format (docs/AGENT-SERVICE-CONTRACT.md).
  *
- * NAT's `/v1/workflow/full` endpoint wraps workflow output as SSE JSON:
+ * The agent's `/v1/workflow/full` endpoint wraps workflow output as SSE JSON:
  *   data: {"value":"<answer fragment>"}
  *
  * Once that outer envelope has been parsed, a string `value` is already
@@ -14,10 +14,10 @@
  * drops them. The visible symptom is an answer with every number, boolean and
  * date fragment missing: "ticket TKT- has  history events, priority ."
  *
- * Only genuine JSON *containers* are decoded, because some NAT workflow outputs
+ * Only genuine JSON *containers* are decoded, because a workflow output may
  * legitimately serialize a structured ChatResponse object into `value`.
  */
-export function parseNatOutputString(value: string): unknown {
+export function parseAgentOutputString(value: string): unknown {
   const trimmed = value.trim();
   if (!trimmed) return value;
 

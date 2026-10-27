@@ -16,7 +16,7 @@ use crate::{
     guardrails::tools::ToolDecision,
 };
 
-/// The name tool steps and spans carry: `<function_group>__<tool>`, as on `main`.
+/// The name tool steps and spans carry: `<function_group>__<tool>`.
 pub fn step_name(scope: &RequestScope, tool: &str) -> String {
     format!("{}__{tool}", scope.services().settings.file.tools.mcp.function_group)
 }
@@ -69,8 +69,7 @@ pub async fn execute(scope: &RequestScope, tool: &str, args: Value) -> Result<To
         Err(error) => {
             span.record("tool.outcome", "error");
             let message = error.to_string();
-            // Passed back to the model, which may correct itself — the same
-            // as `pass_tool_call_errors_to_agent: true` on `main`.
+            // Passed back to the model, which may correct itself.
             (json!({ "error": message }), ToolOutput::text(format!("Error: {message}")))
         }
     };

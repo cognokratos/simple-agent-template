@@ -150,7 +150,7 @@ pub async fn run(scope: Arc<RequestScope>, conversation: Conversation) {
             Ok(MultiTurnStreamItem::StreamAssistantItem(Item::Event(StreamEvent::Text { text, .. }))) => text,
             Ok(_) => continue,
             Err(PromptError::MaxTurns { .. }) => {
-                // The same bounded-loop answer as `main`, after what was released.
+                // The bounded-loop answer, after what was already released.
                 format!(
                     "The agent could not produce a final answer within {} tool calls.",
                     services.settings.file.workflow.max_tool_calls

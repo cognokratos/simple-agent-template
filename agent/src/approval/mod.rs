@@ -16,9 +16,9 @@
 //!   → model told the outcome    it never restates what was approved
 //! ```
 //!
-//! The same tool name, argument schema, prompts, token format and MCP endpoint
-//! as `main`'s `approval.py`, so the UI, the gateway and the MCP server are
-//! unchanged by this branch.
+//! The tool name, argument schema, prompts, token format and MCP endpoint are
+//! the ones the UI, the gateway and the MCP server already speak; none of them
+//! changed when the agent framework did.
 
 pub mod execute;
 pub mod gate;
@@ -41,8 +41,7 @@ shown the current priority and chooses what to record, and any change requires t
 with the ticket's exact current priority from get_ticket. You cannot approve on the user's behalf, and you must \
 never claim a change was applied unless the result says committed.";
 
-/// The argument schema the model is shown, identical in content to `main`'s
-/// `SetTicketPriorityRequest`. There is no field for a decision, an actor, a
+/// The argument schema the model is shown. There is no field for a decision, an actor, a
 /// rationale or a token, and the object is closed, so none can be supplied.
 pub fn proposal_parameters() -> Value {
     json!({

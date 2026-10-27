@@ -1,7 +1,6 @@
 //! Caller authentication: "is this the gateway?" then "who is it acting for?".
 //!
-//! Two questions, two checks, in that order — the same layering as
-//! `fastapi_worker.py` on `main`:
+//! Two questions, two checks, in that order:
 //!
 //! 1. **Service credential.** Network reachability answers "can this packet
 //!    arrive"; it cannot answer "is this caller the gateway". This service
@@ -30,7 +29,7 @@ use crate::{
     identity::{IDENTITY_HEADER, MAX_IDENTITY_CHARS, REQUEST_ID_HEADER, ROLES_HEADER, TrustedCaller, USERNAME_HEADER},
 };
 
-/// The only unauthenticated paths: liveness and readiness, as on `main`.
+/// The only unauthenticated paths: liveness and readiness.
 pub const PUBLIC_PATHS: [&str; 3] = ["/health", "/health/live", "/health/ready"];
 
 /// The expected `Authorization` value, held once.

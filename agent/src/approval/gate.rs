@@ -60,7 +60,7 @@ fn note_disclosure(note: &str) -> String {
     )
 }
 
-/// The first prompt's text, line for line as on `main`.
+/// The first prompt's text.
 pub fn choice_text(proposal: &Proposal, note: &str) -> String {
     let mut lines = vec![
         format!("Ticket {} is currently '{}' priority.", proposal.ticket_id, proposal.current_priority),
@@ -120,8 +120,7 @@ fn cancelled(resource_id: &str, message: &str) -> Value {
 /// way is how an agent tells a user that a refused change was applied.
 pub fn approval_result(resource_id: &str, request_id: &str, outcome: &ExecuteOutcome) -> Value {
     // The MCP server echoes `actor_id`. It stays out of the model's context:
-    // identity is never conversation content, not even after the fact. (`main`
-    // passes the MCP result through unchanged.)
+    // identity is never conversation content, not even after the fact.
     let mut result = outcome.result.clone();
     if let Some(object) = result.as_object_mut() {
         object.remove("actor_id");

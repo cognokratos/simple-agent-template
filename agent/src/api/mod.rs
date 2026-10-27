@@ -9,7 +9,7 @@
 //! | `POST /executions/{e}/interactions/{i}/response` | key + identity | approval answers (only when enabled) |
 //!
 //! Every other path answers 401 without the key and 404 with it, so the
-//! unauthenticated surface is liveness only — as on `main`.
+//! unauthenticated surface is liveness only.
 
 pub mod auth;
 pub mod interactions;

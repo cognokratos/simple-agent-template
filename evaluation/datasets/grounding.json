@@ -48,7 +48,7 @@
     },
     "tags": {
       "category": "numeric_grounding",
-      "note": "Every figure in the answer must appear in the tool result. This is the case the NAT scalar-chunk bug used to fail: the numbers were dropped from the stream, so a correct answer scored ungrounded.",
+      "note": "Every figure in the answer must appear in the tool result. This is the case the scalar-chunk streaming bug used to fail: the numbers were dropped from the stream, so a correct answer scored ungrounded.",
       "priority": "critical"
     }
   },

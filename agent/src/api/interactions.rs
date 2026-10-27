@@ -68,7 +68,7 @@ pub async fn respond(
         },
     );
     match result {
-        // NAT answers an accepted interaction with 204; the UI expects it.
+        // An accepted interaction is answered with 204; the UI expects it.
         Ok(()) => Ok(StatusCode::NO_CONTENT.into_response()),
         Err(error @ RespondError::NotFound) => Err(ApiError::NotFound(error.to_string())),
         Err(error @ RespondError::NotOwner) => {

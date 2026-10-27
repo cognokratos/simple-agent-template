@@ -86,16 +86,18 @@ def _canonical_sha256(value: Any) -> str:
 def _canonical_json_sha256(value: Any) -> str:
     """Digest of sorted-key, compact JSON — the form the Rust agent reports.
 
-    The ``rust-agent`` branch's agent digests its rail prompts this way
+    The agent digests its rail prompts this way
     (``guardrails_prompts_digest: "canonical-json"``), because reproducing
-    PyYAML's ``safe_dump`` byte for byte in Rust would be fragile. The same
-    ``prompt_matches_config`` comparison then holds across both runtimes.
+    PyYAML's ``safe_dump`` byte for byte in Rust would be fragile. The YAML
+    digest above is kept for the retired NAT runtime, so the same
+    ``prompt_matches_config`` comparison holds against either.
     """
     return _sha256(json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False))
 
 
 #: What ``agent_runtime`` is recorded as when a reachable agent does not say:
-#: the NAT agent on ``main`` predates the field.
+#: the retired NAT agent (tag ``nat-1.9-final``) predates the field. Kept so the
+#: harness can still evaluate that agent for a framework comparison.
 NAT_RUNTIME = "nat"
 
 
@@ -188,9 +190,9 @@ def _config_prompts(path: Path | None = None) -> dict[str, Any]:
         return {"available": False, "error": f"{type(exc).__name__}: {exc}"}
 
     system_prompt = (config.get("workflow") or {}).get("system_prompt")
-    # Two layouts: NAT's (`middleware.workflow_guardrails.guardrails.prompts`,
-    # on `main`) and the Rust agent's (`guardrails.prompts`, on rust-agent),
-    # each digested the way its agent digests it.
+    # Two layouts: the Rust agent's (`guardrails.prompts`) and the retired NAT
+    # runtime's (`middleware.workflow_guardrails.guardrails.prompts`, tag
+    # nat-1.9-final), each digested the way its agent digests it.
     nat_rails = (
         ((config.get("middleware") or {}).get("workflow_guardrails") or {}).get("guardrails")
         or {}
@@ -327,7 +329,7 @@ def mlflow_tags(record: dict[str, Any]) -> dict[str, str]:
     agent = record.get("agent", {})
     harness = record.get("harness", {})
     tags = {
-        # Which implementation answered: `nat` (main) or `rig-rust` (rust-agent).
+        # Which implementation answered: `rig-rust`, or `nat` for the retired runtime.
         "provenance.agent.runtime": agent_runtime(agent),
         "provenance.agent.build_commit": str(agent.get("build_commit", "unknown")),
         "provenance.agent.model": str(agent.get("model", "")),

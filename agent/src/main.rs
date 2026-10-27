@@ -69,8 +69,8 @@ async fn serve() -> ExitCode {
     }
 }
 
-/// Container-side probes, replacing the `python -c …` one-liners `main`'s
-/// Makefile runs inside the NAT image.
+/// Container-side probes. The image is distroless, with no shell or
+/// interpreter, so the Makefile's in-container checks call the binary itself.
 ///
 /// * `probe http <url>` — GET, print the status, succeed on 2xx;
 /// * `probe status <method> <url>` — print the status of an unauthenticated
@@ -129,7 +129,12 @@ async fn probe(args: &[String]) -> ExitCode {
             ExitCode::SUCCESS
         }
         ["version"] => {
-            let key = std::env::var("NAT_GATEWAY_API_KEY").unwrap_or_default();
+            // The same precedence as `config::RENAMED`: the deprecated name only
+            // when the current one is unset.
+            let key = ["AGENT_API_KEY", "NAT_GATEWAY_API_KEY"]
+                .iter()
+                .find_map(|name| std::env::var(name).ok().filter(|value| !value.trim().is_empty()))
+                .unwrap_or_default();
             let response = client
                 .get("http://127.0.0.1:8000/version")
                 .bearer_auth(key)

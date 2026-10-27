@@ -8,10 +8,9 @@ copies because the agent's Docker build sees only that directory.
     python3 scripts/verify_agent_package_licenses.py           # copies + Dockerfile (no dependencies)
     python3 scripts/verify_agent_package_licenses.py --image   # also inspect the built image (needs Docker)
 
-On ``main`` the agent is a Python distribution and ``--build`` inspects its
-sdist and wheels. On the ``rust-agent`` branch the agent is a Rust binary in a
-distroless image, so the equivalent check is that the image itself carries the
-texts: ``--image`` builds it with Compose and exports its filesystem.
+The agent is a Rust binary in a distroless image, so the packaging check is
+that the image itself carries the texts: ``--image`` builds it with Compose and
+exports its filesystem.
 """
 
 from __future__ import annotations
@@ -31,7 +30,7 @@ IMAGE_DOC_DIR = "usr/share/doc/tickets-agent"
 MARKERS = {
     "LICENSE": ["MIT License", "Copyright (c) 2026 Victor Nitu", "THE SOFTWARE IS PROVIDED \"AS IS\""],
     "LICENSES/Apache-2.0.txt": ["Apache License", "Version 2.0, January 2004", "END OF TERMS AND CONDITIONS"],
-    "THIRD_PARTY_NOTICES.md": ["rust-agent", "NeMo Agent Toolkit", "CDLA-Permissive-2.0"],
+    "THIRD_PARTY_NOTICES.md": ["Rig", "NeMo Agent Toolkit", "nat-1.9-final", "CDLA-Permissive-2.0"],
 }
 
 

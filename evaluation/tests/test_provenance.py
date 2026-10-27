@@ -231,7 +231,7 @@ class ConsistencyTests(unittest.TestCase):
 
     def test_the_runtime_is_recorded_for_both_implementations(self) -> None:
         self.assertEqual(provenance.agent_runtime({"available": True, "agent_runtime": "rig-rust"}), "rig-rust")
-        # The NAT agent on `main` predates the field.
+        # The retired NAT agent (nat-1.9-final) predates the field.
         self.assertEqual(provenance.agent_runtime({"available": True}), "nat")
         self.assertEqual(provenance.agent_runtime({"available": False}), "unknown")
         tags = provenance.mlflow_tags({"agent": {"available": True, "agent_runtime": "rig-rust"}, "harness": {}})

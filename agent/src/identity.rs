@@ -20,8 +20,7 @@ pub const ROLES_HEADER: &str = "x-authenticated-roles";
 pub const EMAIL_HEADER: &str = "x-authenticated-email";
 pub const REQUEST_ID_HEADER: &str = "x-request-id";
 
-/// Every gateway-minted identity header has an explicit telemetry decision,
-/// as on `main` (`trace_processor.IDENTITY_HEADERS` / `RETAINED_GATEWAY_HEADERS`).
+/// Every gateway-minted identity header has an explicit telemetry decision.
 /// `scripts/verify_security_sources.py` fails if the gateway starts minting an
 /// `x-authenticated-*` header that is in neither list.
 ///
@@ -99,9 +98,8 @@ impl TrustedCaller {
     }
 
     /// A stable pseudonym for per-user trace attribution, exported only when
-    /// `OTEL_TRACE_USER_ID=true`. Derived the same *way* NAT 1.9 derives
-    /// `Context.user_id` (a UUIDv5 over the header name and value), but in this
-    /// service's own namespace, so it is not the same value as on `main`.
+    /// `OTEL_TRACE_USER_ID=true`: a UUIDv5 over the header name and value, in
+    /// this service's own namespace.
     pub fn pseudonym(&self) -> String {
         const NAMESPACE: uuid::Uuid = uuid::Uuid::from_u128(0x8c5a_4b1e_7f3d_4e2a_9b6c_1d0e_f2a3_b4c5);
         let name = format!("trusted-header:{IDENTITY_HEADER}\u{1f}{}", self.user_id);

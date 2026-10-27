@@ -1,4 +1,4 @@
-//! Deterministic PII recognisers, replacing `main`'s Presidio masking.
+//! Deterministic PII recognisers (in place of the retired runtime's Presidio).
 //!
 //! NOT EQUIVALENT TO PRESIDIO, and not presented as such. Presidio combines
 //! pattern recognisers with context words, confidence scores and a spaCy NER
@@ -10,14 +10,14 @@
 //!   free-form ones (phone numbers in unusual layouts, international formats);
 //! * no model, so it runs in microseconds inside the streaming window instead of
 //!   forcing the whole answer to be buffered first;
-//! * the same entity list and the same `<ENTITY_TYPE>` replacement as `main`.
+//! * Presidio's entity names and the same `<ENTITY_TYPE>` replacement.
 
 use std::{net::Ipv6Addr, sync::LazyLock};
 
 use regex::Regex;
 use sha2::{Digest, Sha256};
 
-/// The entity names `main`'s configuration uses.
+/// The entity names `config.yml` uses (Presidio's).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum Entity {
     EmailAddress,

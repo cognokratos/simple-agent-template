@@ -209,10 +209,9 @@ services:
       - "${PUBLIC_BIND_ADDRESS:-127.0.0.1}:13133:13133"
     restart: unless-stopped
 
-  # The Rig-based Rust agent (rust-agent branch). Same networks, same
-  # credentials and the same environment variable names as the NAT agent on
-  # `main` -- including the historical NAT_* names -- so the two branches stay
-  # comparable line by line. See docs/NAT-VS-RIG.md.
+  # The agent: a Rust service built on Rig. It joins agent_net (the gateway
+  # side) and mcp_net (the MCP side) and nothing else; it has no route to
+  # PostgreSQL. See docs/ARCHITECTURE.md.
   agent:
     build:
       context: ./agent
@@ -244,21 +243,23 @@ services:
       # How long a pending approval waits for its human before the run treats
       # it as a cancellation.
       HITL_INTERACTION_TIMEOUT_SECONDS: ${HITL_INTERACTION_TIMEOUT_SECONDS:-600}
-      NAT_GATEWAY_API_KEY: ${AGENT_API_KEY:-dev-agent-api-key-change-me}
+      AGENT_API_KEY: ${AGENT_API_KEY:-dev-agent-api-key-change-me}
       OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: ${OTEL_EXPORTER_OTLP_TRACES_ENDPOINT:-http://otel-collector:4318/v1/traces}
       OTEL_SERVICE_NAME: ${OTEL_SERVICE_NAME:-tickets-agent}
       DEPLOYMENT_ENVIRONMENT: ${DEPLOYMENT_ENVIRONMENT:-local}
-      NAT_TRACE_CAPTURE_CONTENT: ${NAT_TRACE_CAPTURE_CONTENT:-true}
-      NAT_TRACE_CONTENT_MAX_CHARS: ${NAT_TRACE_CONTENT_MAX_CHARS:-65536}
+      # The NAT_* host variables are deprecated aliases (docs/CONFIGURATION.md#renamed-variables):
+      # read only when the AGENT_* name is unset, and removed in a future release.
+      AGENT_TRACE_CAPTURE_CONTENT: ${AGENT_TRACE_CAPTURE_CONTENT:-${NAT_TRACE_CAPTURE_CONTENT:-true}}
+      AGENT_TRACE_CONTENT_MAX_CHARS: ${AGENT_TRACE_CONTENT_MAX_CHARS:-${NAT_TRACE_CONTENT_MAX_CHARS:-65536}}
       GUARDRAILS_TRACE_CAPTURE_CONTENT: ${GUARDRAILS_TRACE_CAPTURE_CONTENT:-true}
       GUARDRAILS_TRACE_CAPTURE_RAW_OUTPUT: ${GUARDRAILS_TRACE_CAPTURE_RAW_OUTPUT:-false}
       GUARDRAILS_TRACE_MAX_CHARS: ${GUARDRAILS_TRACE_MAX_CHARS:-16384}
       GUARDRAILS_INPUT_DETERMINISTIC_FALLBACK: ${GUARDRAILS_INPUT_DETERMINISTIC_FALLBACK:-true}
       GUARDRAILS_INPUT_READ_ONLY_ALLOW_OVERRIDE: ${GUARDRAILS_INPUT_READ_ONLY_ALLOW_OVERRIDE:-true}
       GUARDRAILS_INPUT_BLOCK_MESSAGE: "${GUARDRAILS_INPUT_BLOCK_MESSAGE:-I'm sorry, I can't help with that request.}"
-      # Ceiling on one streamed answer. On `main` it bounds the buffer PII
-      # masking needs; here masking runs in a bounded window, so it bounds the
-      # answer itself. Over it, the rest of the answer is withheld.
+      # Ceiling on one streamed answer. PII masking runs in a bounded window,
+      # so this bounds the answer itself. Over it, the rest of the answer is
+      # withheld.
       GUARDRAILS_PII_MAX_BUFFER_CHARS: ${GUARDRAILS_PII_MAX_BUFFER_CHARS:-200000}
       # Ceiling on the user text handed to the guard model. Over this the
       # request is refused, never truncated. See docs/GUARDRAILS.md#input-length-bound.

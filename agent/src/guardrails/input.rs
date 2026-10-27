@@ -1,7 +1,6 @@
 //! Input policy: what may reach the agent model.
 //!
-//! The same three layers as `main`'s `text_guardrails.py`, with the same
-//! deliberately asymmetric precedence:
+//! Three layers, with deliberately asymmetric precedence:
 //!
 //! 1. a deterministic **critical-pattern** match always blocks;
 //! 2. otherwise a narrow, fully anchored **read-only allow** template can
@@ -138,7 +137,7 @@ pub fn allow_matches(text: &str) -> Vec<&'static str> {
 ///
 /// Prior *user* turns are deliberately not re-screened: each was screened when
 /// it was the latest turn, and re-screening made one refusal poison every later
-/// message of the conversation. Same trade-off as `main`; see GUARDRAILS.md.
+/// message of the conversation. See GUARDRAILS.md.
 pub fn prior_assistant_text(history: &[Turn]) -> String {
     history
         .iter()
@@ -157,7 +156,7 @@ pub fn prior_assistant_text(history: &[Turn]) -> String {
 /// For the self-check prompt, "Yes" means *block*. The known hazard is pinned
 /// by a test: `Not safe` parses as safe, because `safe` is tested first. The
 /// prompt's "exactly Yes or No", the small token budget and the deterministic
-/// layer are what keep that unreachable — the same three things as on `main`.
+/// layer are what keep that unreachable.
 pub fn classifier_says_safe(response: &str) -> bool {
     static NON_WORD: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\W+").expect("compiles"));
     let lowered = response.to_lowercase();
@@ -171,8 +170,8 @@ pub fn classifier_says_safe(response: &str) -> bool {
     false
 }
 
-/// Which layer decided, recorded on the decision event and span with the same
-/// strings as `main`, so the two branches' traces and evaluations compare.
+/// Which layer decided, recorded on the decision event and span. The strings
+/// are part of the evaluation contract: the scorers match on them.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum DecisionSource {
@@ -255,7 +254,7 @@ pub fn screen(
     DeterministicScreen { block_matches, allow_matches }
 }
 
-/// Render the self-check prompt as NeMo does: `{{ user_input }}` is the only
+/// Render the self-check prompt as NeMo Guardrails did: `{{ user_input }}` is the only
 /// variable the configured template uses.
 pub fn render_self_check(template: &str, user_input: &str) -> String {
     template.replace("{{ user_input }}", user_input)
@@ -363,7 +362,7 @@ mod tests {
         for unsafe_ in ["Yes", "yes.", "YES - block it", "unsafe", "", "Maybe", "Oui", "I cannot answer"] {
             assert!(!classifier_says_safe(unsafe_), "{unsafe_:?}");
         }
-        // Pinned hazard, identical to main: `safe` is tested before `unsafe`.
+        // Pinned hazard, inherited from NeMo Guardrails: `safe` is tested before `unsafe`.
         assert!(classifier_says_safe("Not safe"));
         // Only the first two tokens count.
         assert!(!classifier_says_safe("I think no"));

@@ -1,6 +1,6 @@
 //! Calling an LLM from Rust: an OpenAI-compatible chat model through Rig.
 //!
-//! Any OpenAI-compatible endpoint works, exactly as on `main`; the defaults
+//! Any OpenAI-compatible endpoint works; the defaults
 //! target a local Ollama. Rig's generic OpenAI dialect on the Chat
 //! Completions route is used deliberately rather than its Ollama-specific
 //! dialect, so pointing `LLM_BASE_URL` at a hosted provider changes nothing
@@ -38,8 +38,8 @@ pub fn additional_params(settings: &ModelSettings) -> Option<Value> {
 pub struct GuardModelError(String);
 
 /// The input rail's classifier call: the rendered self-check prompt as a
-/// single user message, the prompt's token budget, NeMo's lowest
-/// temperature (0.001). Returns the raw text; parsing is deterministic and
+/// single user message, the prompt's token budget, and the lowest temperature
+/// NeMo Guardrails used (0.001). Returns the raw text; parsing is deterministic and
 /// lives in `guardrails::input::classifier_says_safe`.
 pub async fn classify(
     model: &ChatModel,

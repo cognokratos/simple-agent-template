@@ -1,7 +1,6 @@
 //! Approval tokens: the evidence the MCP server accepts as a human decision.
 //!
-//! Byte-for-byte the format `main`'s `approval.py` mints and
-//! `mcp-server/src/approval.rs` verifies: HMAC-SHA256 over the base64url
+//! Byte-for-byte the format `mcp-server/src/approval.rs` verifies: HMAC-SHA256 over the base64url
 //! encoding of the canonical JSON claim set, `"<payload_b64>.<signature_b64>"`.
 //! `tests/approval_tokens.rs` compiles the MCP server's verifier source and
 //! checks tokens minted here against it, so the two cannot drift silently.

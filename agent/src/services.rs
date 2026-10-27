@@ -98,8 +98,7 @@ impl Services {
     }
 }
 
-/// Fill the prompt's `{tools}` and `{tool_names}` placeholders the way NAT's
-/// ReAct agent does: one `name: description` line per tool, and a
+/// Fill the prompt's `{tools}` and `{tool_names}` placeholders: one `name: description` line per tool, and a
 /// comma-separated list of names.
 pub fn render_system_prompt(settings: &Settings, mcp: &McpCatalog) -> String {
     let mut tools: Vec<(String, String)> = mcp.tools().map(|t| (t.name.clone(), t.description.clone())).collect();

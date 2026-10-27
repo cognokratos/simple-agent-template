@@ -51,7 +51,7 @@ from evaluation.client import (
     ParsedInvocation,
     _handle_data,
     _handle_intermediate,
-    _parse_nat_output,
+    _parse_agent_output,
     invoke_live_agent,
 )
 from evaluation.scorers import guardrail_policy_scores, tool_call_scores
@@ -200,9 +200,9 @@ class ParserTests(unittest.TestCase):
 
 
 class ScalarWireTests(unittest.TestCase):
-    """Regression cover for the NAT scalar-chunk data loss.
+    """Regression cover for the scalar-chunk data loss.
 
-    Mirrors ui/scripts/verify-nat-wire.mjs. Every literal below is a valid JSON
+    Mirrors ui/scripts/verify-agent-wire.mjs. Every literal below is a valid JSON
     scalar; coercing it changed its type and the answer silently lost every
     number, boolean and date fragment.
     """
@@ -215,20 +215,20 @@ class ScalarWireTests(unittest.TestCase):
     def test_literal_chunks_are_not_coerced(self):
         for literal in self.LITERALS:
             with self.subTest(literal=literal):
-                parsed = _parse_nat_output(literal)
+                parsed = _parse_agent_output(literal)
                 self.assertIsInstance(parsed, str)
                 self.assertEqual(parsed, literal)
 
     def test_non_container_text_is_preserved(self):
         for text in ("{not json}", "{", "}", "[unclosed", "use {tools} always"):
             with self.subTest(text=text):
-                self.assertEqual(_parse_nat_output(text), text)
+                self.assertEqual(_parse_agent_output(text), text)
 
     def test_containers_are_still_decoded(self):
-        decoded = _parse_nat_output('{"choices":[{"delta":{"content":"100"}}]}')
+        decoded = _parse_agent_output('{"choices":[{"delta":{"content":"100"}}]}')
         self.assertIsInstance(decoded, dict)
         self.assertEqual(decoded["choices"][0]["delta"]["content"], "100")
-        self.assertIsInstance(_parse_nat_output('[{"content":"a"}]'), list)
+        self.assertIsInstance(_parse_agent_output('[{"content":"a"}]'), list)
 
     def test_streamed_scalar_deltas_reconstruct_losslessly(self):
         deltas = [

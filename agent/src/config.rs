@@ -3,15 +3,12 @@
 //!
 //! Two rules shape everything here:
 //!
-//! * **The environment variable names are `main`'s**, including the historical
-//!   `NAT_*` ones (`NAT_GATEWAY_API_KEY`, `NAT_TRACE_CAPTURE_CONTENT`, ...), so the
-//!   two branches stay comparable line by line. A name is not renamed merely
-//!   because the implementation language changed.
 //! * **Security-relevant settings fail fast.** A missing credential, a short
 //!   approval secret, an unparseable boolean or a half-enabled approval feature
-//!   stops the process at startup rather than resolving to a default. `main`
-//!   keeps the declared default and logs a warning for an unrecognised boolean;
-//!   this branch refuses to start instead, which is stricter, never weaker.
+//!   stops the process at startup rather than resolving to a default.
+//! * **Renamed variables keep a deprecated alias, never two meanings.** The
+//!   names inherited from the retired NeMo Agent Toolkit runtime (`NAT_*`) are
+//!   read only when their agent-neutral replacement is unset ([`RENAMED`]).
 
 use std::{collections::BTreeMap, net::SocketAddr, path::PathBuf, time::Duration};
 
@@ -67,6 +64,64 @@ impl Env for BTreeMap<String, String> {
     }
 }
 
+/// Environment variables renamed when the Rust agent replaced the NeMo Agent
+/// Toolkit runtime, as `(current, deprecated)`. The deprecated name is still
+/// read, with a startup warning, when the current one is unset or blank, so an
+/// existing deployment keeps working for one deprecation cycle; the aliases are
+/// then removed. Both set to *different* values stops startup: one of them is a
+/// stale credential or setting that someone believes is in effect.
+pub const RENAMED: &[(&str, &str)] = &[
+    ("AGENT_API_KEY", "NAT_GATEWAY_API_KEY"),
+    ("AGENT_TRACE_CAPTURE_CONTENT", "NAT_TRACE_CAPTURE_CONTENT"),
+    ("AGENT_TRACE_CONTENT_MAX_CHARS", "NAT_TRACE_CONTENT_MAX_CHARS"),
+];
+
+/// An environment in which every [`RENAMED`] alias has been folded into its
+/// current name, so the rest of the configuration reads one name per setting.
+/// The deprecated names themselves read as unset.
+struct Renamed<'a> {
+    env: &'a dyn Env,
+    resolved: BTreeMap<&'static str, String>,
+}
+
+impl<'a> Renamed<'a> {
+    fn new(env: &'a dyn Env) -> Result<Self, ConfigError> {
+        let set = |name: &str| env.get(name).filter(|value| !value.trim().is_empty());
+        let mut resolved = BTreeMap::new();
+        for &(current, deprecated) in RENAMED {
+            match (set(current), set(deprecated)) {
+                (Some(new), Some(old)) if new.trim() != old.trim() => {
+                    return Err(invalid(
+                        current,
+                        format!("conflicts with the deprecated {deprecated}; unset {deprecated}"),
+                    ));
+                }
+                (Some(value), _) => {
+                    resolved.insert(current, value);
+                }
+                (None, Some(value)) => {
+                    tracing::warn!("{deprecated} is deprecated and will be removed; set {current} instead");
+                    resolved.insert(current, value);
+                }
+                (None, None) => {}
+            }
+        }
+        Ok(Self { env, resolved })
+    }
+}
+
+impl Env for Renamed<'_> {
+    fn get(&self, name: &str) -> Option<String> {
+        if let Some(value) = self.resolved.get(name) {
+            return Some(value.clone());
+        }
+        if RENAMED.iter().any(|&(current, deprecated)| name == current || name == deprecated) {
+            return None;
+        }
+        self.env.get(name)
+    }
+}
+
 fn string_or(env: &dyn Env, name: &str, default: &str) -> String {
     match env.get(name) {
         Some(value) if !value.trim().is_empty() => value.trim().to_string(),
@@ -116,7 +171,7 @@ fn parse_usize(env: &dyn Env, name: &'static str, default: usize, floor: usize) 
 }
 
 /// Model endpoint settings. Any OpenAI-compatible endpoint; the defaults target
-/// a local Ollama, exactly as on `main`.
+/// a local Ollama.
 #[derive(Debug, Clone)]
 pub struct ModelSettings {
     pub base_url: String,
@@ -131,8 +186,7 @@ pub struct ApprovalSettings {
     pub secret: Vec<u8>,
     pub token_ttl_seconds: u64,
     /// How long a pending interaction waits for its human before the run is
-    /// cancelled. NAT has no such bound: a paused workflow waits until the
-    /// client disconnects.
+    /// cancelled, so an unanswered prompt cannot hold a run open indefinitely.
     pub interaction_timeout: Duration,
 }
 
@@ -157,9 +211,8 @@ pub struct GuardrailSettings {
     pub trace_capture_content: bool,
     pub trace_capture_raw_output: bool,
     pub trace_max_chars: usize,
-    /// Ceiling on one streamed answer. On `main` this bounds the buffer PII
-    /// masking needs; here masking runs in a bounded window, so it bounds the
-    /// answer itself.
+    /// Ceiling on one streamed answer. PII masking runs in a bounded window,
+    /// so this bounds the answer itself.
     pub max_answer_chars: usize,
 }
 
@@ -206,6 +259,7 @@ impl Settings {
     }
 
     pub fn resolve(env: &dyn Env, config_path: PathBuf, file: AgentConfigFile) -> Result<Self, ConfigError> {
+        let env = &Renamed::new(env)?;
         let bind_address = string_or(env, "AGENT_BIND_ADDRESS", "0.0.0.0:8000")
             .parse()
             .map_err(|_| invalid("AGENT_BIND_ADDRESS", "not a socket address"))?;
@@ -219,7 +273,7 @@ impl Settings {
             reasoning_effort: optional_param(env, "LLM_REASONING_EFFORT", None),
         };
         // Deliberately does not inherit LLM_MODEL: the fallback ends at the
-        // literal qwen3:8b, exactly as on `main`.
+        // literal qwen3:8b.
         let guard = ModelSettings {
             base_url,
             api_key,
@@ -267,15 +321,15 @@ impl Settings {
             traces_endpoint,
             service_name: string_or(env, "OTEL_SERVICE_NAME", "tickets-agent"),
             deployment_environment: string_or(env, "DEPLOYMENT_ENVIRONMENT", "local"),
-            capture_content: parse_bool(env, "NAT_TRACE_CAPTURE_CONTENT", true)?,
-            content_max_chars: parse_usize(env, "NAT_TRACE_CONTENT_MAX_CHARS", 65_536, 256)?,
+            capture_content: parse_bool(env, "AGENT_TRACE_CAPTURE_CONTENT", true)?,
+            content_max_chars: parse_usize(env, "AGENT_TRACE_CONTENT_MAX_CHARS", 65_536, 256)?,
             export_user_id: parse_bool(env, "OTEL_TRACE_USER_ID", false)?,
             capture_model_content: parse_bool(env, "AGENT_TRACE_CAPTURE_MODEL_CONTENT", false)?,
         };
 
         Ok(Self {
             bind_address,
-            gateway_api_key: required_secret(env, "NAT_GATEWAY_API_KEY")?,
+            gateway_api_key: required_secret(env, "AGENT_API_KEY")?,
             agent,
             guard,
             mcp_url: string_or(env, "TICKETS_MCP_URL", "http://mcp-server:8080/mcp"),
@@ -290,8 +344,7 @@ impl Settings {
     }
 }
 
-/// The approval feature is on only when all three switches agree, as on
-/// `main`: the tool is declared in `config.yml`, the secret is set, and the
+/// The approval feature is on only when all three switches agree: the tool is declared in `config.yml`, the secret is set, and the
 /// interaction endpoints are enabled. A *partial* configuration is an error,
 /// not a quiet fallback, because it means someone believes approvals are on.
 /// The one exception is a secret with nothing else: that is the MCP server's
@@ -377,8 +430,8 @@ pub struct ToolsConfig {
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct McpToolsConfig {
-    /// Span and step-name prefix, `<group>__<tool>`; kept as `main`'s
-    /// `tickets_mcp` so traces from both branches line up.
+    /// Span and step-name prefix, `<group>__<tool>` (`tickets_mcp`). Trace
+    /// queries and evaluation scorers match on it.
     pub function_group: String,
     pub tool_call_timeout_seconds: u64,
     /// The allow-list. A tool the server offers that is not listed here is
@@ -485,7 +538,7 @@ mod tests {
     pub(crate) const SAMPLE: &str = include_str!("../config.yml");
 
     fn env(pairs: &[(&str, &str)]) -> BTreeMap<String, String> {
-        let mut map: BTreeMap<String, String> = [("NAT_GATEWAY_API_KEY", "gateway-key"), ("MCP_API_KEY", "mcp-key")]
+        let mut map: BTreeMap<String, String> = [("AGENT_API_KEY", "gateway-key"), ("MCP_API_KEY", "mcp-key")]
             .into_iter()
             .map(|(k, v)| (k.to_string(), v.to_string()))
             .collect();
@@ -516,13 +569,45 @@ mod tests {
     #[test]
     fn credentials_are_required() {
         let mut missing = env(&[]);
-        missing.remove("NAT_GATEWAY_API_KEY");
-        assert!(matches!(
-            Settings::resolve(&missing, "c".into(), file()),
-            Err(ConfigError::Missing("NAT_GATEWAY_API_KEY"))
-        ));
+        missing.remove("AGENT_API_KEY");
+        assert!(matches!(Settings::resolve(&missing, "c".into(), file()), Err(ConfigError::Missing("AGENT_API_KEY"))));
         let blank = env(&[("MCP_API_KEY", "   ")]);
         assert!(matches!(Settings::resolve(&blank, "c".into(), file()), Err(ConfigError::Missing("MCP_API_KEY"))));
+    }
+
+    #[test]
+    fn deprecated_nat_names_are_read_only_when_the_current_name_is_unset() {
+        let mut legacy = env(&[
+            ("NAT_GATEWAY_API_KEY", "legacy-key"),
+            ("NAT_TRACE_CAPTURE_CONTENT", "false"),
+            ("NAT_TRACE_CONTENT_MAX_CHARS", "1000"),
+        ]);
+        legacy.remove("AGENT_API_KEY");
+        let settings = Settings::resolve(&legacy, "c".into(), file()).unwrap();
+        assert_eq!(settings.gateway_api_key, "legacy-key");
+        assert!(!settings.telemetry.capture_content);
+        assert_eq!(settings.telemetry.content_max_chars, 1000);
+
+        // The current name wins; an identical deprecated value is harmless.
+        let both = env(&[("NAT_GATEWAY_API_KEY", "gateway-key"), ("AGENT_TRACE_CAPTURE_CONTENT", "false")]);
+        let settings = Settings::resolve(&both, "c".into(), file()).unwrap();
+        assert_eq!(settings.gateway_api_key, "gateway-key");
+        assert!(!settings.telemetry.capture_content);
+    }
+
+    #[test]
+    fn a_deprecated_name_that_disagrees_with_the_current_one_stops_startup() {
+        for (current, deprecated, a, b) in [
+            ("AGENT_API_KEY", "NAT_GATEWAY_API_KEY", "gateway-key", "other-key"),
+            ("AGENT_TRACE_CAPTURE_CONTENT", "NAT_TRACE_CAPTURE_CONTENT", "true", "false"),
+            ("AGENT_TRACE_CONTENT_MAX_CHARS", "NAT_TRACE_CONTENT_MAX_CHARS", "1000", "2000"),
+        ] {
+            let result = Settings::resolve(&env(&[(current, a), (deprecated, b)]), "c".into(), file());
+            assert!(
+                matches!(result, Err(ConfigError::Invalid { name, .. }) if name == current),
+                "{current} vs {deprecated}"
+            );
+        }
     }
 
     #[test]

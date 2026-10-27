@@ -120,7 +120,7 @@ impl RequestScope {
     ///
     /// The interaction is opened *before* the event is sent, so a human who
     /// answers instantly finds it pending. The run stays suspended in this
-    /// await; the client's SSE stream stays open, exactly as on `main`.
+    /// await; the client's SSE stream stays open.
     pub async fn ask(&self, prompt: Prompt) -> AskOutcome {
         let registry = &self.services.interactions;
         let ticket = match registry.open(&self.execution_id, &self.caller, &prompt) {

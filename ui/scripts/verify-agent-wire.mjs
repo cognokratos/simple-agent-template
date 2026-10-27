@@ -1,11 +1,11 @@
 /**
- * Streaming-contract regression test for the NAT SSE wire format.
+ * Streaming-contract regression test for the agent's SSE wire format.
  *
- * Runs with `npm run verify:nat-wire`. It needs no browser, no running stack
+ * Runs with `npm run verify:agent-wire`. It needs no browser, no running stack
  * and no model, so it is safe in pull-request CI.
  */
 import assert from "node:assert/strict";
-import { parseNatOutputString } from "../lib/nat-wire.ts";
+import { parseAgentOutputString } from "../lib/agent-wire.ts";
 
 // Every one of these is a valid JSON scalar. Parsing them changes their runtime
 // type, and the joined answer then silently loses amounts, counts, identifiers
@@ -32,13 +32,13 @@ const literalDeltas = [
 ];
 
 for (const delta of literalDeltas) {
-  const parsed = parseNatOutputString(delta);
+  const parsed = parseAgentOutputString(delta);
   assert.equal(
     typeof parsed,
     "string",
-    `literal NAT output delta changed type: ${delta} -> ${typeof parsed}`,
+    `literal agent output delta changed type: ${delta} -> ${typeof parsed}`,
   );
-  assert.equal(parsed, delta, `literal NAT output delta was rewritten: ${delta}`);
+  assert.equal(parsed, delta, `literal agent output delta was rewritten: ${delta}`);
 }
 
 // Reconstructing a streamed answer from its per-token deltas must be lossless.
@@ -65,7 +65,7 @@ const reconstructed = [
   "100",
   ".",
 ]
-  .map((chunk) => parseNatOutputString(chunk))
+  .map((chunk) => parseAgentOutputString(chunk))
   .join("");
 
 assert.equal(
@@ -75,13 +75,13 @@ assert.equal(
 );
 
 // Whitespace-only and empty deltas round-trip unchanged rather than collapsing.
-assert.equal(parseNatOutputString(""), "");
-assert.equal(parseNatOutputString(" "), " ");
-assert.equal(parseNatOutputString("\n"), "\n");
+assert.equal(parseAgentOutputString(""), "");
+assert.equal(parseAgentOutputString(" "), " ");
+assert.equal(parseAgentOutputString("\n"), "\n");
 
 // Nested structured ChatResponse JSON is still decoded, so the chat route can
 // reach into `choices[0].delta.content`.
-const structured = parseNatOutputString('{"choices":[{"delta":{"content":"100"}}]}');
+const structured = parseAgentOutputString('{"choices":[{"delta":{"content":"100"}}]}');
 assert.equal(typeof structured, "object");
 assert.equal(structured.choices[0].delta.content, "100");
 assert.equal(
@@ -90,7 +90,7 @@ assert.equal(
   "content inside a decoded container must stay a string",
 );
 
-const structuredArray = parseNatOutputString('[{"content":"a"}]');
+const structuredArray = parseAgentOutputString('[{"content":"a"}]');
 assert.ok(Array.isArray(structuredArray));
 
 // Text that merely starts or ends with a brace is not a container and must be
@@ -103,12 +103,12 @@ for (const notAContainer of [
   "use {tools} for every factual claim",
 ]) {
   assert.equal(
-    parseNatOutputString(notAContainer),
+    parseAgentOutputString(notAContainer),
     notAContainer,
     `non-container text was altered: ${notAContainer}`,
   );
 }
 
-console.log("PASS: NAT scalar answer chunks remain literal text");
+console.log("PASS: scalar answer chunks remain literal text");
 console.log("PASS: streamed answer reconstruction is lossless");
 console.log("PASS: nested structured ChatResponse JSON is still decoded");

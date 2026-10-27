@@ -3,7 +3,7 @@
 //! `guardrails::input` holds the rules as pure functions; this runs them in
 //! order, makes the one model call, and reports the decision on the stream
 //! (`guardrail_input_self_check_decision`, which the evaluator scores) and on
-//! the trace (`guardrail.input.self_check`), with `main`'s field names.
+//! the trace (`guardrail.input.self_check`).
 
 use serde_json::json;
 use sha2::{Digest, Sha256};
@@ -15,7 +15,8 @@ use crate::{
     telemetry::bounded,
 };
 
-/// NeMo's refusal when its self-check input rail blocks.
+/// The classifier's refusal when it votes to block (NeMo Guardrails' wording,
+/// kept so evaluation datasets written against it still apply).
 pub const CLASSIFIER_REFUSAL: &str = "I'm sorry, I can't respond to that.";
 pub const DECISION_EVENT: &str = "guardrail_input_self_check_decision";
 
@@ -166,7 +167,7 @@ pub async fn screen(scope: &RequestScope, latest: &str, history: &[Turn]) -> Inp
         return InputOutcome::Allowed;
     }
     // The classifier's own refusal whenever it voted to block; the configured
-    // message when only a deterministic layer did — the same split as `main`.
+    // message when only a deterministic layer did.
     let message = if decision.llm_blocked && !classifier_failed {
         CLASSIFIER_REFUSAL.to_string()
     } else {

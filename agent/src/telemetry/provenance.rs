@@ -1,7 +1,7 @@
 //! What this agent is, so an evaluation result can name it (`GET /version`).
 //!
-//! Same purpose and fields as `main`'s `provenance.py`, plus the one that
-//! matters most on this branch: `agent_runtime: "rig-rust"`. Digests, never
+//! Includes `agent_runtime: "rig-rust"`, so results from the retired NAT
+//! runtime (which predates the field) stay distinguishable. Digests, never
 //! prompt text; model names, never credentials.
 
 use serde_json::{Value, json};
@@ -32,14 +32,14 @@ pub fn describe(settings: &Settings, policy: &ToolPolicy) -> Value {
         "agent_version": env!("CARGO_PKG_VERSION"),
         "model": settings.agent.model,
         "guard_model": settings.guard.model,
-        // Empty means "omitted from the request", as on `main`.
+        // Empty means "omitted from the request".
         "reasoning_effort": settings.agent.reasoning_effort.clone().unwrap_or_default(),
         "guard_reasoning_effort": settings.guard.reasoning_effort.clone().unwrap_or_default(),
         "build_commit": settings.build_commit,
         "config_path": settings.config_path.display().to_string(),
         "config_sha256": raw.as_deref().map(sha256_hex),
-        // The template text, before tool rendering: identical to `main`'s
-        // prompt, so this digest matches across the two branches.
+        // The template text, before tool rendering, so the digest does not
+        // change when the MCP catalogue does.
         "prompt_sha256": sha256_hex(settings.file.workflow.system_prompt.as_bytes()),
         "guardrails_prompts_sha256": sha256_hex(canonical_json(&prompts).as_bytes()),
         "guardrails_prompts_digest": "canonical-json",
