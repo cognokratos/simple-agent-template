@@ -84,13 +84,16 @@ def test_phoenix_is_default_and_mlflow_is_opt_in() -> None:
     assert "evaluator-mlflow" not in default["services"]
     assert "mlflow-data" not in (default.get("volumes") or {})
     with_mlflow = _render("mlflow")
-    assert {"mlflow", "evaluator-mlflow"} <= set(with_mlflow["services"])
-    print("PASS: Phoenix is in the default stack; MLflow appears only with --profile mlflow")
+    assert "mlflow" in with_mlflow["services"]
+    # Bringing the MLflow stack up must not start an evaluation run.
+    assert "evaluator-mlflow" not in with_mlflow["services"]
+    assert "evaluator-mlflow" in _render("mlflow", "evaluation-mlflow")["services"]
+    print("PASS: Phoenix is in the default stack; MLflow appears only with --profile mlflow; no evaluator starts on up")
 
 
 def test_mlflow_changes_no_protected_reachability() -> None:
     base = _render("evaluation", "dev")
-    with_mlflow = _render("evaluation", "dev", "mlflow")
+    with_mlflow = _render("evaluation", "dev", "mlflow", "evaluation-mlflow")
     for name in PROTECTED:
         before = _reachable(base, name)
         after = _reachable(with_mlflow, name) - {"evaluator-mlflow"}
@@ -103,14 +106,14 @@ def test_mlflow_changes_no_protected_reachability() -> None:
 
 
 def test_the_validator_passes_both_renders() -> None:
-    for profiles in (("evaluation", "dev"), ("evaluation", "dev", "mlflow")):
+    for profiles in (("evaluation", "dev"), ("evaluation", "dev", "mlflow", "evaluation-mlflow")):
         result = _validate(_render(*profiles))
         assert result.returncode == 0, (profiles, result.stdout, result.stderr)
     print("PASS: the topology validator accepts the default and the MLflow renders")
 
 
 def test_the_validator_rejects_a_backend_that_reaches_a_protected_service() -> None:
-    config = _render("evaluation", "dev", "mlflow")
+    config = _render("evaluation", "dev", "mlflow", "evaluation-mlflow")
     for backend, network in (("phoenix", "agent_net"), ("phoenix", "telemetry_net"), ("mlflow", "mcp_net")):
         mutated = copy.deepcopy(config)
         mutated["services"][backend]["networks"][network] = {}
@@ -119,6 +122,9 @@ def test_the_validator_rejects_a_backend_that_reaches_a_protected_service() -> N
     unprofiled = copy.deepcopy(config)
     unprofiled["services"]["mlflow"]["profiles"] = []
     assert _validate(unprofiled).returncode != 0, "an always-on MLflow was accepted"
+    auto_run = copy.deepcopy(config)
+    auto_run["services"]["evaluator-mlflow"]["profiles"] = ["mlflow"]
+    assert _validate(auto_run).returncode != 0, "an evaluator started by `up` was accepted"
     floating = copy.deepcopy(config)
     floating["services"]["phoenix"]["image"] = "arizephoenix/phoenix:latest"
     assert _validate(floating).returncode != 0, "an unpinned Phoenix image was accepted"

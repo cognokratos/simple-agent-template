@@ -50,9 +50,10 @@ def main() -> None:
     # The observability default is Phoenix; MLflow is opt-in. A render without
     # the mlflow profile must not contain it, or "optional" means nothing.
     profiles_of = {name: set(service.get("profiles") or []) for name, service in services.items()}
-    for name in ("mlflow", "evaluator-mlflow"):
-        if name in services and profiles_of[name] != {"mlflow"}:
-            fail(f"{name} must be gated by exactly the 'mlflow' profile, found {sorted(profiles_of[name])}")
+    # The evaluators run on demand (`docker compose run`), never on `up`.
+    for name, profile in (("mlflow", "mlflow"), ("evaluator", "evaluation"), ("evaluator-mlflow", "evaluation-mlflow")):
+        if name in services and profiles_of[name] != {profile}:
+            fail(f"{name} must be gated by exactly the {profile!r} profile, found {sorted(profiles_of[name])}")
     if profiles_of.get("phoenix"):
         fail("phoenix must be part of the default stack, not behind a profile")
     phoenix_image = str(services["phoenix"].get("image", ""))

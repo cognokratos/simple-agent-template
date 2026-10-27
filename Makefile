@@ -54,7 +54,7 @@ MLFLOW_OVERLAY := otel-collector.mlflow.yml
 MLFLOW_COMPOSE := OTEL_COLLECTOR_OVERLAY=$(MLFLOW_OVERLAY) $(COMPOSE) --profile mlflow
 # Every profile, so `down` removes optional services too and switching from
 # `make dev-mlflow` back to `make dev` really does leave MLflow off.
-ALL_PROFILES_COMPOSE := $(COMPOSE) --profile evaluation --profile dev --profile mlflow
+ALL_PROFILES_COMPOSE := $(COMPOSE) --profile evaluation --profile dev --profile mlflow --profile evaluation-mlflow
 DEBUG_COMPOSE := $(COMPOSE) -f docker-compose.yml -f docker-compose.debug.yml
 OPEN ?= open
 
@@ -446,7 +446,7 @@ login-info: ## Print the development login URLs and credentials
 # silently skip the services that exist only under it.
 security-config-test: ## Validate the resolved Compose topology (default and mlflow) and security-critical source wiring
 	$(COMPOSE) --profile evaluation --profile dev config --format json | python3 scripts/verify_security_config.py
-	$(MLFLOW_COMPOSE) --profile evaluation --profile dev config --format json | python3 scripts/verify_security_config.py
+	$(MLFLOW_COMPOSE) --profile evaluation --profile evaluation-mlflow --profile dev config --format json | python3 scripts/verify_security_config.py
 	python3 scripts/verify_security_sources.py
 	python3 scripts/verify_compose_profiles_test.py
 

@@ -491,9 +491,12 @@ services:
 
   # The same evaluator in the MLflow image, so the optional MLflow reporter can
   # run. One evaluation, published to Phoenix and MLflow from the same result.
+  # Its own profile, like `evaluator`: under `mlflow` alone, `up` would start
+  # it and run every suite whenever the MLflow stack came up. `docker compose
+  # run evaluator-mlflow` activates the profile because the service is named.
   evaluator-mlflow:
     image: ghcr.io/mlflow/mlflow:v3.14.0
-    profiles: ["mlflow"]
+    profiles: ["evaluation-mlflow"]
     entrypoint: []
     working_dir: /app
     command: ["python", "-m", "evaluation", "run", "--suite", "all"]

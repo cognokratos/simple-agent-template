@@ -287,8 +287,11 @@ Then create a system API key in Phoenix and give it to the evaluator as
 ## Optional MLflow
 
 A reference integration, not part of the default stack. `make dev-mlflow`
-starts the `mlflow` profile (the `mlflow` and `evaluator-mlflow` services) and
-recreates the collector with `OTEL_COLLECTOR_OVERLAY=otel-collector.mlflow.yml`.
+starts the `mlflow` profile (the `mlflow` service) and recreates the collector
+with `OTEL_COLLECTOR_OVERLAY=otel-collector.mlflow.yml`. The `evaluator-mlflow`
+service has its own `evaluation-mlflow` profile, like `evaluator` has
+`evaluation`, so bringing the stack up never starts an evaluation run;
+`make eval-mlflow` runs it by name.
 
 | Variable | Default | Notes |
 | --- | --- | --- |

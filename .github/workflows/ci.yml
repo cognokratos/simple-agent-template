@@ -182,7 +182,7 @@ jobs:
           docker compose --profile evaluation --profile dev config --format json \
             | python3 scripts/verify_security_config.py
           OTEL_COLLECTOR_OVERLAY=otel-collector.mlflow.yml \
-            docker compose --profile evaluation --profile dev --profile mlflow config --format json \
+            docker compose --profile evaluation --profile evaluation-mlflow --profile dev --profile mlflow config --format json \
             | python3 scripts/verify_security_config.py
 
       - name: Phoenix default, MLflow opt-in, private telemetry defaults
