@@ -1,0 +1,10 @@
+# The evaluator's only third-party dependency, hash-locked. PyYAML reads the
+# mounted agent/config.yml to digest its prompts; everything else is the
+# standard library, including the Phoenix reporter's HTTP client.
+#
+# MLflow is deliberately absent. The optional MLflow reporter runs in the
+# `evaluator-mlflow` service, which uses the MLflow image instead.
+PyYAML==6.0.3 \
+    --hash=sha256:ba1cc08a7ccde2d2ec775841541641e4548226580ab850948cbfda66a1befcdc \
+    --hash=sha256:9149cad251584d5fb4981be1ecde53a1ca46c891a79788c0df828d2f166bda28 \
+    --hash=sha256:d76623373421df22fb4cf8817020cbb7ef15c725b9d5e45f17e189bfc384190f

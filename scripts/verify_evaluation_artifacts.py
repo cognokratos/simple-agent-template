@@ -10,8 +10,11 @@ never be confused.
 Outcomes, checked in this order and mutually exclusive:
 
     missing     the directory does not exist, or holds no ``*.json`` files
-    malformed   a file is not valid JSON, is not an object, or is missing a
-                required field
+    malformed   a file is not valid JSON, is not an object, is missing a
+                required field, or (schema version 2 and later) states a
+                verdict that contradicts itself: ``passed`` disagreeing with
+                ``gate.passed``, a pass with unevaluated cases, or reporter
+                metadata standing in for the verdict
     stale       a file's ``generated_at`` predates ``--started-after`` — a
                 leftover from a previous run, not fresh output. The workflow
                 already wipes the results directory before running, so this
@@ -38,6 +41,34 @@ from datetime import timezone
 from pathlib import Path
 
 REQUIRED_FIELDS = ("generated_at", "suite", "run_id", "provenance")
+#: Added by the backend-neutral evaluator (schema version 2). The verdict lives
+#: in these, and nothing under ``reporting`` may be read as one.
+REQUIRED_FIELDS_V2 = ("passed", "gate", "metrics", "errors", "latency", "dataset_revision", "conditions", "cases")
+
+
+def _verdict_problem(data: dict) -> str | None:
+    """Why a version-2 result's verdict cannot be trusted, or None."""
+    version = data.get("schema_version")
+    if version is None:
+        return None  # version 1: only the original fields are required
+    if not isinstance(version, int) or version < 2:
+        return f"has an unsupported schema_version {version!r}"
+    missing = [name for name in REQUIRED_FIELDS_V2 if name not in data]
+    if missing:
+        return f"is missing required field(s): {missing}"
+    if not isinstance(data["run_id"], str) or not data["run_id"]:
+        return "has no run_id"
+    gate = data["gate"]
+    if not isinstance(data["passed"], bool) or not isinstance(gate, dict) or gate.get("passed") is not data["passed"]:
+        return "states a verdict that disagrees with its own gate"
+    errors = data["errors"]
+    if not isinstance(errors, dict) or not isinstance(errors.get("count"), int):
+        return "has a malformed errors block"
+    if data["passed"] and errors["count"]:
+        return "claims a pass with unevaluated cases"
+    if not isinstance(data["cases"], list) or len(data["cases"]) != data.get("record_count"):
+        return "does not carry one case result per dataset record"
+    return None
 
 
 @dataclass
@@ -99,6 +130,9 @@ def validate(
                 f"{path.name} is missing required field(s): {missing_fields}",
                 [str(path)],
             )
+        problem = _verdict_problem(data)
+        if problem:
+            return ValidationResult("malformed", False, f"{path.name} {problem}", [str(path)])
         parsed[path] = data
 
     if cutoff is not None:

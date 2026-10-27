@@ -1,10 +1,10 @@
 """Tests for evaluation-run provenance.
 
 Run both on the host (``make static-check``) and in the evaluator container
-(``make eval-test``). The host has neither ``mlflow`` nor ``PyYAML``, so
-``mlflow`` is stubbed the way ``test_parser_and_scorers`` stubs it and the
-YAML-dependent assertions skip rather than fail. The container has both, so
-``make eval-test`` is where the pinned digest is actually enforced.
+(``make eval-test``). Neither needs MLflow: provenance is backend-neutral. The
+host may lack PyYAML, so the YAML-dependent assertions skip rather than fail
+there; the container has it, so ``make eval-test`` is where the pinned digest
+is actually enforced.
 """
 
 from __future__ import annotations
@@ -17,12 +17,6 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
-
-mlflow_stub = types.ModuleType("mlflow")
-genai_stub = types.ModuleType("mlflow.genai")
-mlflow_stub.genai = genai_stub
-sys.modules.setdefault("mlflow", mlflow_stub)
-sys.modules.setdefault("mlflow.genai", genai_stub)
 
 try:  # PyYAML is present in the evaluator image, absent on a bare host.
     import yaml  # noqa: F401
@@ -137,9 +131,9 @@ class HarnessIdentityTests(unittest.TestCase):
             "with no git tree to inspect, dirty must be None — never False",
         )
         self.assertNotEqual(identity["dirty"], False, "None must not compare equal to a clean tree")
-        # And the MLflow tag must not read "false" either, or a search for
+        # And the flattened tag must not read "false" either, or a search for
         # dirty=false would silently include runs nobody inspected.
-        tags = provenance.mlflow_tags({"harness": identity, "agent": {}})
+        tags = provenance.flat_tags({"harness": identity, "agent": {}})
         self.assertEqual(tags["provenance.harness.dirty"], "unknown")
         self.assertEqual(tags["provenance.harness.source"], provenance.SOURCE_UNKNOWN)
 
@@ -166,18 +160,18 @@ class HarnessIdentityTests(unittest.TestCase):
 class ConsistencyTests(unittest.TestCase):
     """The field a reviewer reads: did every identity agree?"""
 
-    def test_tags_are_all_strings_so_mlflow_accepts_them(self) -> None:
+    def test_tags_are_all_strings_so_any_platform_accepts_them(self) -> None:
         record = {
             "agent": {"build_commit": "abc", "model": "qwen3:8b", "tools_exposed": ["a", "b"]},
             "harness": {"git_commit": "abc", "dirty": False, "source": "git"},
-            "prompts": [{"name": "p", "version": "3"}],
+            "prompts": [{"name": "p", "sha256": "0123456789abcdef"}],
             "consistent": True,
         }
-        tags = provenance.mlflow_tags(record)
+        tags = provenance.flat_tags(record)
         for key, value in tags.items():
             self.assertIsInstance(value, str, key)
         self.assertEqual(tags["provenance.agent.tool_count"], "2")
-        self.assertEqual(tags["provenance.prompt.p"], "v3")
+        self.assertEqual(tags["provenance.prompt.p"], "0123456789ab")
         self.assertEqual(tags["provenance.consistent"], "true")
         self.assertEqual(tags["provenance.harness.dirty"], "false")
         self.assertEqual(tags["provenance.harness.source"], "git")
@@ -208,33 +202,12 @@ class ConsistencyTests(unittest.TestCase):
             {"available": False},
         )
 
-    def test_active_model_name_is_derived_from_what_the_agent_reported(self) -> None:
-        record = {"agent": {"build_commit": "0542fb8ea6f4", "prompt_sha256": "03672e3abcfc"}}
-        self.assertEqual(
-            provenance.active_model_name(record), "agent-0542fb8e-p03672e3a"
-        )
-
-    def test_the_model_prefix_is_overridable_for_a_domain_fork(self) -> None:
-        record = {"agent": {"build_commit": "0542fb8ea6f4", "prompt_sha256": "03672e3abcfc"}}
-        previous = os.environ.get("EVALUATION_MODEL_PREFIX")
-        os.environ["EVALUATION_MODEL_PREFIX"] = "my-domain-agent"
-        try:
-            self.assertEqual(
-                provenance.active_model_name(record),
-                "my-domain-agent-0542fb8e-p03672e3a",
-            )
-        finally:
-            if previous is None:
-                os.environ.pop("EVALUATION_MODEL_PREFIX", None)
-            else:
-                os.environ["EVALUATION_MODEL_PREFIX"] = previous
-
     def test_the_runtime_is_recorded_for_both_implementations(self) -> None:
         self.assertEqual(provenance.agent_runtime({"available": True, "agent_runtime": "rig-rust"}), "rig-rust")
         # The retired NAT agent (nat-1.9-final) predates the field.
         self.assertEqual(provenance.agent_runtime({"available": True}), "nat")
         self.assertEqual(provenance.agent_runtime({"available": False}), "unknown")
-        tags = provenance.mlflow_tags({"agent": {"available": True, "agent_runtime": "rig-rust"}, "harness": {}})
+        tags = provenance.flat_tags({"agent": {"available": True, "agent_runtime": "rig-rust"}, "harness": {}})
         self.assertEqual(tags["provenance.agent.runtime"], "rig-rust")
 
     @unittest.skipUnless(HAVE_YAML, "PyYAML is only present in the evaluator image")
@@ -263,8 +236,64 @@ class ConsistencyTests(unittest.TestCase):
         """A failed provenance fetch must never read as a clean run."""
         record = {"agent": {"available": False}, "harness": {"git_commit": "abc"}, "checks": {}}
         self.assertFalse(record.get("consistent", False))
-        tags = provenance.mlflow_tags(record)
+        tags = provenance.flat_tags(record)
         self.assertEqual(tags["provenance.consistent"], "false")
+
+    def test_prompt_provenance_is_a_digest_not_a_registry_version(self) -> None:
+        prompts = provenance.prompt_digests(
+            {
+                "available": True,
+                "system_prompt": "x",
+                "prompt_sha256": "aa" * 32,
+                "rail_prompts": [{"task": "t"}],
+                "guardrails_prompts_sha256": "bb" * 32,
+            }
+        )
+        self.assertEqual([entry["sha256"] for entry in prompts], ["aa" * 32, "bb" * 32])
+        self.assertTrue(all("version" not in entry for entry in prompts))
+        self.assertEqual(provenance.prompt_digests({"available": False}), [])
+
+
+class ComparisonConditionTests(unittest.TestCase):
+    """What makes two results comparable, with absence kept visible."""
+
+    RECORD = {
+        "agent": {
+            "available": True,
+            "agent_runtime": "rig-rust",
+            "build_commit": "abc",
+            "model": "qwen3:8b",
+            "guard_model": "qwen3:8b",
+            "reasoning_effort": "none",
+            "prompt_sha256": "p" * 64,
+            "guardrails_prompts_sha256": "g" * 64,
+            "config_sha256": "c" * 64,
+        },
+        "harness": {"git_commit": "abc", "dirty": False, "source": "git"},
+    }
+
+    def _conditions(self, record: dict, dataset: str = "d" * 64) -> dict:
+        return provenance.comparison_conditions(
+            record, dataset_sha256=dataset, required_metric="m/mean", fail_threshold=1.0
+        )
+
+    def test_identical_conditions_share_a_digest(self) -> None:
+        self.assertEqual(self._conditions(self.RECORD)["sha256"], self._conditions(self.RECORD)["sha256"])
+
+    def test_a_changed_model_or_dataset_changes_the_digest(self) -> None:
+        other = {**self.RECORD, "agent": {**self.RECORD["agent"], "model": "other"}}
+        self.assertNotEqual(self._conditions(self.RECORD)["sha256"], self._conditions(other)["sha256"])
+        self.assertNotEqual(
+            self._conditions(self.RECORD)["sha256"], self._conditions(self.RECORD, dataset="e" * 64)["sha256"]
+        )
+
+    def test_absence_is_explicit_never_faked(self) -> None:
+        conditions = self._conditions({"agent": {"available": False}, "harness": {}})
+        self.assertIsNone(conditions["fields"]["model"])
+        self.assertIsNone(conditions["fields"]["agent_build_commit"])
+        self.assertIn("model", conditions["unobserved"])
+        # The agent does not report its endpoint, so provider is always unobserved.
+        self.assertIn("provider", self._conditions(self.RECORD)["unobserved"])
 
 
 if __name__ == "__main__":

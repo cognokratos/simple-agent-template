@@ -1,4 +1,10 @@
-"""Evaluation suite configuration."""
+"""Evaluation suite configuration.
+
+Core settings only. What a suite is, where its cases live, and which metric
+gates it are defined here and nowhere else. ``experiment_name`` and
+``dataset_name`` are display names a reporter may use; neither identifies a
+case or decides a result.
+"""
 
 from __future__ import annotations
 
@@ -78,8 +84,26 @@ SUITES: dict[str, SuiteConfig] = {
 }
 
 
-def tracking_uri() -> str:
-    return os.getenv("MLFLOW_TRACKING_URI", "http://mlflow:5000")
+RESULTS_ROOT = PACKAGE_ROOT / "results"
+
+#: Reporters the CLI knows. A reporter only *publishes* a finished result.
+KNOWN_REPORTERS = ("phoenix", "mlflow")
+
+
+def configured_reporters(raw: str | None = None) -> list[str]:
+    """Parse ``EVALUATION_REPORTERS``: a comma list, ``none``, or empty.
+
+    Empty means none. The JSON artifact is written either way, because it is the
+    result rather than a report of it.
+    """
+    value = os.getenv("EVALUATION_REPORTERS", "") if raw is None else raw
+    names = [name.strip().lower() for name in value.split(",") if name.strip()]
+    if names in ([], ["none"]):
+        return []
+    unknown = [name for name in names if name not in KNOWN_REPORTERS]
+    if unknown:
+        raise ValueError(f"Unknown evaluation reporter(s) {unknown}; choose from {list(KNOWN_REPORTERS)} or none")
+    return list(dict.fromkeys(names))
 
 
 def agent_workflow_url() -> str:

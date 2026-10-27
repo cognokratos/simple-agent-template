@@ -1,0 +1,3 @@
+# The build context needs requirements.txt only; the package is mounted.
+*
+!requirements.txt
