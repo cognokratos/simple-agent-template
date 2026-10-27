@@ -39,8 +39,14 @@ def _configured_tool_names() -> frozenset[str]:
 
 KNOWN_TOOL_NAMES = _configured_tool_names()
 
-# Event names emitted by nat_streaming_react.text_guardrails. These are magic
-# strings shared across two separately deployed codebases, so an exact-name-only
+# Guardrail decision-event names: part of the agent-service contract
+# (docs/AGENT-SERVICE-CONTRACT.md), inherited from the retired NAT agent
+# (nat-1.9-final) so datasets and scorers did not change with the framework.
+# The Rust agent still emits the input name unchanged
+# (agent/src/agent/input_rail.rs). The output name below is the NAT-era
+# `..._presidio_decision`; the Rust agent emits `..._pii_decision`
+# (agent/src/agent/execution.rs), which the prefix fallback captures. These are magic strings shared across two
+# separately deployed codebases, so an exact-name-only
 # match turns any future rail rename into silent data loss: `output_guardrail`
 # would simply always be None and `guardrail_output_event_present` always False,
 # with nothing failing.

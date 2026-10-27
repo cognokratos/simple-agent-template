@@ -118,7 +118,7 @@ variable whose old and new names disagree.
 | `AGENT_RUST_LOG` | `tickets_agent=info,warn` | the agent container's `RUST_LOG` (container log only) |
 
 Accepted and without effect: `HITL_STRICT_INTERACTION_OWNERSHIP` (ownership is
-always enforced; `false` logs a warning). The trusted identity header is the
+always enforced; `false` prints a startup warning). The trusted identity header is the
 constant `x-authenticated-user-id` ([`identity.rs`](../agent/src/identity.rs)),
 not a setting.
 
@@ -128,25 +128,41 @@ The agent's environment once used the names of the NeMo Agent Toolkit runtime
 it was first built on. They were renamed to agent-neutral names when the Rust
 agent became canonical:
 
-| Current name | Deprecated alias | Read by |
+| Current name | Deprecated alias | Where the old name lived |
 | --- | --- | --- |
-| `AGENT_API_KEY` | `NAT_GATEWAY_API_KEY` | the agent (the gateway and evaluator already used `AGENT_API_KEY`) |
-| `AGENT_TRACE_CAPTURE_CONTENT` | `NAT_TRACE_CAPTURE_CONTENT` | the agent |
-| `AGENT_TRACE_CONTENT_MAX_CHARS` | `NAT_TRACE_CONTENT_MAX_CHARS` | the agent |
+| `AGENT_API_KEY` | `NAT_GATEWAY_API_KEY` | inside the agent container only; users always set `AGENT_API_KEY`, which Compose passed to the gateway and evaluator under that name and to the agent as `NAT_GATEWAY_API_KEY` |
+| `AGENT_TRACE_CAPTURE_CONTENT` | `NAT_TRACE_CAPTURE_CONTENT` | user-facing: `.env` and the agent container |
+| `AGENT_TRACE_CONTENT_MAX_CHARS` | `NAT_TRACE_CONTENT_MAX_CHARS` | user-facing: `.env` and the agent container |
 
-Precedence is explicit and tested (`config::RENAMED` in
+How an alias is resolved depends on where it is set.
+
+**In the agent process** (its own environment: a container run without this
+Compose file, Kubernetes, or a local `cargo run`), the agent sees both names
+and applies one rule, explicit and tested (`config::RENAMED` in
 [`config.rs`](../agent/src/config.rs)):
 
 1. the current name, when set and non-blank, always wins;
-2. otherwise the deprecated alias is used, and startup logs a deprecation
-   warning naming the replacement;
+2. otherwise the deprecated alias is used, and startup prints a deprecation
+   warning naming the replacement to stderr (`tickets-agent warning: …`;
+   configuration is read before tracing starts);
 3. if both are set to **different** values, the agent refuses to start: one of
    them is a stale credential or setting that someone believes is in effect.
 
-In Compose, the host-side aliases are resolved in `docker-compose.yml`
-(`${AGENT_TRACE_CAPTURE_CONTENT:-${NAT_TRACE_CAPTURE_CONTENT:-true}}`), so the
-agent container receives only the current names; `make security-config-test`
-fails if it ever receives a deprecated one.
+**Through this Compose file**, the agent container receives only the current
+names; `make security-config-test` fails if it ever receives a deprecated one.
+
+* The two trace variables are resolved in `docker-compose.yml` before the
+  agent sees them:
+  `${AGENT_TRACE_CAPTURE_CONTENT:-${NAT_TRACE_CAPTURE_CONTENT:-true}}`. An old
+  `.env` that sets only `NAT_TRACE_*` keeps working, but silently: the agent
+  receives an `AGENT_*` value and prints no deprecation warning. If `.env` sets
+  both names to different values, Compose takes the `AGENT_*` one; the agent
+  cannot see the conflict, so it is not rejected. Rename them in `.env`.
+* The service key was never a host-side `NAT_*` variable. Compose reads
+  `AGENT_API_KEY` from `.env` and now passes it to the agent under the same
+  name, so the gateway, the evaluator and the agent provably share one value
+  (`make security-config-test` asserts it). A `NAT_GATEWAY_API_KEY` in `.env` is
+  ignored by Compose, as it always was.
 
 **Removal.** The aliases exist for one deprecation cycle so existing `.env`
 files and deployments keep working. They will be removed in a later release;

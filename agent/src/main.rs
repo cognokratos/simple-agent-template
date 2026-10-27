@@ -33,6 +33,12 @@ async fn serve() -> ExitCode {
             return ExitCode::FAILURE;
         }
     };
+    // Configuration is resolved before the tracing subscriber exists, so its
+    // non-fatal notices go to stderr directly; a `tracing` event here would be
+    // dropped.
+    for warning in &settings.warnings {
+        eprintln!("tickets-agent warning: {warning}");
+    }
     let _telemetry = telemetry::init(&settings.telemetry);
     tracing::info!(
         runtime = "rig-rust",

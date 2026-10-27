@@ -37,8 +37,8 @@ const SUPPORTED_VERSION: u8 = 1;
 ///
 /// The minter caps its own TTL, but the minter is not the trust boundary: a
 /// misconfigured or compromised issuer could otherwise mint approvals that never
-/// expire, and nothing downstream would notice. Keep in step with the
-/// `token_ttl_seconds` ceiling in `agent/src/nat_streaming_react/approval.py`.
+/// expire, and nothing downstream would notice. Keep in step with the agent's
+/// `MAX_TOKEN_TTL_SECONDS` ceiling in `agent/src/config.rs`.
 pub const MAX_APPROVAL_LIFETIME_SECONDS: i64 = 1_800;
 
 /// Tolerance for clock drift between minter and verifier, applied only to the
@@ -248,9 +248,9 @@ impl ApprovalVerifier {
 
 #[cfg(test)]
 pub(crate) mod testing {
-    //! Token minting, mirroring `agent/src/nat_streaming_react/approval.py`, so
-    //! the verifier can be exercised against tokens produced the way the real
-    //! minter produces them.
+    //! Token minting, mirroring the agent's minter (`agent/src/approval/token.rs`),
+    //! so the verifier can be exercised against tokens produced the way the
+    //! real minter produces them.
 
     use super::*;
 
@@ -512,8 +512,9 @@ mod tests {
     /// independently, so this is what proves the two canonical encoders agree.
     #[test]
     fn a_token_minted_by_the_retired_python_agent_is_still_accepted() {
-        // Produced by mint_token() in agent/src/nat_streaming_react/approval.py
-        // with TEST_SECRET. Regenerate only if the claim format changes.
+        // Produced by mint_token() in the retired NAT agent's
+        // agent/src/nat_streaming_react/approval.py (tag nat-1.9-final) with
+        // TEST_SECRET. Regenerate only if the claim format changes.
         const PYTHON_TOKEN: &str = "eyJhY3Rpb24iOiJzZXRfdGlja2V0X3ByaW9yaXR5IiwiYWN0b3JfaWQiOiJzdXBwb3J0LXJlcC0xIiwiY2hvaWNlIjoiaGlnaCIsImV4cCI6MTc4OTg5OTI4OCwiZXhwZWN0ZWRfY2hvaWNlIjoibWVkaXVtIiwibm9uY2UiOiJkYjVkM2U5OS01NDdlLTQ1OWQtYTIwZi1hOTVkNGRhOThmZDQiLCJvdmVycmlkZV9yZXF1ZXN0ZWQiOnRydWUsInBheWxvYWQiOnsibm90ZSI6IkRvY3VtZW50ZWQgYWZ0ZXIgdGhlIGN1c3RvbWVyJ3Mgc2Vjb25kIGZvbGxvdy11cC4gVW5pY29kZTogWm_DqyDinJMifSwicGF5bG9hZF9zaGEyNTYiOiI1MWFjYmIxMGNmY2YyZWE4MDBkMTI3NjI3YWZlY2FmZGJiNjVkN2IxNDJjOGQ3ZjdhMmJkMWY0NWNiOTFmMGEwIiwicmF0aW9uYWxlIjoiQ3VzdG9tZXIgaGFzIGZvbGxvd2VkIHVwIHR3aWNlIHdpdGggbm8gcmVzb2x1dGlvbi4iLCJyZXF1ZXN0X2lkIjoiMTExMTExMTEtMTExMS00MTExLTgxMTEtMTExMTExMTExMTExIiwicmVzb3VyY2VfaWQiOiJUS1QtMTAwMSIsInYiOjF9.X21SyZoYnU8OU8fYk23shsM6JugTdWQBhUuyWsNeWtc";
 
         let (payload_b64, signature_b64) = PYTHON_TOKEN.split_once('.').expect("format");

@@ -67,11 +67,13 @@ def _sha256(text: str) -> str:
 
 
 def _canonical_sha256(value: Any) -> str:
-    """Mirror of ``nat_streaming_react.provenance.canonical_sha256``.
+    """Mirror of the retired NAT agent's ``canonical_sha256`` (``nat-1.9-final``).
 
-    Duplicated rather than imported: the evaluator image does not install the
-    agent package, and mounting the agent source into the harness to share one
-    helper would be a worse trade than two short identical functions.
+    Used only to digest that agent's rail-prompt layout, so the harness can
+    still evaluate the preserved NAT agent for a framework comparison; the
+    current Rust agent is digested with ``_canonical_json_sha256`` below.
+    Duplicated rather than imported: the evaluator never installs an agent
+    package.
 
     The duplication is not taken on trust. Both sides digest the same file, so
     every run compares the two results and reports ``prompt_matches_config`` /

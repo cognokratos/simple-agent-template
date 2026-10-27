@@ -211,7 +211,7 @@ this tree.
 
 | | |
 | --- | --- |
-| NAT (retired) | NAT's interaction layer paused the workflow coroutine; [`interaction_guard.py`](https://github.com/cognokratos/simple-agent-template/blob/nat-1.9-final/agent/src/nat_streaming_react/interaction_guard.py) adds owner and offered-choice checks; [`approval.py`](https://github.com/cognokratos/simple-agent-template/blob/nat-1.9-final/agent/src/nat_streaming_react/approval.py) prompts and mints |
+| NAT (retired) | NAT's interaction layer paused the workflow coroutine; [`interaction_guard.py`](https://github.com/cognokratos/simple-agent-template/blob/nat-1.9-final/agent/src/nat_streaming_react/interaction_guard.py) added owner and offered-choice checks; [`approval.py`](https://github.com/cognokratos/simple-agent-template/blob/nat-1.9-final/agent/src/nat_streaming_react/approval.py) prompted and minted |
 | Rig (current) | [`approval/gate.rs`](../agent/src/approval/gate.rs) suspends the run on a `PendingTicket`; [`approval/pending.rs`](../agent/src/approval/pending.rs) checks the answer and only then builds a `VerifiedDecision` (private constructor); [`approval/token.rs`](../agent/src/approval/token.rs) mints the same token |
 | Relation | **equivalent** security properties; **stricter** lifecycle (prompts expire; partial enablement refuses to start; the model never sees `actor_id`) |
 | Takeaway | Same token, same MCP verifier, same single-use transaction. The difference is where the checks live: patched into a toolkit's store, or built into the type the run waits on. |

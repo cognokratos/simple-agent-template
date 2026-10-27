@@ -194,8 +194,9 @@ discovered MCP tool descriptions and names.
 
 **Renamed variables.** The agent's service-key and trace-content variables lost
 their historical `NAT_` prefix (`AGENT_API_KEY`, `AGENT_TRACE_CAPTURE_CONTENT`,
-`AGENT_TRACE_CONTENT_MAX_CHARS`). The old names are still read, with a warning,
-when the new ones are unset; see
+`AGENT_TRACE_CONTENT_MAX_CHARS`). The old names are still honoured for now
+when the new ones are unset — by the agent itself, with a startup warning, and
+for the trace variables by Compose; see
 [CONFIGURATION.md — renamed variables](docs/CONFIGURATION.md#renamed-variables).
 
 **Licensing.** Original code and documentation are MIT licensed

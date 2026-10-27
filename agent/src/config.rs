@@ -82,12 +82,15 @@ pub const RENAMED: &[(&str, &str)] = &[
 struct Renamed<'a> {
     env: &'a dyn Env,
     resolved: BTreeMap<&'static str, String>,
+    /// One deprecation notice per alias actually used.
+    warnings: Vec<String>,
 }
 
 impl<'a> Renamed<'a> {
     fn new(env: &'a dyn Env) -> Result<Self, ConfigError> {
         let set = |name: &str| env.get(name).filter(|value| !value.trim().is_empty());
         let mut resolved = BTreeMap::new();
+        let mut warnings = Vec::new();
         for &(current, deprecated) in RENAMED {
             match (set(current), set(deprecated)) {
                 (Some(new), Some(old)) if new.trim() != old.trim() => {
@@ -100,13 +103,13 @@ impl<'a> Renamed<'a> {
                     resolved.insert(current, value);
                 }
                 (None, Some(value)) => {
-                    tracing::warn!("{deprecated} is deprecated and will be removed; set {current} instead");
+                    warnings.push(format!("{deprecated} is deprecated and will be removed; set {current} instead"));
                     resolved.insert(current, value);
                 }
                 (None, None) => {}
             }
         }
-        Ok(Self { env, resolved })
+        Ok(Self { env, resolved, warnings })
     }
 }
 
@@ -245,6 +248,11 @@ pub struct Settings {
     pub build_commit: String,
     pub config_path: PathBuf,
     pub file: AgentConfigFile,
+    /// Non-fatal configuration notices (deprecated names, settings without
+    /// effect). Collected rather than logged, because configuration is
+    /// resolved before the tracing subscriber exists: `main` prints them to
+    /// stderr, where a log at that point would be silently dropped.
+    pub warnings: Vec<String>,
 }
 
 impl Settings {
@@ -259,7 +267,9 @@ impl Settings {
     }
 
     pub fn resolve(env: &dyn Env, config_path: PathBuf, file: AgentConfigFile) -> Result<Self, ConfigError> {
-        let env = &Renamed::new(env)?;
+        let renamed = Renamed::new(env)?;
+        let mut warnings = renamed.warnings.clone();
+        let env = &renamed;
         let bind_address = string_or(env, "AGENT_BIND_ADDRESS", "0.0.0.0:8000")
             .parse()
             .map_err(|_| invalid("AGENT_BIND_ADDRESS", "not a socket address"))?;
@@ -286,9 +296,10 @@ impl Settings {
             // Accepted for configuration parity only. Every interaction this
             // service creates has an owner by construction, so there is no
             // "unowned" case for a non-strict mode to allow through.
-            tracing::warn!(
-                "HITL_STRICT_INTERACTION_OWNERSHIP=false has no effect: interaction \
-                 ownership is always enforced by this agent"
+            warnings.push(
+                "HITL_STRICT_INTERACTION_OWNERSHIP=false has no effect: interaction ownership is always \
+                 enforced by this agent"
+                    .to_string(),
             );
         }
 
@@ -340,6 +351,7 @@ impl Settings {
             build_commit: string_or(env, "AGENT_BUILD_COMMIT", "unknown"),
             config_path,
             file,
+            warnings,
         })
     }
 }
@@ -585,6 +597,11 @@ mod tests {
         legacy.remove("AGENT_API_KEY");
         let settings = Settings::resolve(&legacy, "c".into(), file()).unwrap();
         assert_eq!(settings.gateway_api_key, "legacy-key");
+        assert_eq!(settings.warnings.len(), 3, "{:?}", settings.warnings);
+        assert!(
+            settings.warnings[0].contains("NAT_GATEWAY_API_KEY is deprecated")
+                && settings.warnings[0].contains("AGENT_API_KEY")
+        );
         assert!(!settings.telemetry.capture_content);
         assert_eq!(settings.telemetry.content_max_chars, 1000);
 
@@ -593,6 +610,16 @@ mod tests {
         let settings = Settings::resolve(&both, "c".into(), file()).unwrap();
         assert_eq!(settings.gateway_api_key, "gateway-key");
         assert!(!settings.telemetry.capture_content);
+        assert!(settings.warnings.is_empty(), "an alias that was not used is not reported: {:?}", settings.warnings);
+    }
+
+    #[test]
+    fn non_fatal_notices_are_collected_not_logged_before_telemetry_exists() {
+        assert!(Settings::resolve(&env(&[]), "c".into(), file()).unwrap().warnings.is_empty());
+        let lax =
+            Settings::resolve(&env(&[("HITL_STRICT_INTERACTION_OWNERSHIP", "false")]), "c".into(), file()).unwrap();
+        assert_eq!(lax.warnings.len(), 1);
+        assert!(lax.warnings[0].starts_with("HITL_STRICT_INTERACTION_OWNERSHIP=false has no effect"));
     }
 
     #[test]

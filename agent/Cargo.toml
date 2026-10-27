@@ -19,7 +19,7 @@ path = "src/main.rs"
 # service is written against. Rig in particular reshapes its API between minor
 # releases (0.44 split the agent runtime into `rig-agent` and MCP into
 # `rig-rmcp`), so a floating requirement would be an undocumented assumption.
-# Upgrading any of these is a deliberate change: see docs/RUST-BRANCH-MAINTENANCE.md.
+# Upgrading any of these is a deliberate change: see docs/AGENT-INTERNALS.md#upgrading-rig.
 [dependencies]
 rig-core = { version = "=0.44.0", default-features = false, features = ["reqwest", "rustls"] }
 rig-agent = { version = "=0.44.0", default-features = false }

@@ -148,7 +148,9 @@ pub fn prior_assistant_text(history: &[Turn]) -> String {
 }
 
 /// The classifier's verdict, parsed exactly as NeMo Guardrails 0.21's
-/// `is_content_safe` parses it (`nemoguardrails/llm/output_parsers.py`):
+/// `is_content_safe` parsed it for the retired NAT agent
+/// (`nemoguardrails/llm/output_parsers.py`); NeMo Guardrails is not a
+/// dependency of this agent, only the parsing rule was kept:
 /// lower-case, collapse every run of non-word characters to one space, keep
 /// the first two space-separated tokens, and test `safe`, `unsafe`, `yes`,
 /// `no` **in that order**. Anything unrecognised is unsafe.

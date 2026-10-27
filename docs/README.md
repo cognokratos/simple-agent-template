@@ -53,7 +53,7 @@ Optional, after the LEARN path.
 | [ARCHITECTURE.md](ARCHITECTURE.md) | The request path, trust boundaries, network segmentation, where the model is and is not trusted |
 | [SECURITY.md](SECURITY.md) | Each control, why it exists, and how to check it |
 | [CONFIGURATION.md](CONFIGURATION.md) | Every setting |
-| [GUARDRAILS.md](GUARDRAILS.md) | Input and output rails, and what the pinned Guardrails release actually does |
+| [GUARDRAILS.md](GUARDRAILS.md) | The agent's input, tool and output policy: deterministic patterns and a fail-closed self-check on input, `ToolPolicy` on every proposed call, streaming secret blocking across chunk boundaries, and deterministic PII masking (historical NeMo Guardrails behaviour is in [FRAMEWORK-MIGRATION.md](FRAMEWORK-MIGRATION.md)) |
 | [OBSERVABILITY.md](OBSERVABILITY.md) | The trace pipeline, content capture policy, and what redaction does not cover |
 | [EVALUATION.md](EVALUATION.md) | The suites, the scoring methodology, and provenance |
 | [APPROVALS.md](APPROVALS.md) | The optional human-approval boundary |
