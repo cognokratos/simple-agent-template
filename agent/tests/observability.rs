@@ -108,6 +108,10 @@ async fn a_request_is_one_trace_covering_policy_model_tools_and_output() {
     // Correlation and readable content on the root.
     assert_eq!(attribute(root, "request.id").as_deref(), Some("12121212-1212-4121-8121-121212121212"));
     assert_eq!(attribute(root, "agent.runtime").as_deref(), Some("rig-rust"));
+    assert_eq!(attribute(root, "openinference.span.kind").as_deref(), Some("AGENT"));
+    // The deterministic tool policy reads as a guardrail in OpenInference terms.
+    let policy = in_trace.iter().find(|s| s.name == "tool.policy").expect("tool.policy span");
+    assert_eq!(attribute(policy, "openinference.span.kind").as_deref(), Some("GUARDRAIL"));
     assert_eq!(attribute(root, "input.value").as_deref(), Some("Show me ticket TKT-1001"));
     assert_eq!(attribute(root, "output.value").as_deref(), Some("TKT-1001 is medium."));
     assert_eq!(attribute(root, "agent.execution.state").as_deref(), Some("completed"));

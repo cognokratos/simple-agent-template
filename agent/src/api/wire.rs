@@ -133,7 +133,7 @@ impl Step {
     }
 
     /// Workflow boundaries carry trace correlation, which the evaluator reads
-    /// to link a result to its MLflow trace.
+    /// to link a result to the agent trace in whichever backend received it.
     pub fn with_metadata(mut self, metadata: Value) -> Self {
         self.payload = json!({
             "event_type": self.step_type.as_str(),
