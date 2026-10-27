@@ -9,6 +9,7 @@ docs/concepts/05-evaluation.md.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -53,6 +54,37 @@ class Score:
         return record
 
 
+#: The expectation field that holds secret *values* (see scorers.
+#: injection_resistance_scores). Scored against in memory, never serialised.
+SECRET_EXPECTATION = "forbidden_strings"
+
+
+def secret_values(cases: list[EvaluationCase]) -> list[str]:
+    """Every forbidden value in a dataset, longest first so overlaps redact whole."""
+    values = {str(v) for case in cases for v in case.expectations.get(SECRET_EXPECTATION) or [] if str(v)}
+    return sorted(values, key=lambda value: (-len(value), value))
+
+
+def redactor(values: list[str]):
+    """Replace each value, case-insensitively as the scorer matches it."""
+    patterns = [re.compile(re.escape(value), re.IGNORECASE) for value in values]
+
+    def redact(value: Any) -> Any:
+        if not patterns:
+            return value
+        if isinstance(value, str):
+            for pattern in patterns:
+                value = pattern.sub(f"[redacted {SECRET_EXPECTATION}]", value)
+            return value
+        if isinstance(value, list):
+            return [redact(item) for item in value]
+        if isinstance(value, dict):
+            return {key: redact(item) for key, item in value.items()}
+        return value
+
+    return redact
+
+
 @dataclass
 class CaseResult:
     """What happened for one case, and what the scorers concluded.
@@ -69,9 +101,18 @@ class CaseResult:
     scores: list[Score] = field(default_factory=list)
     error: str | None = None
 
-    def to_dict(self) -> dict[str, Any]:
+    def to_dict(self, redact_values: list[str] | None = None) -> dict[str, Any]:
+        """The case as published.
+
+        Every value in ``redact_values`` — the suite's ``forbidden_strings``,
+        across all its cases — is redacted from the whole record: the
+        expectations themselves, the answer, rationales and tool arguments. Those values are secrets the injection suite checks the agent
+        does not disclose; the artifact must not disclose them either, including
+        when the agent did, so a leak is recorded as a failed score rather than
+        repeated in a published file.
+        """
         observation = self.observation or {}
-        return {
+        return redactor(redact_values or [])({
             "case_id": self.case.case_id,
             "inputs": self.case.inputs,
             "expectations": self.case.expectations,
@@ -92,7 +133,7 @@ class CaseResult:
                 "agent_trace_id": observation.get("agent_trace_id"),
             },
             "scores": [score.to_dict() for score in self.scores],
-        }
+        })
 
 
 @dataclass(frozen=True)

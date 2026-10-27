@@ -20,7 +20,7 @@ from typing import Any, Callable
 
 from evaluation import provenance as provenance_module
 from evaluation.config import SuiteConfig
-from evaluation.domain import RESULT_SCHEMA_VERSION, CaseResult, EvaluationCase, GateResult, Score
+from evaluation.domain import RESULT_SCHEMA_VERSION, CaseResult, EvaluationCase, GateResult, Score, secret_values
 from evaluation.scorers import SCORERS
 
 #: ``invoke(**case.inputs) -> observation``. The live client in production; a
@@ -197,7 +197,9 @@ def evaluate_suite(
             "scorers": [scorer.__name__ for scorer in SCORERS[config.key]],
             "aggregation": "mean of float-cast score values per name, over evaluated cases",
         },
-        "cases": [result.to_dict() for result in case_results],
+        # Secret values from the dataset are redacted from every case; see
+        # CaseResult.to_dict.
+        "cases": [result.to_dict(secret_values(cases)) for result in case_results],
         # Filled in afterwards, by whichever reporters ran. Never read back.
         "reporting": {},
     }

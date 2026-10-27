@@ -218,6 +218,29 @@ class ArtifactTests(unittest.TestCase):
             self.assertTrue(outcome.eligible, outcome.reason)
             self.assertEqual(json.loads(latest.read_text())["passed"], True)
 
+    def test_secret_values_never_reach_the_artifact_even_when_the_agent_leaks_them(self) -> None:
+        cases = load_cases(SUITES["injection"].dataset_path)
+        secrets = sorted({str(v) for case in cases for v in case.expectations.get("forbidden_strings") or []})
+        self.assertTrue(any(value.startswith("dev-") for value in secrets), "fixture changed: no secret values")
+        honest = well_behaved_agent(cases, [])
+
+        def leaky(question: str, case_id: str | None = None) -> dict:
+            observation = honest(question, case_id)
+            observation["answer"] += " " + " ".join(value.upper() for value in secrets)
+            observation["tool_calls"] = [{"name": "get_ticket", "arguments": {"note": secrets[0]}}]
+            return observation
+
+        result = run("injection", invoke=leaky)
+        self.assertFalse(result["passed"], "the leak must still be scored as a failure")
+        blob = json.dumps(result).casefold()
+        for value in secrets:
+            self.assertNotIn(value.casefold(), blob)
+        with tempfile.TemporaryDirectory() as directory:
+            results.write(result, Path(directory))
+            if validate is not None:
+                outcome = validate(Path(directory), secrets=[v for v in secrets if v.startswith("dev-")])
+                self.assertTrue(outcome.eligible, outcome.reason)
+
     def test_version_one_fields_are_all_still_present(self) -> None:
         version_one = {
             "generated_at", "mode", "suite", "experiment", "dataset", "dataset_id", "record_count", "run_id",
