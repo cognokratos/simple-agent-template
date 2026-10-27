@@ -13,9 +13,7 @@ name: CI
 
 on:
   push:
-    # rust-agent is a long-lived alternative implementation branch
-    # (docs/RUST-BRANCH-MAINTENANCE.md); it is checked on every push too.
-    branches: ["main", "rust-agent"]
+    branches: ["main"]
   pull_request:
   workflow_dispatch:
 
@@ -30,20 +28,6 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  docs-parity:
-    # Documentation lives on main only (docs/RUST-BRANCH-MAINTENANCE.md):
-    # README.md and docs/ on rust-agent must be byte-identical to origin/main.
-    name: Documentation identical to main
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-      - name: Fetch main
-        run: git fetch --no-tags origin +refs/heads/main:refs/remotes/origin/main
-      - name: README.md and docs/ match origin/main
-        run: python3 scripts/verify_docs_parity.py --ref origin/main
-
   python:
     name: Python and source wiring
     runs-on: ubuntu-latest
@@ -89,7 +73,6 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # agent/ is the Rig-based Rust agent on the rust-agent branch.
         crate: [mcp-server, gateway, agent]
     steps:
       - uses: actions/checkout@v4
@@ -112,13 +95,13 @@ jobs:
 
       - name: Clippy
         working-directory: ${{ matrix.crate }}
-        run: cargo clippy --all-targets --all-features -- -D warnings
+        run: cargo clippy --locked --all-targets --all-features -- -D warnings
 
       - name: Tests
         working-directory: ${{ matrix.crate }}
-        run: cargo test
+        run: cargo test --locked
 
-      # Both lockfiles are committed. A build that has to resolve dependencies
+      # Every lockfile is committed. A build that has to resolve dependencies
       # afresh is not the build that was reviewed.
       - name: The lockfile is committed and current
         working-directory: ${{ matrix.crate }}
@@ -146,14 +129,14 @@ jobs:
         working-directory: ui
         run: npm run typecheck
 
-      # The streaming contract: the agent (NAT on `main`, Rig on rust-agent)
-      # sends assistant text as `data: {"value": ...}`
-      # and many single chunks are valid JSON scalars. Re-parsing them changes
-      # their type and the consumer silently drops them, so every number and
-      # boolean vanishes from the answer. Cheap to check, invisible when broken.
-      - name: NAT SSE wire contract
+      # The streaming contract (docs/AGENT-SERVICE-CONTRACT.md): the agent
+      # sends assistant text as `data: {"value": ...}` and many single chunks
+      # are valid JSON scalars. Re-parsing them changes their type and the
+      # consumer silently drops them, so every number and boolean vanishes
+      # from the answer. Cheap to check, invisible when broken.
+      - name: Agent SSE wire contract
         working-directory: ui
-        run: npm run verify:nat-wire
+        run: npm run verify:agent-wire
 
       - name: Build
         working-directory: ui
@@ -182,7 +165,7 @@ jobs:
 
       # Asserts the east-west topology from the *resolved* configuration: which
       # services publish host ports, which networks each one joins, and that the
-      # database, MCP and NAT are not reachable from the edge. No containers
+      # database, MCP and the agent are not reachable from the edge. No containers
       # start. Every profile is rendered, because `docker compose config` omits
       # profile-gated services and would otherwise skip what it claims to check.
       - name: Security topology of the resolved Compose configuration
