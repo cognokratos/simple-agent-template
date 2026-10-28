@@ -211,12 +211,24 @@ def _config_prompts(path: Path | None = None) -> dict[str, Any]:
         rails_digest = _canonical_json_sha256(rust_rails)
     else:
         rails_digest = None
+    workflow = config.get("workflow") or {}
     return {
         "available": isinstance(system_prompt, str),
         "system_prompt": system_prompt,
         "rail_prompts": rails,
         "prompt_sha256": _sha256(system_prompt) if isinstance(system_prompt, str) else None,
         "guardrails_prompts_sha256": rails_digest,
+        # One digest per rail prompt, the same canonical form the aggregate uses
+        # for each entry, so a single rail can be identified (and mirrored)
+        # on its own. Only for the Rust layout, whose entries carry a `task`.
+        "rail_prompt_sha256": {
+            str(entry["task"]): _canonical_json_sha256(entry)
+            for entry in (rust_rails or [])
+            if isinstance(entry, dict) and entry.get("task")
+        },
+        # Invocation settings a mirrored prompt version can carry.
+        "temperature": workflow.get("temperature"),
+        "max_tokens": workflow.get("max_tokens"),
     }
 
 
@@ -230,13 +242,16 @@ def prompt_digests(config: dict[str, Any]) -> list[dict[str, Any]]:
         return []
     prompts = [{"name": PROMPT_NAME, "sha256": config.get("prompt_sha256"), "source": "agent/config.yml"}]
     if config.get("rail_prompts"):
-        prompts.append(
-            {
-                "name": RAIL_PROMPT_NAME,
-                "sha256": config.get("guardrails_prompts_sha256"),
-                "source": "agent/config.yml",
-            }
-        )
+        entry: dict[str, Any] = {
+            "name": RAIL_PROMPT_NAME,
+            "sha256": config.get("guardrails_prompts_sha256"),
+            "source": "agent/config.yml",
+        }
+        if config.get("rail_prompt_sha256"):
+            entry["tasks"] = [
+                {"task": task, "sha256": digest} for task, digest in sorted(config["rail_prompt_sha256"].items())
+            ]
+        prompts.append(entry)
     return prompts
 
 
@@ -310,6 +325,12 @@ def flat_tags(record: dict[str, Any]) -> dict[str, str]:
         "provenance.agent.guard_model": str(agent.get("guard_model", "")),
         "provenance.agent.prompt_sha256": str(agent.get("prompt_sha256") or ""),
         "provenance.agent.config_sha256": str(agent.get("config_sha256") or ""),
+        "provenance.agent.rendered_prompt_sha256": str(agent.get("rendered_prompt_sha256") or ""),
+        "provenance.agent.tool_catalog_sha256": str(agent.get("tool_catalog_sha256") or ""),
+        "provenance.agent.guardrails_prompts_sha256": str(agent.get("guardrails_prompts_sha256") or ""),
+        "provenance.agent.provider": str(agent.get("provider") or ""),
+        "provenance.agent.endpoint_sha256": str(agent.get("endpoint_sha256") or ""),
+        "provenance.agent.revision_sha256": str(agent.get("agent_revision_sha256") or ""),
         "provenance.agent.tool_count": str(len(agent.get("tools_exposed") or [])),
         "provenance.harness.git_commit": str(harness.get("git_commit", "unknown")),
         # "unknown" rather than "false" when no git tree was observable, so a tag
@@ -336,11 +357,15 @@ def comparison_conditions(
 ) -> dict[str, Any]:
     """What must match for two results to measure the same thing.
 
-    Equal ``sha256`` means the same cases, scorer code, gate, agent build, model
-    and prompts. Unequal, diff ``fields`` to see which one moved. ``provider`` is
-    ``None`` because the agent's ``/version`` does not report its endpoint; a
-    field that was not observed is ``None`` rather than guessed, and two ``None``
-    values are not evidence of a match.
+    Equal ``sha256`` means the same cases, scorer code, gate and agent revision
+    — build, configuration, rendered prompt, tool catalogue, models, reasoning
+    settings and model endpoint. Unequal, diff ``fields`` to see which one moved.
+    ``agent_revision_sha256`` is the agent's own digest of its behavioural
+    identity; the individual fields are kept beside it so a difference can be
+    attributed. ``endpoint_sha256`` makes the same model name served by two
+    different endpoints two different conditions; ``provider`` is ``None``
+    unless ``LLM_PROVIDER`` names it. A field that was not observed is ``None``
+    rather than guessed, and two ``None`` values are not evidence of a match.
     """
     agent = record.get("agent", {})
     harness = record.get("harness", {})
@@ -352,12 +377,19 @@ def comparison_conditions(
         "harness_dirty": harness.get("dirty"),
         "agent_runtime": _known(agent_runtime(agent)),
         "agent_build_commit": _known(agent.get("build_commit")),
+        "agent_revision_sha256": _known(agent.get("agent_revision_sha256")),
         "provider": _known(agent.get("provider")),
+        "endpoint_sha256": _known(agent.get("endpoint_sha256")),
+        "guard_endpoint_sha256": _known(agent.get("guard_endpoint_sha256")),
         "model": _known(agent.get("model")),
         "guard_model": _known(agent.get("guard_model")),
         "reasoning_effort": agent.get("reasoning_effort") if agent.get("available") else None,
+        "guard_reasoning_effort": agent.get("guard_reasoning_effort") if agent.get("available") else None,
         "prompt_sha256": _known(agent.get("prompt_sha256")),
+        "rendered_prompt_sha256": _known(agent.get("rendered_prompt_sha256")),
+        "tool_catalog_sha256": _known(agent.get("tool_catalog_sha256")),
         "guardrails_prompts_sha256": _known(agent.get("guardrails_prompts_sha256")),
+        "behaviour_settings_sha256": _known(agent.get("behaviour_settings_sha256")),
         "config_sha256": _known(agent.get("config_sha256")),
     }
     unobserved = sorted(name for name, value in fields.items() if value is None)

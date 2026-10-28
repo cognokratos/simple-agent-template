@@ -231,6 +231,11 @@ class ConsistencyTests(unittest.TestCase):
             '[{"content":"Answer: é\\n","max_tokens":4,"task":"self_check_input"}]'
         )
         self.assertEqual(prompts["guardrails_prompts_sha256"], expected)
+        # Per task: the same canonical form, one entry.
+        self.assertEqual(
+            prompts["rail_prompt_sha256"],
+            {"self_check_input": provenance._sha256('{"content":"Answer: é\\n","max_tokens":4,"task":"self_check_input"}')},
+        )
 
     def test_an_unreachable_agent_is_not_reported_as_consistent(self) -> None:
         """A failed provenance fetch must never read as a clean run."""
@@ -252,6 +257,18 @@ class ConsistencyTests(unittest.TestCase):
         self.assertEqual([entry["sha256"] for entry in prompts], ["aa" * 32, "bb" * 32])
         self.assertTrue(all("version" not in entry for entry in prompts))
         self.assertEqual(provenance.prompt_digests({"available": False}), [])
+
+    def test_each_rail_prompt_has_its_own_digest(self) -> None:
+        prompts = provenance.prompt_digests(
+            {
+                "available": True,
+                "prompt_sha256": "aa" * 32,
+                "rail_prompts": [{"task": "t1"}, {"task": "t2"}],
+                "guardrails_prompts_sha256": "bb" * 32,
+                "rail_prompt_sha256": {"t2": "dd" * 32, "t1": "cc" * 32},
+            }
+        )
+        self.assertEqual(prompts[1]["tasks"], [{"task": "t1", "sha256": "cc" * 32}, {"task": "t2", "sha256": "dd" * 32}])
 
 
 class ComparisonConditionTests(unittest.TestCase):
@@ -292,8 +309,27 @@ class ComparisonConditionTests(unittest.TestCase):
         self.assertIsNone(conditions["fields"]["model"])
         self.assertIsNone(conditions["fields"]["agent_build_commit"])
         self.assertIn("model", conditions["unobserved"])
-        # The agent does not report its endpoint, so provider is always unobserved.
+        # No LLM_PROVIDER configured: the name is unobserved, never guessed.
         self.assertIn("provider", self._conditions(self.RECORD)["unobserved"])
+
+    def test_the_same_model_through_another_endpoint_is_another_condition(self) -> None:
+        local = {**self.RECORD, "agent": {**self.RECORD["agent"], "endpoint_sha256": "a" * 64}}
+        hosted = {**self.RECORD, "agent": {**self.RECORD["agent"], "endpoint_sha256": "b" * 64}}
+        self.assertNotEqual(self._conditions(local)["sha256"], self._conditions(hosted)["sha256"])
+        self.assertEqual(self._conditions(local)["fields"]["model"], self._conditions(hosted)["fields"]["model"])
+
+    def test_a_changed_tool_catalogue_or_rendered_prompt_is_another_condition(self) -> None:
+        base = self._conditions(self.RECORD)["sha256"]
+        for key in ("tool_catalog_sha256", "rendered_prompt_sha256", "agent_revision_sha256"):
+            changed = {**self.RECORD, "agent": {**self.RECORD["agent"], key: "f" * 64}}
+            self.assertNotEqual(base, self._conditions(changed)["sha256"], key)
+
+    def test_revision_identity_reaches_the_flat_tags(self) -> None:
+        agent = {**self.RECORD["agent"], "agent_revision_sha256": "r" * 64, "endpoint_sha256": "e" * 64}
+        tags = provenance.flat_tags({**self.RECORD, "agent": agent})
+        self.assertEqual(tags["provenance.agent.revision_sha256"], "r" * 64)
+        self.assertEqual(tags["provenance.agent.endpoint_sha256"], "e" * 64)
+        self.assertFalse(any("://" in value for value in tags.values()))
 
 
 if __name__ == "__main__":

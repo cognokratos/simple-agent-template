@@ -291,6 +291,11 @@ class FakePhoenix(BaseHTTPRequestHandler):
             name = parse_qs(url.query).get("name", [""])[0]
             matches = [d for d in state["datasets"].values() if d["name"] == name]
             return self._send(200, {"data": [{"id": d["id"], "name": d["name"]} for d in matches]})
+        if url.path == "/v1/prompts":
+            return self._send(200, {"data": [{"id": f"p-{n}", "name": n} for n in state["prompts"]], "next_cursor": None})
+        if url.path.startswith("/v1/prompts/") and url.path.endswith("/versions"):
+            name = url.path.split("/")[3]
+            return self._send(200, {"data": list(reversed(state["prompts"].get(name, []))), "next_cursor": None})
         if url.path.endswith("/examples"):
             dataset = state["datasets"][url.path.split("/")[3]]
             return self._send(200, {"data": {"examples": dataset["examples"]}})
@@ -301,6 +306,10 @@ class FakePhoenix(BaseHTTPRequestHandler):
         body = self._body()
         state = self.state
         state["requests"].append(url.path)
+        if url.path == "/v1/prompts":
+            version = dict(body["version"], id=f"v{sum(map(len, state['prompts'].values())) + 1}")
+            state["prompts"].setdefault(body["prompt"]["name"], []).append(version)
+            return self._send(200, {"data": version})
         if url.path == "/v1/datasets/upload":
             dataset_id = f"ds{len(state['datasets'])}"
             examples = [
@@ -336,6 +345,7 @@ def fake_phoenix(known_traces: set[str]):
         "evaluations": [],
         "annotations": [],
         "requests": [],
+        "prompts": {},
         "known_traces": known_traces,
     }
     server = ThreadingHTTPServer(("127.0.0.1", 0), FakePhoenix)
@@ -402,6 +412,111 @@ def fake_mlflow():
                 sys.modules.pop(name, None)
             else:
                 sys.modules[name] = previous
+
+
+PROMPT_CONFIG = {
+    "available": True,
+    "system_prompt": "You help.\nTools: {tools}\nNames: {tool_names}\n",
+    "prompt_sha256": "a" * 64,
+    "rail_prompts": [
+        {"task": "self_check_input", "content": "Classify: {{ user_input }}", "max_tokens": 4},
+        {"task": "self_check_output", "content": "Check: {{ bot_response }}", "max_tokens": 4},
+    ],
+    "guardrails_prompts_sha256": "b" * 64,
+    "rail_prompt_sha256": {"self_check_input": "c" * 64, "self_check_output": "d" * 64},
+    "temperature": 0.0,
+    "max_tokens": 4096,
+}
+
+
+def prompt_result(config: dict) -> dict:
+    """A result whose provenance recorded exactly this config's digests."""
+    return {
+        "provenance": {
+            "agent": {
+                "model": "qwen3:8b",
+                "guard_model": "qwen3:8b",
+                "reasoning_effort": "none",
+                "guard_reasoning_effort": "none",
+                "guard_temperature": 0.001,
+                "provider": "ollama",
+                "endpoint_sha256": "e" * 64,
+            },
+            "prompts": [
+                {"name": "agent-system-prompt", "sha256": config["prompt_sha256"]},
+                {
+                    "name": "agent-guardrail-input-rail",
+                    "sha256": config["guardrails_prompts_sha256"],
+                    "tasks": [{"task": t, "sha256": d} for t, d in sorted(config["rail_prompt_sha256"].items())],
+                },
+            ],
+        }
+    }
+
+
+class PhoenixPromptTests(unittest.TestCase):
+    def setUp(self) -> None:
+        from evaluation.reporting import phoenix_prompts
+
+        self.sync = phoenix_prompts.sync
+
+    def test_prompts_are_mirrored_individually_then_reused_not_duplicated(self) -> None:
+        with fake_phoenix(set()) as (url, phoenix):
+            request = PhoenixReporter(url)._request
+            first = self.sync(request, prompt_result(PROMPT_CONFIG), PROMPT_CONFIG)
+            second = self.sync(request, prompt_result(PROMPT_CONFIG), PROMPT_CONFIG)
+            prompts = phoenix["prompts"]
+        self.assertEqual(
+            set(prompts), {"agent-system-prompt", "agent-guardrail-self_check_input", "agent-guardrail-self_check_output"}
+        )
+        self.assertTrue(all(len(versions) == 1 for versions in prompts.values()), "a rerun created a duplicate")
+        self.assertEqual({entry["status"] for entry in first.values()}, {"created"})
+        self.assertEqual({entry["status"] for entry in second.values()}, {"reused"})
+        self.assertEqual(first["agent-system-prompt"]["version_id"], second["agent-system-prompt"]["version_id"])
+        self.assertEqual(first["agent-system-prompt"]["prompt_id"], "p-agent-system-prompt")
+
+        system = prompts["agent-system-prompt"][0]
+        self.assertEqual(system["template"]["messages"], [{"role": "system", "content": PROMPT_CONFIG["system_prompt"]}])
+        self.assertEqual(system["template_format"], "F_STRING")
+        self.assertEqual(system["model_provider"], "OLLAMA")
+        self.assertEqual(system["invocation_parameters"]["openai"], {"temperature": 0.0, "max_tokens": 4096, "reasoning_effort": "none"})
+        self.assertEqual(system["metadata"]["sha256"], "a" * 64)
+        self.assertEqual(system["metadata"]["source"], "agent/config.yml")
+        rail = prompts["agent-guardrail-self_check_input"][0]
+        self.assertEqual(rail["template"]["messages"], [{"role": "user", "content": "Classify: {{ user_input }}"}])
+        self.assertEqual(rail["template_format"], "MUSTACHE")
+        self.assertEqual(rail["metadata"]["task"], "self_check_input")
+        self.assertEqual(rail["metadata"]["guard_model"], "qwen3:8b")
+        self.assertEqual(rail["invocation_parameters"]["openai"]["max_tokens"], 4)
+        self.assertEqual(rail["invocation_parameters"]["openai"]["temperature"], 0.001)
+
+    def test_a_changed_prompt_creates_exactly_one_new_version(self) -> None:
+        changed = dict(PROMPT_CONFIG, system_prompt="You help more.\n{tools}", prompt_sha256="f" * 64)
+        with fake_phoenix(set()) as (url, phoenix):
+            request = PhoenixReporter(url)._request
+            self.sync(request, prompt_result(PROMPT_CONFIG), PROMPT_CONFIG)
+            outcome = self.sync(request, prompt_result(changed), changed)
+            self.sync(request, prompt_result(changed), changed)
+            prompts = phoenix["prompts"]
+        self.assertEqual(outcome["agent-system-prompt"]["status"], "created")
+        self.assertEqual(len(prompts["agent-system-prompt"]), 2)
+        self.assertEqual(len(prompts["agent-guardrail-self_check_input"]), 1, "an unchanged rail got a new version")
+
+    def test_nothing_is_mirrored_when_the_mounted_config_differs_from_the_evaluated_one(self) -> None:
+        drifted = dict(PROMPT_CONFIG, prompt_sha256="0" * 64, guardrails_prompts_sha256="1" * 64)
+        with fake_phoenix(set()) as (url, phoenix):
+            outcome = self.sync(PhoenixReporter(url)._request, prompt_result(PROMPT_CONFIG), drifted)
+            self.assertEqual(phoenix["prompts"], {})
+        self.assertEqual({entry["status"] for entry in outcome.values()}, {"skipped"})
+
+    def test_only_prompt_definitions_are_sent(self) -> None:
+        """No conversation, answer or user input reaches Prompt Management."""
+        result = prompt_result(PROMPT_CONFIG) | {"cases": [{"observation": {"answer": "SECRET-ANSWER"}, "inputs": {"question": "SECRET-QUESTION"}}]}
+        with fake_phoenix(set()) as (url, phoenix):
+            self.sync(PhoenixReporter(url)._request, result, PROMPT_CONFIG)
+            blob = json.dumps(phoenix["prompts"])
+        self.assertNotIn("SECRET-ANSWER", blob)
+        self.assertNotIn("SECRET-QUESTION", blob)
 
 
 class ReportingTests(unittest.TestCase):

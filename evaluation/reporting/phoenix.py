@@ -19,6 +19,10 @@ trace annotations
     The same scores attached to the agent's own trace for each case (the stream
     reports its W3C trace id), so a failing case opens straight onto the
     request that produced it.
+prompts
+    The source-controlled system and guardrail prompts, mirrored into Prompt
+    Management with their repository digests (``phoenix_prompts``). Reused,
+    never duplicated, while the text and settings are unchanged.
 
 Phoenix never receives the gate as something to decide: the experiment's
 metadata states the gate the repository already computed.
@@ -34,6 +38,7 @@ import urllib.request
 from typing import Any
 
 from evaluation import provenance
+from evaluation.reporting import phoenix_prompts
 
 
 def _score_result(score: dict[str, Any]) -> dict[str, Any]:
@@ -148,6 +153,7 @@ class PhoenixReporter:
         if not self.available():
             return {"status": "unavailable", "base_url": self.base_url}
 
+        prompts = self.sync_prompts(result)
         dataset, example_ids = self._dataset(result)
         gate = result.get("gate") or {}
         metadata = {
@@ -243,7 +249,15 @@ class PhoenixReporter:
             "evaluations": evaluations,
             "annotated_traces": annotated_traces,
             "missing_traces": missing_traces,
+            "prompts": prompts,
         }
+
+    def sync_prompts(self, result: dict[str, Any]) -> dict[str, Any]:
+        """Mirror the result's prompts; a failure is recorded, never raised."""
+        try:
+            return phoenix_prompts.sync(self._request, result)
+        except PhoenixError as error:
+            return {"error": str(error)}
 
     def _annotate_traces(self, annotations: list[dict[str, Any]]) -> tuple[int, int]:
         """Annotate each agent trace; tolerate one Phoenix has not received.

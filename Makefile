@@ -109,7 +109,7 @@ endif
 	debug-up debug-down ps status wait health logs logs-app logs-agent logs-ui logs-mcp \
 	logs-db logs-gateway logs-keycloak logs-phoenix logs-mlflow logs-otel logs-observability build \
 	dev-mlflow up-mlflow wait-mlflow open-phoenix traces-mlflow trace-test-mlflow reset-phoenix \
-	eval-mlflow eval-report eval-compare compose-profile-test \
+	eval-mlflow eval-report eval-compare sync-phoenix-prompts compose-profile-test \
 	rebuild-agent rebuild-ui rebuild-mcp rebuild-gateway verify-mcp fixtures \
 	print-provenance version static-check license-check package-license-check logs-inspector network-test eval-test-host \
 	verify-approvals verify-approvals-rust verify-llm-config agent-test agent-check \
@@ -589,6 +589,9 @@ eval-report: ## Publish existing result files to reporters without calling the a
 	$(if $(strip $(EVAL_REPORTERS)),,$(error set EVAL_REPORTERS, e.g. EVAL_REPORTERS=mlflow))
 	$(if $(filter mlflow,$(subst $(comma), ,$(EVAL_REPORTERS))),$(MLFLOW_COMPOSE) $(EVAL_RUN) --no-deps evaluator-mlflow,$(EVAL_COMPOSE) $(EVAL_RUN) --no-deps evaluator) \
 		python -m evaluation report $(addprefix --reporter ,$(subst $(comma), ,$(EVAL_REPORTERS))) $(or $(RESULTS),$(wildcard evaluation/results/*-latest.json))
+
+sync-phoenix-prompts: ## Mirror agent/config.yml's system and guardrail prompts into Phoenix (idempotent; no evaluation)
+	$(EVAL_COMPOSE) $(EVAL_RUN) evaluator python -m evaluation sync-prompts
 
 eval-compare: ## Compare two result files: conditions, metrics, latency, moved cases (BASELINE=... CANDIDATE=...)
 	python3 -m evaluation compare "$(BASELINE)" "$(CANDIDATE)"

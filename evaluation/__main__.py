@@ -4,6 +4,8 @@
              then publish the same result to any configured reporters
     report   publish an existing result file to reporters, without calling the agent
     compare  diff two result files: conditions, metrics, latency and moved cases
+    sync-prompts
+             mirror agent/config.yml's prompts into Phoenix Prompt Management
     list     show the configured suites
 
 Exit status of ``run``: 0 when every gate passed (or ``--allow-failures``), 1
@@ -69,6 +71,7 @@ def build_parser() -> argparse.ArgumentParser:
     compare.add_argument("baseline", type=Path)
     compare.add_argument("candidate", type=Path)
 
+    subparsers.add_parser("sync-prompts", help="Mirror the repository's prompts into Phoenix (no evaluation)")
     subparsers.add_parser("list", help="Show configured suites and their gates")
     return parser
 
@@ -84,6 +87,21 @@ def main(argv: list[str] | None = None) -> int:
                 f"experiment={config.experiment_name!r} dataset={config.dataset_name!r}"
             )
         return 0
+
+    if args.command == "sync-prompts":
+        from evaluation import provenance
+        from evaluation.reporting.phoenix import PhoenixReporter
+
+        reporter = PhoenixReporter()
+        if not reporter.available():
+            print(f"Phoenix is not reachable at {reporter.base_url}.")
+            return 2
+        # The mounted file is both the source and the reference here: there is
+        # no evaluated digest to compare against, only the repository's own.
+        outcome = reporter.sync_prompts({"provenance": provenance.collect()})
+        for name, entry in outcome.items():
+            print(f"{name}: {entry.get('status', 'error')} {entry.get('version_id') or entry.get('reason') or entry.get('error') or ''}")
+        return 0 if outcome and all(entry.get("status") in {"created", "reused"} for entry in outcome.values()) else 1
 
     if args.command == "compare":
         print(json.dumps(results.compare(results.read(args.baseline), results.read(args.candidate)), indent=2))

@@ -131,11 +131,21 @@ Equating those would let a tree nobody inspected claim a verified checkout.
 the *output* of a run: counting them would make every run after the first report
 a dirty tree on account of the previous run's artifacts.
 
-`/version` reports digests and model *names*, never prompt text and never a
-credential. `scripts/verify_security_sources.py` asserts that. It does not
-report the provider endpoint, so the result records `provider` as `null`
-rather than guessing one. Absence is always explicit: an unobserved field is
-`null` and listed under `conditions.unobserved`.
+`/version` reports digests and model *names*, never prompt text, a credential
+or the endpoint URL. `scripts/verify_security_sources.py` asserts that. The
+endpoint is reported as `endpoint_sha256`, a fingerprint, so the same model
+name evaluated through a different endpoint is a different condition; the
+provider *name* is recorded only when `LLM_PROVIDER` sets it, and is `null`
+otherwise rather than guessed. Absence is always explicit: an unobserved field
+is `null` and listed under `conditions.unobserved`.
+
+`conditions` carries the agent's `agent_revision_sha256` — its digest of its
+own complete behavioural identity — beside the individual fields it covers
+(`rendered_prompt_sha256`, `tool_catalog_sha256`, `endpoint_sha256`, models,
+reasoning settings, …) so a difference can be attributed. Dataset and gate
+settings are in `conditions` but deliberately not in the agent revision; see
+[OBSERVABILITY.md](OBSERVABILITY.md#agent-revision). The guardrail-prompt
+entry under `provenance.prompts` also lists one digest per rail `task`.
 
 The optional MLflow reporter additionally registers the prompt texts in
 MLflow's prompt registry and links the version to its run — only when the
@@ -266,7 +276,7 @@ fail on any red suite). It ignores `reporting` on purpose.
 
 | Reporter | Default | What it receives |
 | --- | --- | --- |
-| `phoenix` | yes (`make eval`) | the dataset revision mirrored once per digest; one experiment per run, its runs carrying the observed answer and tool calls; every score as a `CODE` evaluation with its rationale; the same scores annotated on the agent's own trace for each case, so a failing case opens onto the request that produced it. Standard-library HTTP; no Phoenix package is installed |
+| `phoenix` | yes (`make eval`) | the source-controlled prompts mirrored into Prompt Management (below); the dataset revision mirrored once per digest; one experiment per run, its runs carrying the observed answer and tool calls; every score as a `CODE` evaluation with its rationale; the same scores annotated on the agent's own trace for each case, so a failing case opens onto the request that produced it. Standard-library HTTP; no Phoenix package is installed |
 | `mlflow` | no (`make eval-mlflow`) | a run tagged with the flattened provenance; the recorded scores *replayed* as per-case assessments through `mlflow.genai.evaluate` on static outputs (no `predict_fn`, so the agent is not called again); latency and gate metrics; the full result as an artifact; prompt-registry linking |
 
 Reporting is selected with `EVALUATION_REPORTERS` (or `EVAL_REPORTERS=` on
@@ -278,6 +288,23 @@ existing result file to a reporter without calling the agent at all. The MLflow
 reporter compares MLflow's own means of the replayed scores with the
 repository's and records `metrics_agree`; a disagreement would be an adapter
 bug, and the repository's figure stands.
+
+**Prompts in Phoenix.** The Phoenix reporter mirrors the agent system prompt
+(`agent-system-prompt`, an F-string template with `{tools}`/`{tool_names}`) and
+each guardrail prompt as its own prompt named after its task
+(`agent-guardrail-self_check_input`, a Mustache template with
+`{{ user_input }}`). Each version records the model (guard model for rails),
+temperature, `max_tokens` and reasoning effort as invocation parameters, and in
+its metadata the repository SHA-256, source path and key, task, provider and
+endpoint fingerprint. Only prompt *definitions* from `agent/config.yml` are
+sent — no conversation, user input or model response — and only when the
+mounted file still digests to what the result's provenance recorded, the rule
+the MLflow reporter follows. A version is reused when its `version_key`
+(content SHA-256 plus model and invocation settings) already exists, so
+re-running an evaluation creates no duplicates and a changed prompt creates
+exactly one new version. Phoenix prompt and version ids are recorded under
+`reporting.phoenix.prompts` only; the repository SHA-256 stays the portable
+identifier. `make sync-phoenix-prompts` mirrors them without an evaluation.
 
 ## Running it
 
