@@ -51,7 +51,6 @@ fn record_decision(tool: &str, decision: &str, reason: Option<&str>) {
     // beside the tool span it led to (or did not).
     let span = tracing::info_span!(
         "tool.policy",
-        openinference.span.kind = "GUARDRAIL",
         tool.name = tool,
         policy.decision = decision,
         policy.reason = reason.unwrap_or(""),

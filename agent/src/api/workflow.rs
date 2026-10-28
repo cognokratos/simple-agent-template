@@ -151,6 +151,7 @@ pub async fn workflow_full(
     if telemetry.export_user_id {
         root.record("enduser.pseudonym", scope.caller().pseudonym().as_str());
     }
+    crate::telemetry::record_identity(&root, &services.trace_identity);
     crate::telemetry::adopt_parent(&root, &headers);
 
     let task = tokio::spawn(execution::run(scope, conversation).instrument(root));

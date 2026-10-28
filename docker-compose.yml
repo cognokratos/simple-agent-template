@@ -336,6 +336,9 @@ services:
       LLM_API_KEY: ${LLM_API_KEY:-ollama}
       LLM_MODEL: ${LLM_MODEL:-qwen3:8b}
       LLM_GUARD_MODEL: ${LLM_GUARD_MODEL:-qwen3:8b}
+      # Optional provider name (e.g. `ollama`, `openai`), reported in /version
+      # and on traces. The endpoint itself is reported only as a fingerprint.
+      LLM_PROVIDER: ${LLM_PROVIDER:-}
       # `-` not `:-`, so an explicitly empty value stays empty and the parameter
       # is omitted entirely. A hosted provider that rejects reasoning_effort
       # needs it absent, not set to "none" or to "".

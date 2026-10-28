@@ -34,6 +34,8 @@ pub struct Services {
     /// The system prompt with `{tools}` and `{tool_names}` filled in.
     pub system_prompt: String,
     pub provenance: Value,
+    /// The sanitized subset of `provenance` stamped on every root span.
+    pub trace_identity: Vec<(&'static str, String)>,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -81,7 +83,9 @@ impl Services {
             OutputPolicy::new(&output.secret_patterns, &output.pii_entities, settings.guardrails.max_answer_chars)?;
 
         let system_prompt = render_system_prompt(&settings, &mcp);
-        let provenance = provenance::describe(&settings, &tool_policy);
+        let catalog = model_tool_catalog(&settings, &mcp);
+        let provenance = provenance::describe(&settings, &tool_policy, &system_prompt, &catalog);
+        let trace_identity = provenance::trace_identity(&provenance);
         let models = Models { agent: chat_model(&settings.agent), guard: chat_model(&settings.guard) };
 
         Ok(Arc::new(Self {
@@ -94,6 +98,7 @@ impl Services {
             http: reqwest::Client::builder().connect_timeout(Duration::from_secs(5)).build().unwrap_or_default(),
             system_prompt,
             provenance,
+            trace_identity,
         }))
     }
 }
@@ -108,4 +113,23 @@ pub fn render_system_prompt(settings: &Settings, mcp: &McpCatalog) -> String {
     let lines = tools.iter().map(|(name, description)| format!("{name}: {description}")).collect::<Vec<_>>().join("\n");
     let names = tools.iter().map(|(name, _)| name.as_str()).collect::<Vec<_>>().join(", ");
     settings.file.workflow.system_prompt.replace("{tools}", &lines).replace("{tool_names}", &names)
+}
+
+/// Every tool exactly as the model is offered it (see `agent::builder`), with
+/// the effect the deterministic policy assigns it. Digested into
+/// `tool_catalog_sha256`.
+pub fn model_tool_catalog(settings: &Settings, mcp: &McpCatalog) -> Value {
+    let mut entries: Vec<(String, String, Value, &'static str)> = mcp
+        .tools()
+        .map(|tool| (tool.name.clone(), tool.description.clone(), tool.parameters.clone(), "read_only"))
+        .collect();
+    if settings.approval.is_some() {
+        entries.push((
+            approval::TOOL_NAME.into(),
+            approval::TOOL_DESCRIPTION.into(),
+            approval::proposal_parameters(),
+            "mutation_requiring_approval",
+        ));
+    }
+    provenance::tool_catalog(entries)
 }

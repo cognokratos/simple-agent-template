@@ -283,6 +283,13 @@ def main() -> None:
         f"provenance reads credential environment variable(s): {sorted(set(credential_reads))}",
     )
     require('"prompt_sha256"' in provenance, "provenance reports no prompt digest")
+    # The model endpoint is reported as a fingerprint, never as a URL: it can
+    # name internal hosts, and a URL may embed a credential.
+    require('"endpoint_sha256": endpoint_sha256(' in provenance, "provenance reports no endpoint fingerprint")
+    require(
+        '"base_url"' not in provenance and '"llm_base_url"' not in provenance.lower(),
+        "provenance may expose the model endpoint URL",
+    )
     require('"agent_runtime": AGENT_RUNTIME' in provenance, "provenance does not name the agent runtime")
     require(
         '"system_prompt":' not in provenance and '"prompt":' not in provenance,

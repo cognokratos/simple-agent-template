@@ -141,13 +141,20 @@ had to add these checks.
 
 ## `GET /version`
 
-Provenance, digests only — never prompt text or a credential. Fields:
-`available`, `agent_runtime`, `agent_framework`, `agent_framework_version`,
-`mcp_sdk`, `mcp_sdk_version`, `agent_version`, `model`, `guard_model`,
-`reasoning_effort`, `guard_reasoning_effort`, `build_commit`, `config_path`,
-`config_sha256`, `prompt_sha256`, `guardrails_prompts_sha256`,
-`guardrails_prompts_digest: "canonical-json"` and `tools_exposed`
-([`telemetry/provenance.rs`](../agent/src/telemetry/provenance.rs)).
+Provenance, digests only — never prompt text, a credential or the model
+endpoint URL. Fields: `available`, `agent_name`, `agent_runtime`,
+`agent_framework`, `agent_framework_version`, `mcp_sdk`, `mcp_sdk_version`,
+`agent_version`, `service_version`, `model`, `guard_model`,
+`reasoning_effort`, `guard_reasoning_effort`, `temperature`, `max_tokens`,
+`guard_temperature`, `provider` (`LLM_PROVIDER`, or `null`),
+`endpoint_sha256`, `guard_endpoint_sha256`, `build_commit`, `config_path`,
+`config_sha256`, `prompt_sha256`, `rendered_prompt_sha256`,
+`tool_catalog_sha256`, `tool_catalog_digest: "canonical-json"`,
+`guardrails_prompts_sha256`, `guardrails_prompts_digest: "canonical-json"`,
+`behaviour_settings_sha256`, `agent_revision_sha256`, `agent_revision_fields`
+and `tools_exposed` ([`telemetry/provenance.rs`](../agent/src/telemetry/provenance.rs)).
+What each digest covers, and what `agent_revision_sha256` includes, is in
+[OBSERVABILITY.md](OBSERVABILITY.md#agent-revision).
 
 The Rust agent reports `agent_runtime: "rig-rust"`, `agent_framework: "rig"`,
 `mcp_sdk: "rmcp"`. The evaluator records the runtime as

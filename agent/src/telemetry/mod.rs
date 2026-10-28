@@ -78,6 +78,9 @@ pub fn init(settings: &TelemetrySettings) -> TelemetryGuard {
         .with_service_name(settings.service_name.clone())
         .with_attributes([
             KeyValue::new("service.namespace", "rig-rust-agent"),
+            // The deployed build. The service name (and so a trace backend's
+            // project) stays stable; the exact revision travels on each trace.
+            KeyValue::new("service.version", settings.service_version.clone()),
             KeyValue::new("deployment.environment", settings.deployment_environment.clone()),
             KeyValue::new("agent.runtime", provenance::AGENT_RUNTIME),
         ])
@@ -90,6 +93,17 @@ pub fn init(settings: &TelemetrySettings) -> TelemetryGuard {
     tracing_subscriber::registry().with(fmt).with(otel).init();
     tracing::info!(%endpoint, "exporting traces over OTLP/HTTP");
     TelemetryGuard(Some(provider))
+}
+
+/// Stamp the deployed agent's sanitized identity on a request's root span.
+///
+/// Set as OpenTelemetry attributes rather than declared `tracing` fields: the
+/// set is data-driven (an unset provider is simply absent) and would push the
+/// root span past `tracing`'s field limit.
+pub fn record_identity(span: &tracing::Span, identity: &[(&'static str, String)]) {
+    for (key, value) in identity {
+        span.set_attribute(*key, value.clone());
+    }
 }
 
 /// Attach an inbound W3C trace context, if the caller sent one.

@@ -202,7 +202,7 @@ The default trace store and UI, part of the normal stack (`make dev`,
 | Image | `arizephoenix/phoenix:version-20.26.1-nonroot`, pinned by version *and* digest; runs as uid 65532 |
 | Deployment | single container, SQLite under `/home/nonroot/.phoenix` (`PHOENIX_WORKING_DIR`) |
 | Ingestion | the collector's `otlphttp/phoenix` exporter, OTLP/HTTP protobuf, to `http://phoenix:6006/v1/traces`. No Phoenix or OpenInference SDK runs anywhere |
-| Conventions | Phoenix reads the OpenInference attributes the agent already sets as plain span attributes — `openinference.span.kind` (`AGENT` on the root, `GUARDRAIL` on the input/output rails and the tool policy), `input.value`/`output.value` on the root and tool spans. Phoenix maps Rig's `gen_ai.*` attributes to its LLM and tool views itself, so the model calls appear as `LLM` and `execute_tool` as `TOOL` with no SDK in the agent |
+| Conventions | Phoenix reads the OpenInference attributes the agent already sets as plain span attributes — `openinference.span.kind` (`AGENT` on the root, `GUARDRAIL` on the input and output safety rails only), `input.value`/`output.value` on the root and tool spans. Phoenix maps Rig's `gen_ai.*` attributes to its LLM and tool views itself, so the model calls appear as `LLM` and `execute_tool` as `TOOL` with no SDK in the agent |
 | Project | the collector's `resource/phoenix` processor *inserts* `openinference.project.name` = `PHOENIX_PROJECT_NAME` (default `tickets-agent`), so a caller that names its own project keeps it |
 | Ports | 6006 (UI, REST API, and OTLP/HTTP) on loopback only, `PHOENIX_PORT` to move it; OTLP/gRPC 4317 is not published |
 | Network | `edge` (for the published port) and `observability_net` (collector and evaluators). It shares no network with the agent, MCP, the gateway or PostgreSQL, so its LLM playground cannot become a browser-driven route to them |
@@ -211,12 +211,68 @@ The default trace store and UI, part of the normal stack (`make dev`,
 | Egress | `PHOENIX_TELEMETRY_ENABLED=false` (FullStory/Scarf usage pixels off) and `PHOENIX_ALLOW_EXTERNAL_RESOURCES=false` |
 | Auth | off: Compose sets `PHOENIX_ENABLE_AUTH: "false"` literally. Enable it before exposing Phoenix beyond loopback, with `PHOENIX_ENABLE_AUTH` and a real `PHOENIX_SECRET` set together in a `docker-compose.override.yml`, and give the evaluator `PHOENIX_API_KEY` ([CONFIGURATION.md](CONFIGURATION.md#phoenix)) |
 
+The tool policy is deliberately *not* a `GUARDRAIL` span. It is deterministic
+authorization — which tool may run with which arguments — a different boundary
+from the semantic safety rails, and it keeps its own `policy.kind`,
+`policy.decision`, `policy.reason` and `tool.name` attributes rather than
+borrowing a kind that would misdescribe it for presentation's sake.
+
+### Project, trace provenance, experiment metadata
+
+Three layers, each answering a different question:
+
+| Layer | Answers | Where |
+| --- | --- | --- |
+| Phoenix **project** | *which application?* | `openinference.project.name` = `PHOENIX_PROJECT_NAME` (`tickets-agent`). Stable across builds and versions; never one project per build |
+| **Trace provenance** | *which exact agent revision produced this trace?* | resource `service.name` (stable) and `service.version` (`<crate version>+<commit>`), and on every root `AGENT` span the sanitized identity below |
+| **Experiment metadata** | *what did this evaluation measure, under which conditions?* | the evaluator's flattened provenance, gate, and `conditions.sha256` on each Phoenix experiment ([EVALUATION.md](EVALUATION.md#result-artifact)) |
+
+Root-span identity, set from the agent's own provenance at startup
+([`telemetry/provenance.rs`](../agent/src/telemetry/provenance.rs)): OpenInference
+`agent.name`; `agent.revision.sha256`; `agent.framework`,
+`agent.framework.version`, `agent.version`, `agent.build.commit`;
+`agent.config.sha256`, `agent.prompt.template_sha256`,
+`agent.prompt.rendered_sha256`, `agent.tool_catalog.sha256`,
+`agent.guardrail_prompts.sha256`, `agent.behaviour_settings.sha256`;
+`agent.model`, `agent.guard_model`, `agent.reasoning_effort` and
+`agent.guard_reasoning_effort` when set; `agent.llm.provider` when
+`LLM_PROVIDER` names one, and `agent.llm.endpoint_sha256`. Names, versions and
+digests only: no URL, path, credential or prompt text, which the observability
+tests assert.
+
+### Agent revision
+
+`agent_revision_sha256` (`/version`, and `agent.revision.sha256` on traces) is
+one SHA-256 over the agent's complete behavioural identity, as canonical JSON
+of exactly these fields: `agent_runtime`, `agent_framework`,
+`agent_framework_version`, `mcp_sdk_version`, `agent_version`, `build_commit`,
+`config_sha256`, `rendered_prompt_sha256`, `tool_catalog_sha256`,
+`guardrails_prompts_sha256`, `behaviour_settings_sha256`, `model`,
+`guard_model`, `reasoning_effort`, `guard_reasoning_effort`,
+`guard_temperature`, `provider`, `endpoint_sha256`.
+
+| Digest | Covers |
+| --- | --- |
+| `prompt_sha256` | the system-prompt *template* in `agent/config.yml`, before `{tools}`/`{tool_names}` |
+| `rendered_prompt_sha256` | the system prompt the model receives, after MCP discovery fills the placeholders |
+| `tool_catalog_sha256` | the model-visible tools, sorted by name: name, description, argument JSON schema, and the policy's effect classification (`read_only` / `mutation_requiring_approval`) |
+| `config_sha256` | the bytes of `agent/config.yml` (workflow limits, temperature, tool allow-list, rail prompts, output patterns) |
+| `behaviour_settings_sha256` | decision-changing settings that come from the environment: the input-rail fallback and read-only override, block and oversize messages, input and answer bounds, whether approvals are enabled and their TTL/timeout |
+| `endpoint_sha256` | the model endpoint URL, normalised (userinfo, query and fragment removed; scheme and host lowercased; trailing `/` dropped). A fingerprint for telling endpoints apart, not a secret: a short local URL can be guessed and hashed |
+
+Not included: the dataset, gate or threshold (those are the evaluation's,
+in `conditions.sha256`); trace-capture and logging switches, which change what is
+recorded rather than what the agent does; the request's own content; and any
+credential. The same model name served by a different endpoint is a different
+revision.
+
 Retention is Phoenix's default (no expiry) unless set per project in its UI or
 with `PHOENIX_DEFAULT_RETENTION_POLICY_DAYS`, which this template does not set.
 
 What appears there, beside the traces: each evaluation run as an experiment on a
 mirror of its dataset revision, with the repository's scores as `CODE`
-evaluations, and the same scores annotated on each case's agent trace
+evaluations, the same scores annotated on each case's agent trace, and the
+source-controlled system and guardrail prompts in **Prompts**
 ([EVALUATION.md](EVALUATION.md#reporters)). Phoenix displays those results; it
 is not asked whether a run passed.
 
