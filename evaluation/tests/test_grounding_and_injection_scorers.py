@@ -10,39 +10,12 @@ from __future__ import annotations
 
 import os
 import sys
-import types
 import unittest
-from dataclasses import dataclass, field
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
 
-
-@dataclass
-class FakeFeedback:
-    name: str | None = None
-    value: object = None
-    rationale: str | None = None
-    metadata: dict | None = field(default=None)
-
-
-def fake_scorer(function):
-    return function
-
-
-if "mlflow" not in sys.modules:
-    mlflow = types.ModuleType("mlflow")
-    mlflow.trace = lambda *a, **k: (a[0] if a and callable(a[0]) else (lambda f: f))
-    entities = types.ModuleType("mlflow.entities")
-    entities.Feedback = FakeFeedback
-    genai = types.ModuleType("mlflow.genai")
-    genai.scorer = fake_scorer
-    mlflow.entities = entities
-    mlflow.genai = genai
-    sys.modules["mlflow"] = mlflow
-    sys.modules["mlflow.entities"] = entities
-    sys.modules["mlflow.genai"] = genai
 
 from evaluation.scorers import (  # noqa: E402
     _ungrounded_numbers,

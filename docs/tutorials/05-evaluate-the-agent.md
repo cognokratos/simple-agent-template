@@ -25,20 +25,26 @@ and nothing would notice if they got worse.
    reads).
 2. Read the scorer for one suite in
    [`evaluation/scorers.py`](../../evaluation/scorers.py). `SCORERS` at the
-   bottom maps suites to functions. Note that none of them calls a model.
+   bottom maps suites to functions. Note that none of them calls a model, and
+   none imports Phoenix or MLflow: each returns plain `Score` objects
+   ([`evaluation/domain.py`](../../evaluation/domain.py)).
 
 ## Run it
 
 ```bash
-make eval-list                 # suites, experiments, datasets
-make eval-bootstrap            # sync the JSON datasets into MLflow
+make eval-list                 # suites and their gates
 make eval SUITE=tools          # one suite
 make eval-all                  # all four, gates on (exits non-zero if a gate fails)
-make eval-all-allow-failures   # all four, metric gates off (infrastructure errors still fail)
-make open-mlflow               # Experiments → tickets-agent-*-evaluation
+make eval-all-allow-failures   # all four, metric gates off (unevaluated cases still fail)
+make open-phoenix              # Datasets → tickets-agent-*-dataset@<digest> → Experiments
 ```
 
-Each run writes `evaluation/results/<suite>-latest.json` (gitignored).
+Each run writes `evaluation/results/<suite>-latest.json` (gitignored) — that
+file is the result — and then publishes a copy to Phoenix. Nothing needs
+creating in Phoenix first: the reporter mirrors the dataset revision on first
+use. Stop Phoenix (`docker compose stop phoenix`) and run again: the result and
+the exit status are identical, and `reporting.phoenix.status` says
+`unavailable`.
 
 ## Observe
 
@@ -47,15 +53,21 @@ Open `evaluation/results/tools-latest.json`. The fields that matter:
 | Field | Read it as |
 | --- | --- |
 | `required_metric`, `required_value`, `fail_threshold`, `passed` | The gate. `tool_call_correct/mean` must reach `1.0` by default. |
+| `gate`, `errors` | The same decision with its `reason`, and any case that could not be evaluated (which fails the gate on its own). |
 | `metrics` | Per-scorer means. `tool_name_match` vs `tool_argument_match` vs `tool_order_correct` tells you *how* a case failed. |
 | `latency` | `min`, `p50`, `p95`, `max`. The mean is there too, but the tail is what users wait for. |
 | `provenance.agent` | What actually answered: model, guard model, `build_commit`, prompt digests, `tools_exposed` |
 | `provenance.harness` | The commit the harness ran from, and whether the tree was `dirty` |
 | `provenance.consistent` | `false` means the running container is not this source tree |
+| `cases[]` | Per case: the answer, the tool calls, every score with its *rationale*, the agent's trace id |
+| `conditions.sha256` | Equal for two runs means they measured the same thing; `make eval-compare` diffs them |
 
-In MLflow, open the experiment, then a run's **Traces** / evaluation table. Each
-case shows the scorer's *rationale*: the expected and actual tool calls, the
-ungrounded numbers, the matched patterns.
+In Phoenix, open the dataset, then the run's experiment. Each example shows the
+observed output and the repository's scores as `CODE` evaluations with their
+*rationale*: the expected and actual tool calls, the ungrounded numbers, the
+matched patterns. The same scores are annotated on each case's agent trace
+under **Traces**, so a failing case opens straight onto the request that
+produced it. Phoenix shows the verdict; it did not compute it.
 
 Results on the default model move between runs, which is why a single run is
 an observation and not a verdict. One `make eval-all` run against this agent,
@@ -98,9 +110,12 @@ to [`evaluation/datasets/grounding.json`](../../evaluation/datasets/grounding.js
 ```
 
 ```bash
-make eval-bootstrap SUITE=grounding
 make eval SUITE=grounding ALLOW_FAILURES=1
 ```
+
+The dataset's digest changes, so this result's `conditions.sha256` no longer
+matches earlier grounding runs, and Phoenix receives the edited file as a new
+dataset mirror.
 
 Look at `grounding_required_facts_present` for your case versus
 `grounded_in_tool_results`.
@@ -128,8 +143,10 @@ Revert the dataset change unless you intend to keep it.
 ```mermaid
 flowchart LR
     DS[datasets/*.json] --> EV[evaluator] --> AG[live agent]
-    EV --> SC{scorers} --> ML[(MLflow)]
-    SC --> GATE{gate}
+    EV --> SC{scorers} --> RES[(results/*.json)]
+    RES --> GATE{gate}
+    RES -->|copy| PH[(Phoenix)]
+    RES -.->|copy, optional| ML[(MLflow)]
 ```
 
 Every claim about agent quality now has a number, a dataset version and a
@@ -140,8 +157,9 @@ provenance record behind it. Full diagram: [concept 5](../concepts/05-evaluation
 Every result records `provenance.agent.runtime`: `rig-rust` for this agent.
 Nothing in the harness, datasets, scorers or gates depends on the agent
 framework, so the same suites can evaluate the retired NAT agent
-(`nat-1.9-final`, recorded as `nat`) against the same model, and MLflow can
-compare the two by that tag ([EVALUATION.md](../EVALUATION.md#comparing-runtimes)).
+(`nat-1.9-final`, recorded as `nat`) against the same model, and
+`make eval-compare` (or Phoenix, filtering experiments by that metadata) can
+compare the two ([EVALUATION.md](../EVALUATION.md#comparing-runtimes)).
 That is the point of owning the evaluation in the repository: the framework
 changed, the measuring instrument did not.
 
@@ -152,6 +170,9 @@ changed, the measuring instrument did not.
   assert.
 * Separate metrics for separate failures. Gate on the one you will act on.
 * A result without provenance is not evidence.
+* The platform displays the result; the repository decides it. `make eval-mlflow`
+  (after `make dev-mlflow`) publishes the same result to MLflow without a second
+  evaluation.
 
 ## Go deeper
 

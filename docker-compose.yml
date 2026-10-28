@@ -12,6 +12,54 @@
 # host with genuinely separate storage, not just separate containers.
 name: ${COMPOSE_PROJECT_NAME:-tickets-agent}
 
+# Shared by both evaluator services, so the default evaluator and the optional
+# MLflow-reporting one evaluate under identical settings.
+x-evaluator-environment: &evaluator-environment
+  PYTHONPATH: /app
+  AGENT_WORKFLOW_URL: ${AGENT_WORKFLOW_URL:-http://agent:8000/v1/workflow/full}
+  AGENT_API_KEY: ${AGENT_API_KEY:-dev-agent-api-key-change-me}
+  EVALUATION_HTTP_TIMEOUT_SECONDS: ${EVALUATION_HTTP_TIMEOUT_SECONDS:-360}
+  EVALUATION_HTTP_MAX_ATTEMPTS: ${EVALUATION_HTTP_MAX_ATTEMPTS:-4}
+  # The harness calls the agent directly, with no browser login behind it.
+  # The agent requires an asserted identity on every request, so the
+  # harness names itself. A synthetic principal deliberately: an
+  # evaluation run is not a person.
+  EVALUATION_PRINCIPAL: ${EVALUATION_PRINCIPAL:-evaluation-harness}
+  # The tool names the harness recognises as workflow tool calls. A domain
+  # application overrides this instead of editing the harness.
+  EVALUATION_TOOL_NAMES: ${EVALUATION_TOOL_NAMES:-search_tickets,get_ticket}
+  # This container has no .git and no working tree, so the host is the only
+  # place that can answer what commit the harness is running. GIT_SOURCE says
+  # where that answer came from — a git checkout, or nowhere. GIT_DIRTY is
+  # empty unless a real git tree was examined, so "not observable" never
+  # renders as "clean".
+  GIT_COMMIT: ${GIT_COMMIT:-}
+  GIT_DIRTY: ${GIT_DIRTY:-}
+  GIT_SOURCE: ${GIT_SOURCE:-}
+  AGENT_CONFIG_PATH: ${AGENT_CONFIG_PATH:-/app/agent-config.yml}
+  # Display names a reporter uses. They identify nothing: cases live in
+  # evaluation/datasets/*.json and the result in evaluation/results/.
+  GUARDRAILS_EVALUATION_EXPERIMENT: ${GUARDRAILS_EVALUATION_EXPERIMENT:-tickets-agent-guardrails-evaluation}
+  GUARDRAILS_EVALUATION_DATASET: ${GUARDRAILS_EVALUATION_DATASET:-tickets-agent-guardrails-dataset}
+  TOOL_CALLING_EVALUATION_EXPERIMENT: ${TOOL_CALLING_EVALUATION_EXPERIMENT:-tickets-agent-tool-calling-evaluation}
+  TOOL_CALLING_EVALUATION_DATASET: ${TOOL_CALLING_EVALUATION_DATASET:-tickets-agent-tool-calling-dataset}
+  GROUNDING_EVALUATION_EXPERIMENT: ${GROUNDING_EVALUATION_EXPERIMENT:-tickets-agent-grounding-evaluation}
+  GROUNDING_EVALUATION_DATASET: ${GROUNDING_EVALUATION_DATASET:-tickets-agent-grounding-dataset}
+  INJECTION_EVALUATION_EXPERIMENT: ${INJECTION_EVALUATION_EXPERIMENT:-tickets-agent-injection-evaluation}
+  INJECTION_EVALUATION_DATASET: ${INJECTION_EVALUATION_DATASET:-tickets-agent-injection-dataset}
+  # Reporting. Phoenix receives a copy of each finished result; it is never
+  # asked whether a run passed. Reached over observability_net.
+  PHOENIX_BASE_URL: http://phoenix:6006
+  PHOENIX_PUBLIC_URL: ${PHOENIX_PUBLIC_URL:-http://localhost:6006}
+  PHOENIX_API_KEY: ${PHOENIX_API_KEY:-}
+
+x-evaluator-volumes: &evaluator-volumes
+  - ./evaluation:/app/evaluation:ro
+  - ./evaluation/results:/app/evaluation/results
+  # Read-only, so the harness can digest the agent's prompts and compare them
+  # with the digest the running agent reports.
+  - ./agent/config.yml:/app/agent-config.yml:ro
+
 services:
   postgres:
     image: postgres:17-alpine
@@ -149,7 +197,58 @@ services:
       - "${PUBLIC_BIND_ADDRESS:-127.0.0.1}:6274:6274"
     restart: unless-stopped
 
+  # Default developer workbench for traces, datasets, experiments and evaluation
+  # evidence. Receives OTLP from the collector only; the agent has no route to
+  # it and it has none to the agent, MCP or the database (observability_net).
+  # It displays evaluation results; it never computes or gates one.
+  # See docs/OBSERVABILITY.md#phoenix.
+  phoenix:
+    # Pinned by version and digest. The nonroot variant runs as uid 65532.
+    image: arizephoenix/phoenix:version-20.26.1-nonroot@sha256:493440039bb287f8d8f940ae34fc4bdb155ec99218714b75561ea512043e1414
+    environment:
+      # SQLite under the nonroot user's home. The volume is mounted on the home
+      # directory itself, which the image creates owned by uid 65532, so Docker
+      # seeds the new volume with that ownership; a fresh volume mounted at a
+      # path the image lacks would be root-owned and unwritable.
+      PHOENIX_WORKING_DIR: /home/nonroot/.phoenix
+      PHOENIX_PORT: "6006"
+      # Phoenix's own usage telemetry (FullStory, Scarf) and other
+      # self-initiated internet requests are off: this is a data-egress
+      # boundary, and a trace store has no reason to phone out.
+      PHOENIX_TELEMETRY_ENABLED: "false"
+      PHOENIX_ALLOW_EXTERNAL_RESOURCES: "false"
+      # Local development: no Phoenix login. Not configurable from .env on
+      # purpose: Phoenix rejects an empty PHOENIX_SECRET whenever the variable
+      # is present, so auth is enabled in a docker-compose.override.yml that
+      # sets PHOENIX_ENABLE_AUTH and a real PHOENIX_SECRET together, before
+      # Phoenix is exposed beyond loopback (docs/CONFIGURATION.md#phoenix).
+      PHOENIX_ENABLE_AUTH: "false"
+    volumes:
+      - phoenix-data:/home/nonroot
+    networks:
+      - edge
+      - observability_net
+    healthcheck:
+      test:
+        - CMD
+        - /usr/bin/python3.13
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:6006/healthz', timeout=2)"
+      start_period: 20s
+      interval: 5s
+      timeout: 3s
+      retries: 30
+    ports:
+      # UI and REST API, loopback only. 6006 also accepts OTLP/HTTP, which the
+      # collector already accepts on 4318; OTLP/gRPC (4317) is not published.
+      - "${PUBLIC_BIND_ADDRESS:-127.0.0.1}:${PHOENIX_PORT:-6006}:6006"
+    restart: unless-stopped
+
+  # Optional reference integration, started only with the `mlflow` profile
+  # (`make dev-mlflow`). Kept for comparison and for teams that already run it;
+  # nothing in the default stack, the tests or the default evaluation needs it.
   mlflow:
+    profiles: ["mlflow"]
     image: ghcr.io/mlflow/mlflow:v3.14.0
     command:
       - mlflow
@@ -169,7 +268,7 @@ services:
       - mlflow-data:/mlflow
     networks:
       - edge
-      - telemetry_net
+      - observability_net
     healthcheck:
       test:
         - CMD-SHELL
@@ -188,16 +287,26 @@ services:
       - "${PUBLIC_BIND_ADDRESS:-127.0.0.1}:${MLFLOW_PORT:-5000}:5000"
     restart: unless-stopped
 
+  # The one place traces leave the cluster's runtime: the agent exports OTLP
+  # here and nowhere else. Phoenix by default; MLflow in addition when
+  # OTEL_COLLECTOR_OVERLAY selects otel-collector.mlflow.yml (`make dev-mlflow`).
+  # A Compose profile cannot change another service's configuration, which is
+  # why the second export is an overlay file rather than a profile alone.
   otel-collector:
     image: otel/opentelemetry-collector-contrib:0.123.0
-    command: ["--config=/etc/otelcol-contrib/config.yml"]
+    command:
+      - --config=file:/etc/otelcol-contrib/otel-collector.yml
+      - --config=file:/etc/otelcol-contrib/${OTEL_COLLECTOR_OVERLAY:-otel-collector.default.yml}
+    environment:
+      PHOENIX_PROJECT_NAME: ${PHOENIX_PROJECT_NAME:-tickets-agent}
     volumes:
-      - ./observability/otel-collector.yml:/etc/otelcol-contrib/config.yml:ro
+      - ./observability:/etc/otelcol-contrib:ro
     networks:
       - edge
       - telemetry_net
+      - observability_net
     depends_on:
-      mlflow:
+      phoenix:
         condition: service_healthy
     healthcheck:
       test: ["CMD", "/otelcol-contrib", "components"]
@@ -227,6 +336,9 @@ services:
       LLM_API_KEY: ${LLM_API_KEY:-ollama}
       LLM_MODEL: ${LLM_MODEL:-qwen3:8b}
       LLM_GUARD_MODEL: ${LLM_GUARD_MODEL:-qwen3:8b}
+      # Optional provider name (e.g. `ollama`, `openai`), reported in /version
+      # and on traces. The endpoint itself is reported only as a fingerprint.
+      LLM_PROVIDER: ${LLM_PROVIDER:-}
       # `-` not `:-`, so an explicitly empty value stays empty and the parameter
       # is omitted entirely. A hosted provider that rejects reasoning_effort
       # needs it absent, not set to "none" or to "".
@@ -359,60 +471,54 @@ services:
       - "${PUBLIC_BIND_ADDRESS:-127.0.0.1}:${UI_PORT:-3000}:3000"
     restart: unless-stopped
 
+  # The backend-neutral evaluator: Python and PyYAML. Produces
+  # evaluation/results/*.json, which is the result, then reports a copy to
+  # Phoenix. Phoenix being down changes the report, never the result.
   evaluator:
-    image: ghcr.io/mlflow/mlflow:v3.14.0
+    build:
+      context: ./evaluation
+    image: ${COMPOSE_PROJECT_NAME:-tickets-agent}-evaluator
     profiles: ["evaluation"]
+    working_dir: /app
+    command: ["python", "-m", "evaluation", "run", "--suite", "all"]
+    volumes: *evaluator-volumes
+    environment:
+      <<: *evaluator-environment
+      EVALUATION_REPORTERS: ${EVALUATION_REPORTERS:-phoenix}
+    networks:
+      - agent_net
+      - observability_net
+    depends_on:
+      agent:
+        condition: service_healthy
+
+  # The same evaluator in the MLflow image, so the optional MLflow reporter can
+  # run. One evaluation, published to Phoenix and MLflow from the same result.
+  # Its own profile, like `evaluator`: under `mlflow` alone, `up` would start
+  # it and run every suite whenever the MLflow stack came up. `docker compose
+  # run evaluator-mlflow` activates the profile because the service is named.
+  evaluator-mlflow:
+    image: ghcr.io/mlflow/mlflow:v3.14.0
+    profiles: ["evaluation-mlflow"]
     entrypoint: []
     working_dir: /app
     command: ["python", "-m", "evaluation", "run", "--suite", "all"]
-    volumes:
-      - ./evaluation:/app/evaluation:ro
-      - ./evaluation/results:/app/evaluation/results
-      # Read-only, so the harness can register the agent's prompts in MLflow and
-      # compare its own digest against the one the running agent reports.
-      - ./agent/config.yml:/app/agent-config.yml:ro
+    volumes: *evaluator-volumes
     environment:
-      PYTHONPATH: /app
+      <<: *evaluator-environment
+      EVALUATION_REPORTERS: ${EVALUATION_MLFLOW_REPORTERS:-phoenix,mlflow}
       MLFLOW_TRACKING_URI: ${MLFLOW_TRACKING_URI:-http://mlflow:5000}
-      AGENT_WORKFLOW_URL: ${AGENT_WORKFLOW_URL:-http://agent:8000/v1/workflow/full}
-      AGENT_API_KEY: ${AGENT_API_KEY:-dev-agent-api-key-change-me}
-      MLFLOW_GENAI_EVAL_SKIP_TRACE_VALIDATION: ${MLFLOW_GENAI_EVAL_SKIP_TRACE_VALIDATION:-true}
       MLFLOW_GENAI_EVAL_MAX_WORKERS: ${MLFLOW_GENAI_EVAL_MAX_WORKERS:-1}
       MLFLOW_ENABLE_ASYNC_TRACE_LOGGING: ${MLFLOW_ENABLE_ASYNC_TRACE_LOGGING:-false}
-      EVALUATION_HTTP_TIMEOUT_SECONDS: ${EVALUATION_HTTP_TIMEOUT_SECONDS:-360}
-      EVALUATION_HTTP_MAX_ATTEMPTS: ${EVALUATION_HTTP_MAX_ATTEMPTS:-4}
-      # The harness calls the agent directly, with no browser login behind it.
-      # The agent requires an asserted identity on every request, so the
-      # harness names itself. A synthetic principal deliberately: an
-      # evaluation run is not a person.
-      EVALUATION_PRINCIPAL: ${EVALUATION_PRINCIPAL:-evaluation-harness}
-      # The tool names the harness recognises as workflow tool calls. A domain
-      # application overrides this instead of editing the harness.
-      EVALUATION_TOOL_NAMES: ${EVALUATION_TOOL_NAMES:-search_tickets,get_ticket}
-      # This container has no .git and no working tree, so the host is the only
-      # place that can answer what commit the harness is running. GIT_SOURCE says
-      # where that answer came from — a git checkout, or nowhere. GIT_DIRTY is
-      # empty unless a real git tree was examined, so "not observable" never
-      # renders as "clean".
-      GIT_COMMIT: ${GIT_COMMIT:-}
-      GIT_DIRTY: ${GIT_DIRTY:-}
-      GIT_SOURCE: ${GIT_SOURCE:-}
-      # MLflow probes for a git repo through GitPython on import. There is no git
-      # binary here by design, and the commit is supplied above, so silence the
-      # multi-paragraph warning it would otherwise print before every suite.
+      EVALUATION_MODEL_PREFIX: ${EVALUATION_MODEL_PREFIX:-agent}
+      # MLflow probes for a git repo through GitPython on import. There is no
+      # git binary here by design, and the commit is supplied above.
       GIT_PYTHON_REFRESH: quiet
-      AGENT_CONFIG_PATH: ${AGENT_CONFIG_PATH:-/app/agent-config.yml}
-      GUARDRAILS_EVALUATION_EXPERIMENT: ${GUARDRAILS_EVALUATION_EXPERIMENT:-tickets-agent-guardrails-evaluation}
-      GUARDRAILS_EVALUATION_DATASET: ${GUARDRAILS_EVALUATION_DATASET:-tickets-agent-guardrails-dataset}
-      TOOL_CALLING_EVALUATION_EXPERIMENT: ${TOOL_CALLING_EVALUATION_EXPERIMENT:-tickets-agent-tool-calling-evaluation}
-      TOOL_CALLING_EVALUATION_DATASET: ${TOOL_CALLING_EVALUATION_DATASET:-tickets-agent-tool-calling-dataset}
-      GROUNDING_EVALUATION_EXPERIMENT: ${GROUNDING_EVALUATION_EXPERIMENT:-tickets-agent-grounding-evaluation}
-      GROUNDING_EVALUATION_DATASET: ${GROUNDING_EVALUATION_DATASET:-tickets-agent-grounding-dataset}
-      INJECTION_EVALUATION_EXPERIMENT: ${INJECTION_EVALUATION_EXPERIMENT:-tickets-agent-injection-evaluation}
-      INJECTION_EVALUATION_DATASET: ${INJECTION_EVALUATION_DATASET:-tickets-agent-injection-dataset}
+      # `make` runs this as the host user, who has no home in the image.
+      HOME: /tmp
     networks:
       - agent_net
-      - telemetry_net
+      - observability_net
     depends_on:
       mlflow:
         condition: service_healthy
@@ -438,14 +544,20 @@ networks:
   gateway_net:
   # Rust gateway -> Keycloak OIDC backchannel.
   auth_net:
-  # Rust gateway and the containerized evaluator -> the agent. Nothing else routes here.
+  # Rust gateway and the containerized evaluators -> the agent. Nothing else routes here.
   agent_net:
   # The agent and the loopback-only MCP Inspector -> Rust MCP server.
   mcp_net:
   # MCP server -> PostgreSQL. The database is reachable from one service only.
   data_net:
-  # Trace export: agent/evaluator -> OpenTelemetry Collector -> MLflow.
+  # Trace export: the agent -> OpenTelemetry Collector. Nothing else is on it,
+  # so no observability backend can route to the agent.
   telemetry_net:
+  # Collector and evaluators -> the observability backends (Phoenix, and
+  # MLflow when enabled). The backends share no network with the agent, MCP,
+  # the gateway or PostgreSQL, so a UI that can make outbound requests (both
+  # have LLM playgrounds) has no route to a protected service.
+  observability_net:
 
 volumes:
   # Each default derives from the *effective* project name — set by `-p`, by
@@ -461,6 +573,11 @@ volumes:
   # it explicitly; an explicit override always wins over the computed default.
   postgres-data:
     name: ${POSTGRES_DATA_VOLUME:-${COMPOSE_PROJECT_NAME:-tickets-agent}-postgres-data}
+  # Phoenix's SQLite database: traces, mirrored datasets, experiments,
+  # annotations. Removed by `make reset-phoenix` or `make reset-data`.
+  phoenix-data:
+    name: ${PHOENIX_DATA_VOLUME:-${COMPOSE_PROJECT_NAME:-tickets-agent}-phoenix-data}
+  # Created only when the `mlflow` profile is first started.
   mlflow-data:
     name: ${MLFLOW_DATA_VOLUME:-${COMPOSE_PROJECT_NAME:-tickets-agent}-mlflow-data}
   keycloak-data:

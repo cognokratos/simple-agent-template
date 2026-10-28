@@ -2,6 +2,13 @@
 
 This page covers learning-path stage 7.
 
+* **OpenTelemetry describes what happened.**
+* **Repository-owned deterministic evaluation decides whether known invariants
+  passed** ([5. Evaluation](05-evaluation.md)).
+* **Phoenix is the default developer workbench** for exploring traces,
+  datasets, experiments and evaluation evidence.
+* **MLflow is an optional/reference integration.**
+
 ## Why logs are not enough for agents
 
 In a conventional service, the code path for a request is fixed. You read logs
@@ -22,8 +29,15 @@ of timed spans, so the shape of the agent's decision appears directly.
 | --- | --- |
 | Tracing standard | OpenTelemetry (OTLP/HTTP) |
 | Span source | Rust `tracing` spans in the agent, Rig's own `chat`/`execute_tool` spans among them, exported by `tracing-opentelemetry` ([`telemetry/mod.rs`](../../agent/src/telemetry/mod.rs)) |
-| Collector | OpenTelemetry Collector ([`observability/otel-collector.yml`](../../observability/otel-collector.yml)) |
-| Trace store and UI | MLflow |
+| Collector | OpenTelemetry Collector ([`observability/otel-collector.yml`](../../observability/otel-collector.yml)): the single egress point |
+| Trace store and UI | Arize Phoenix (default, `make open-phoenix`); MLflow optional (`make dev-mlflow`) |
+
+The agent exports OTLP to the collector and nowhere else; it imports no Phoenix
+SDK and has no backend-specific code. Phoenix understands the OpenInference
+attributes the agent already sets (`openinference.span.kind`, `input.value`,
+`output.value`) as plain span attributes. Swapping or adding a backend is a
+collector change, not an agent change — which is exactly how MLflow is added
+back as an option ([OBSERVABILITY.md](../OBSERVABILITY.md#phoenix)).
 
 ## One request, one trace
 
@@ -92,9 +106,13 @@ recognisers, and the user's own question is recorded as typed, unmasked. See
   `guardrail.decision_source`, `guardrail.deterministic.matches`) that you can
   assert on. [TEST-SCENARIOS.md](../TEST-SCENARIOS.md#guardrails-observability-acceptance-checks)
   lists them per scenario.
+* The Phoenix reporter attaches each case's deterministic scores to that case's
+  agent trace as annotations, so the failing case and its trace are one click
+  apart. The annotation is a copy of the verdict, not the verdict.
 * `make trace-test` ([`scripts/verify_traces_e2e.py`](../../scripts/verify_traces_e2e.py))
-  sends real requests and asserts on the resulting trace shape: one tree,
-  guardrail spans present, readable I/O, no credentials.
+  sends real requests and asserts on the resulting trace shape in Phoenix: one
+  tree, guardrail spans present, readable I/O, no credentials, approval tokens
+  or raw user ids.
 
 ## Go deeper
 

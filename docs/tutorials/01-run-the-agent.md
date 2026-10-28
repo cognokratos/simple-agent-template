@@ -33,7 +33,7 @@ Nothing is running. You have a clone and Docker.
 make env          # create .env from .env.example (only if missing)
 make pull-models  # pulls LLM_MODEL / LLM_GUARD_MODEL; no-op unless Ollama
 make dev          # build and start the cluster
-make wait         # wait for UI, gateway, Keycloak, MLflow, collector
+make wait         # wait for UI, gateway, Keycloak, Phoenix, collector
 make ps           # what is running
 make login-info   # URLs and the development credentials
 make open-ui      # http://localhost:3000
@@ -54,10 +54,12 @@ What kinds of support ticket questions can you help me with?
   Cookies, path `/api/gateway`).
 * Tool calls appear as cards (*Calling search_tickets*, *Calling get_ticket*)
   before the answer streams. The capabilities question uses no tool.
-* `make ps` lists the services. Only the UI, Keycloak, MLflow and the collector
-  publish host ports. The gateway, agent, MCP server and database publish none.
-* `make open-mlflow`, then **Default** experiment → **Traces**: one trace per
-  prompt.
+* `make ps` lists the services. Only the UI, Keycloak, Phoenix and the collector
+  publish host ports, all on loopback. The gateway, agent, MCP server and
+  database publish none.
+* `make open-phoenix`, then the **tickets-agent** project → **Traces**: one
+  trace per prompt. MLflow is not running; it is an optional integration
+  (`make dev-mlflow`).
 
 ## Break it
 
@@ -117,7 +119,7 @@ Two more things worth seeing:
 flowchart LR
     B([Browser]) --> UI[assistant-ui] --> GW[gateway] --> AG[Rust agent] --> MCP[MCP server] --> DB[(PostgreSQL)]
     KC[Keycloak] --- GW
-    AG -. OTLP .-> OT[collector] -.-> ML[MLflow]
+    AG -. OTLP .-> OT[collector] -.-> PH[Phoenix]
 ```
 
 Full version with trust boundaries: [concept 7](../concepts/07-security-and-trust-boundaries.md#diagram-d-trust-boundaries).

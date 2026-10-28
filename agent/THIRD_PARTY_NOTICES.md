@@ -60,6 +60,27 @@ data licence:
   <https://cdla.dev/permissive-2-0/>.
 
 Reproduce the inventory with `cargo metadata --format-version 1 --locked` in
-`agent/`. Keycloak, PostgreSQL, MLflow, the OpenTelemetry Collector,
-assistant-ui and the gateway's and MCP server's crates are used under their own
-licences.
+`agent/`. Keycloak, PostgreSQL, the OpenTelemetry Collector, assistant-ui and
+the gateway's and MCP server's crates are used under their own licences.
+
+### Observability and evaluation services
+
+None of these is copied into this repository or into the agent image. Docker
+Compose pulls each from its upstream registry at the pinned version, under its
+own licence:
+
+* **Arize Phoenix** (`arizephoenix/phoenix:version-20.26.1-nonroot`, default
+  stack) — **Elastic License 2.0 (ELv2)**, a source-available licence rather
+  than an OSI-approved open-source one. It permits use, modification and
+  redistribution, but **not providing Phoenix to third parties as a hosted or
+  managed service**, nor circumventing its licence-key functionality. Running
+  it as this template does — a local developer workbench, or an internal
+  deployment for your own team — is the use it is licensed for; offering it as
+  a service to others is not. Text:
+  <https://github.com/Arize-ai/phoenix/blob/main/LICENSE>.
+* **MLflow** (`ghcr.io/mlflow/mlflow:v3.14.0`, optional `mlflow` profile) —
+  Apache-2.0.
+* **PyYAML** 6.0.3 (installed into the evaluator image from
+  `evaluation/requirements.txt`) — MIT. The evaluator otherwise uses only the
+  Python standard library; it installs no Phoenix, OpenInference or
+  OpenTelemetry package.

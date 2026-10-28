@@ -1,88 +1,146 @@
-"""CLI for MLflow dataset synchronization and live evaluation runs."""
+"""CLI for the backend-neutral live evaluation.
+
+    run      evaluate suites against the running agent, write results/*.json,
+             then publish the same result to any configured reporters
+    report   publish an existing result file to reporters, without calling the agent
+    compare  diff two result files: conditions, metrics, latency and moved cases
+    sync-prompts
+             source-only: mirror agent/config.yml's prompts into Phoenix Prompt
+             Management, without claiming that any evaluation used them
+    list     show the configured suites
+
+Exit status of ``run``: 0 when every gate passed (or ``--allow-failures``), 1
+when a metric gate failed, 2 when a case could not be evaluated at all. The
+last is never suppressed by ``--allow-failures``: a red metric is a finding,
+an unreachable agent is a broken run.
+"""
 
 from __future__ import annotations
 
 import argparse
+import json
 import sys
+from pathlib import Path
 
-import mlflow
+from evaluation import reporting, results
+from evaluation.config import KNOWN_REPORTERS, SUITES, configured_reporters
+from evaluation.runner import publish, run_suite
 
-from evaluation.config import SUITES, tracking_uri
-from evaluation.datasets import sync_dataset
-from evaluation.runner import configure_mlflow, run_suite
+EXIT_GATE_FAILED = 1
+EXIT_NOT_EVALUATED = 2
 
 
 def _suite_keys(value: str) -> list[str]:
     return list(SUITES) if value == "all" else [value]
 
 
-def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description=__doc__)
-    subparsers = parser.add_subparsers(dest="command", required=True)
-
-    bootstrap = subparsers.add_parser("bootstrap", help="Create or synchronize MLflow datasets")
-    bootstrap.add_argument("--suite", choices=[*SUITES, "all"], default="all")
-    bootstrap.add_argument(
-        "--replace",
-        action="store_true",
-        help="Delete current dataset records before loading the source JSON",
+def _add_reporter_option(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "--reporter",
+        action="append",
+        choices=[*KNOWN_REPORTERS, "none"],
+        help="Publish to this reporter (repeatable). Default: $EVALUATION_REPORTERS, else none.",
     )
 
-    run = subparsers.add_parser("run", help="Run live-agent MLflow evaluation")
+
+def _reporters(args: argparse.Namespace) -> list[str]:
+    if args.reporter:
+        return configured_reporters(",".join(args.reporter))
+    return configured_reporters()
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    subparsers = parser.add_subparsers(dest="command", required=True)
+
+    run = subparsers.add_parser("run", help="Run the live-agent evaluation")
     run.add_argument("--suite", choices=[*SUITES, "all"], default="all")
     run.add_argument("--run-name", help="Custom run name; suite suffix is added when using all")
-    run.add_argument("--replace-dataset", action="store_true")
     run.add_argument("--fail-threshold", type=float, default=1.0)
     run.add_argument(
         "--allow-failures",
         action="store_true",
-        help="Always exit zero even when a required metric is below threshold",
+        help="Exit zero even when a required metric is below threshold (never for unevaluated cases)",
     )
+    _add_reporter_option(run)
 
-    subparsers.add_parser("list", help="Show configured suite, experiment, and dataset names")
+    report = subparsers.add_parser("report", help="Publish existing result file(s) without re-running the agent")
+    report.add_argument("paths", nargs="+", type=Path)
+    _add_reporter_option(report)
+
+    compare = subparsers.add_parser("compare", help="Compare two result files")
+    compare.add_argument("baseline", type=Path)
+    compare.add_argument("candidate", type=Path)
+
+    subparsers.add_parser("sync-prompts", help="Source-only: mirror the repository's prompts into Phoenix; claims no evaluation used them")
+    subparsers.add_parser("list", help="Show configured suites and their gates")
     return parser
 
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
-    configure_mlflow()
 
     if args.command == "list":
-        print(f"MLflow tracking URI: {tracking_uri()}")
+        print(f"Reporters: {', '.join(configured_reporters()) or 'none'} (EVALUATION_REPORTERS)")
         for config in SUITES.values():
             print(
-                f"{config.key}: experiment={config.experiment_name!r}, "
-                f"dataset={config.dataset_name!r}, source={config.dataset_path}"
+                f"{config.key}: gate={config.required_metric} source={config.dataset_path.name} "
+                f"experiment={config.experiment_name!r} dataset={config.dataset_name!r}"
             )
         return 0
 
-    if args.command == "bootstrap":
-        for suite in _suite_keys(args.suite):
-            config = SUITES[suite]
-            experiment, dataset, count = sync_dataset(config, replace=args.replace)
-            print(
-                f"Synchronized {count} {suite} records into {dataset.name} "
-                f"({dataset.dataset_id}) in experiment {experiment.name}"
-            )
+    if args.command == "sync-prompts":
+        from evaluation import provenance
+        from evaluation.reporting.phoenix import PhoenixReporter
+
+        reporter = PhoenixReporter()
+        if not reporter.available():
+            print(f"Phoenix is not reachable at {reporter.base_url}.")
+            return 2
+        # Source mode: the repository's text, mirrored without claiming that an
+        # evaluation used it. The agent's /version is read only for the model
+        # names a version records; its consistency checks are not consulted.
+        outcome = reporter.sync_prompts({"provenance": provenance.collect()}, mode="source")
+        for name, entry in outcome.items():
+            print(f"{name}: {entry.get('status', 'error')} {entry.get('version_id') or entry.get('reason') or entry.get('error') or ''}")
+        return 0 if outcome and all(entry.get("status") in {"created", "reused"} for entry in outcome.values()) else 1
+
+    if args.command == "compare":
+        print(json.dumps(results.compare(results.read(args.baseline), results.read(args.candidate)), indent=2))
         return 0
 
+    if args.command == "report":
+        names = _reporters(args)
+        if not names:
+            print("No reporter selected; pass --reporter phoenix and/or --reporter mlflow.")
+            return 2
+        for path in args.paths:
+            result = results.read(path)
+            before = results.truth(result)
+            publish(result, names, (path,))
+            assert results.truth(result) == before, "a reporter changed the result"
+            for name, meta in result["reporting"].items():
+                print(f"{path}: {name} {meta.get('status')} {meta.get('experiment_url') or meta.get('mlflow_run_id') or ''}")
+        return 0
+
+    names = _reporters(args)
+    reporting.build(names)  # fail fast on a misconfigured reporter, before any agent call
     all_passed = True
+    unevaluated = False
     suites = _suite_keys(args.suite)
     for suite in suites:
         run_name = args.run_name
         if run_name and len(suites) > 1:
             run_name = f"{run_name}-{suite}"
-        _, passed = run_suite(
-            suite,
-            run_name=run_name,
-            replace_dataset=args.replace_dataset,
-            fail_threshold=args.fail_threshold,
-        )
-        all_passed = all_passed and passed
+        result = run_suite(suite, run_name=run_name, fail_threshold=args.fail_threshold, reporter_names=names)
+        all_passed = all_passed and bool(result["passed"])
+        unevaluated = unevaluated or bool(result["errors"]["count"])
 
+    if unevaluated:
+        return EXIT_NOT_EVALUATED
     if args.allow_failures or all_passed:
         return 0
-    return 1
+    return EXIT_GATE_FAILED
 
 
 if __name__ == "__main__":

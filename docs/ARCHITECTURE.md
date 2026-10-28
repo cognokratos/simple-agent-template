@@ -43,8 +43,13 @@ PostgreSQL                        publishes nothing
 Alongside it:
 
 ```
-agent  ──OTLP──▶  OpenTelemetry Collector  ──▶  MLflow
+agent  ──OTLP──▶  OpenTelemetry Collector  ──▶  Phoenix            (default)
+                                            └┄┄▶  MLflow             (optional, make dev-mlflow)
+
 evaluator ──▶  agent (service credential, bypassing the browser path)
+    │
+    └──▶ evaluation/results/*.json   the result and the gate
+            └──▶ copy to Phoenix (and MLflow, if enabled)   display only
 ```
 
 ## Inside the agent box
@@ -80,11 +85,15 @@ Three boundaries in particular belong to the repository, not to any framework:
   (`tools.mcp.include`). The MCP server authenticates the agent, owns the
   database credential and re-checks policy at the point of mutation.
 * **OpenTelemetry is the telemetry boundary.** The agent exports spans over
-  OTLP to the Collector, which forwards them to MLflow. Nothing downstream
-  depends on how the agent produced them; see [OBSERVABILITY.md](OBSERVABILITY.md).
+  OTLP to the Collector, which forwards them to Phoenix (and, optionally, to
+  MLflow). The agent has no Phoenix SDK and no backend-specific code; nothing
+  downstream depends on how the agent produced the spans, and adding or
+  replacing a backend is a collector change. See [OBSERVABILITY.md](OBSERVABILITY.md).
 * **Evaluation is repository-owned.** Datasets, deterministic scorers and
   quality gates live in `evaluation/` and call the agent through the same
-  contract as the gateway; see [EVALUATION.md](EVALUATION.md).
+  contract as the gateway; see [EVALUATION.md](EVALUATION.md). The evaluator
+  writes the result itself; Phoenix and MLflow display a copy and never decide
+  whether a run passed.
 
 ## What each boundary is for
 
@@ -106,17 +115,25 @@ callers.
 
 ## Network segmentation
 
-Seven Compose networks, each one trust relationship:
+Eight Compose networks, each one trust relationship:
 
 | Network | Members | Purpose |
 | --- | --- | --- |
-| `edge` | ui, keycloak, mlflow, otel-collector, (mcp-inspector) | The only services that publish host ports |
+| `edge` | ui, keycloak, phoenix, otel-collector, (mlflow), (mcp-inspector) | The only services that publish host ports |
 | `gateway_net` | ui, gateway | assistant-ui → gateway |
 | `auth_net` | gateway, keycloak, realm-init | OIDC backchannel |
-| `agent_net` | gateway, agent, evaluator | → the agent |
+| `agent_net` | gateway, agent, evaluator, (evaluator-mlflow) | → the agent |
 | `mcp_net` | agent, mcp-server, (mcp-inspector) | → MCP |
 | `data_net` | mcp-server, postgres | The database is reachable from one service |
-| `telemetry_net` | agent, otel-collector, mlflow, evaluator | Trace export |
+| `telemetry_net` | agent, otel-collector | Trace export, and nothing else |
+| `observability_net` | otel-collector, phoenix, evaluator, (mlflow), (evaluator-mlflow) | → the observability backends |
+
+Parenthesised members exist only under a profile (`dev`, `mlflow`). Phoenix and
+MLflow share no network with the agent, MCP, the gateway or PostgreSQL: both
+have UIs that can make outbound requests on a user's behalf (LLM playgrounds),
+so neither may become a browser-driven route to a protected service. Enabling
+the `mlflow` profile changes no protected service's reachability;
+`make compose-profile-test` asserts that.
 
 The consequences are asserted twice: statically from the resolved configuration
 (`scripts/verify_security_config.py`, run by `make security-config-test`) and at
@@ -161,8 +178,8 @@ suite in [EVALUATION.md](EVALUATION.md).
 | `gateway/` | Rust BFF. OIDC, sessions, CSRF, proxying. Nine modules, see [SECURITY.md](SECURITY.md). |
 | `agent/` | The agent: a Rig + Rust service — loop, tool policy, input and output policy, telemetry, optional approvals. See [AGENT-INTERNALS.md](AGENT-INTERNALS.md). |
 | `mcp-server/` | Rust MCP tools over PostgreSQL, plus the approval verifier. |
-| `evaluation/` | MLflow suites, deterministic scorers, provenance. |
-| `observability/` | OpenTelemetry Collector configuration. |
+| `evaluation/` | Backend-neutral evaluator: datasets, deterministic scorers, gates, provenance, result artifact; Phoenix and optional MLflow reporters. |
+| `observability/` | OpenTelemetry Collector configuration: base (Phoenix) and the optional MLflow overlay. |
 | `scripts/` | Verification that runs without the cluster, and trace tooling. |
 
 ## Building a domain application on this

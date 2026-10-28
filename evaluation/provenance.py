@@ -11,15 +11,15 @@ place knows all of them:
     Reported by the running container over its authenticated ``GET /version``.
     This is the only source that describes what actually answered the questions.
 ``prompts``
-    Registered in MLflow's prompt registry from ``agent/config.yml``, mounted
-    read-only. Loading a registered prompt inside an active run makes MLflow
-    record the exact version on the run, so the link is MLflow's own rather than
-    a tag we maintain. Real versions beat a digest: a version can be diffed.
+    Digested from ``agent/config.yml``, mounted read-only. The digest is what the
+    running agent reports for the prompt it *loaded*, so the two can be compared
+    without any registry. The optional MLflow reporter additionally registers
+    the texts in MLflow's prompt registry and links the version to its run; that
+    version is reporting metadata, recorded beside the result, never part of it.
 ``harness``
     The source commit of this repository, passed in by the Makefile. The evaluator
     container has no ``.git`` and no working tree, so ``get_git_commit(".")``
-    inside it would return ``None`` and MLflow's git versioning would report
-    ``local-dev``. The host is the only place that can answer.
+    inside it would return ``None``. The host is the only place that can answer.
 
     ``source`` records *where* that answer came from:
 
@@ -33,7 +33,7 @@ place knows all of them:
     rather than "clean". Equating those two would let a tree nobody inspected
     claim a verified clean checkout.
 
-The interesting field is ``consistent``. The evaluator registers the prompt from
+The interesting field is ``consistent``. The evaluator digests the prompt from
 the *file* while the agent reports a digest of the prompt it *loaded*; if those
 disagree, the container is running something other than the working tree — the
 exact drift a host-side git stamp would have concealed.
@@ -50,8 +50,6 @@ import urllib.request
 from pathlib import Path
 from typing import Any
 
-import mlflow
-import yaml
 
 logger = logging.getLogger(__name__)
 
@@ -82,6 +80,8 @@ def _canonical_sha256(value: Any) -> str:
     quietly agreeing. ``make eval-test`` additionally pins this helper's output
     for a fixed fragment so an accidental edit here fails offline.
     """
+    import yaml
+
     return _sha256(yaml.safe_dump(value, sort_keys=True, default_flow_style=False))
 
 
@@ -186,6 +186,10 @@ def _config_prompts(path: Path | None = None) -> dict[str, Any]:
     """Read the prompt texts the agent is configured with."""
     target = path or AGENT_CONFIG_PATH
     try:
+        # Imported here, so the rest of the evaluator (and its host-side tests)
+        # needs nothing beyond the standard library.
+        import yaml
+
         config = yaml.safe_load(target.read_text(encoding="utf-8"))
     except Exception as exc:  # noqa: BLE001 - reported, never raised
         logger.warning("Agent config unreadable at %s: %s", target, exc)
@@ -207,70 +211,48 @@ def _config_prompts(path: Path | None = None) -> dict[str, Any]:
         rails_digest = _canonical_json_sha256(rust_rails)
     else:
         rails_digest = None
+    workflow = config.get("workflow") or {}
     return {
         "available": isinstance(system_prompt, str),
         "system_prompt": system_prompt,
         "rail_prompts": rails,
         "prompt_sha256": _sha256(system_prompt) if isinstance(system_prompt, str) else None,
         "guardrails_prompts_sha256": rails_digest,
+        # One digest per rail prompt, the same canonical form the aggregate uses
+        # for each entry, so a single rail can be identified (and mirrored)
+        # on its own. Only for the Rust layout, whose entries carry a `task`.
+        "rail_prompt_sha256": {
+            str(entry["task"]): _canonical_json_sha256(entry)
+            for entry in (rust_rails or [])
+            if isinstance(entry, dict) and entry.get("task")
+        },
+        # Invocation settings a mirrored prompt version can carry.
+        "temperature": workflow.get("temperature"),
+        "max_tokens": workflow.get("max_tokens"),
     }
 
 
-def _register_if_changed(name: str, template: str) -> dict[str, Any]:
-    """Register a prompt version only when the text actually changed.
+def prompt_digests(config: dict[str, Any]) -> list[dict[str, Any]]:
+    """The prompts this run was configured with, identified by content.
 
-    ``register_prompt`` increments on every call, so registering unconditionally
-    would mint a version per suite per run and make the version number a run
-    counter rather than a description of the prompt.
-    """
-    try:
-        current = mlflow.genai.load_prompt(f"prompts:/{name}@latest")
-        if current.template == template:
-            return {"name": name, "version": str(current.version), "registered": False}
-    except Exception:  # noqa: BLE001 - absent, or first ever registration
-        current = None
-
-    try:
-        created = mlflow.genai.register_prompt(
-            name=name,
-            template=template,
-            commit_message="Recorded automatically by the evaluation harness.",
-        )
-        return {"name": name, "version": str(created.version), "registered": True}
-    except Exception as exc:  # noqa: BLE001 - provenance must not fail a run
-        logger.warning("Could not register prompt %s: %s", name, exc)
-        return {"name": name, "error": f"{type(exc).__name__}: {exc}"}
-
-
-def register_and_link_prompts(config: dict[str, Any]) -> list[dict[str, Any]]:
-    """Register the agent's prompts, then load them inside the active run.
-
-    The load is what creates the link: MLflow records the loaded version against
-    the enclosing run, so provenance is stored by MLflow rather than asserted by
-    us in a tag.
+    Backend-neutral on purpose: a digest needs no running service to compute and
+    no registry to resolve, so the record is complete with every reporter off.
     """
     if not config.get("available"):
         return []
-
-    registered: list[dict[str, Any]] = []
-    targets = [(PROMPT_NAME, config["system_prompt"])]
+    prompts = [{"name": PROMPT_NAME, "sha256": config.get("prompt_sha256"), "source": "agent/config.yml"}]
     if config.get("rail_prompts"):
-        targets.append((
-            RAIL_PROMPT_NAME,
-            yaml.safe_dump(config["rail_prompts"], sort_keys=True, default_flow_style=False),
-        ))
-
-    for name, template in targets:
-        entry = _register_if_changed(name, template)
-        if "error" not in entry:
-            try:
-                mlflow.genai.load_prompt(f"prompts:/{name}/{entry['version']}")
-                entry["linked"] = True
-            except Exception as exc:  # noqa: BLE001
-                logger.warning("Could not link prompt %s: %s", name, exc)
-                entry["linked"] = False
-        registered.append(entry)
-    return registered
+        entry: dict[str, Any] = {
+            "name": RAIL_PROMPT_NAME,
+            "sha256": config.get("guardrails_prompts_sha256"),
+            "source": "agent/config.yml",
+        }
+        if config.get("rail_prompt_sha256"):
+            entry["tasks"] = [
+                {"task": task, "sha256": digest} for task, digest in sorted(config["rail_prompt_sha256"].items())
+            ]
+        prompts.append(entry)
+    return prompts
 
 
 def consistency_checks(
@@ -299,12 +281,60 @@ def consistency_checks(
     return checks
 
 
+#: For each registrable prompt: the mounted-config digest it is identified by,
+#: and the consistency check proving the *running agent* loaded that text.
+REGISTRATION_EVIDENCE = {
+    PROMPT_NAME: ("prompt_sha256", "prompt_matches_config"),
+    RAIL_PROMPT_NAME: ("guardrails_prompts_sha256", "guardrail_prompts_match_config"),
+}
+
+#: ``evaluation``: register a prompt because an evaluation used it. ``source``:
+#: mirror the repository text without claiming any evaluation used it.
+REGISTRATION_MODES = ("evaluation", "source")
+
+
+def registration_refusal(
+    result: dict[str, Any], name: str, config: dict[str, Any], *, mode: str = "evaluation"
+) -> str | None:
+    """Why prompt ``name`` must not be registered from ``result``; None if it may.
+
+    The one rule both prompt-registry reporters (Phoenix, MLflow) apply.
+
+    ``provenance.prompts`` is derived from the mounted ``agent/config.yml``, so
+    it matching that file proves only that the file has not changed since the
+    run. What proves the agent under evaluation actually loaded the same text
+    is the agent-side check (``prompt_matches_config`` /
+    ``guardrail_prompts_match_config``, from ``GET /version``). Evaluation mode
+    requires both; a missing or false check refuses, it never defaults to yes.
+
+    Source mode (``make sync-phoenix-prompts``) asks only that the file is
+    readable: it mirrors what the repository says, and records no evaluation
+    claim, so it must not borrow one.
+    """
+    if mode not in REGISTRATION_MODES:
+        raise ValueError(f"unknown registration mode {mode!r}")
+    if not config.get("available"):
+        return "the mounted agent/config.yml is not readable"
+    if mode == "source":
+        return None
+    record = result.get("provenance") or {}
+    digest_key, check = REGISTRATION_EVIDENCE[name]
+    evaluated = {entry.get("name"): entry.get("sha256") for entry in record.get("prompts") or []}
+    if evaluated.get(name) != config.get(digest_key):
+        return "the mounted config no longer matches the evaluated digest"
+    verdict = (record.get("checks") or {}).get(check)
+    if verdict is not True:
+        state = "missing" if verdict is None else repr(verdict)
+        return f"provenance.checks.{check} is {state}: the evaluated agent was not shown to have loaded this prompt"
+    return None
+
+
 def collect(config_path: Path | None = None) -> dict[str, Any]:
     """Assemble the provenance record for one evaluation run."""
     agent = agent_identity()
     harness = harness_identity()
     config = _config_prompts(config_path)
-    prompts = register_and_link_prompts(config)
+    prompts = prompt_digests(config)
     checks = consistency_checks(agent, harness, config)
 
     return {
@@ -320,14 +350,19 @@ def collect(config_path: Path | None = None) -> dict[str, Any]:
 
 
 def _tag_tri_state(value: Any) -> str:
-    """Render an optional boolean as an MLflow tag without losing "unobserved"."""
+    """Render an optional boolean as a string tag without losing "unobserved"."""
     if value is None:
         return SOURCE_UNKNOWN
     return str(bool(value)).lower()
 
 
-def mlflow_tags(record: dict[str, Any]) -> dict[str, str]:
-    """Flatten provenance into run tags so MLflow can group and compare runs."""
+def flat_tags(record: dict[str, Any]) -> dict[str, str]:
+    """Flatten provenance into string tags, so any platform can group and filter runs.
+
+    Phoenix receives these as experiment metadata and MLflow as run tags; both
+    are views over the same record. An absent value is the empty string or
+    ``unknown``, never a guess.
+    """
     agent = record.get("agent", {})
     harness = record.get("harness", {})
     tags = {
@@ -338,6 +373,12 @@ def mlflow_tags(record: dict[str, Any]) -> dict[str, str]:
         "provenance.agent.guard_model": str(agent.get("guard_model", "")),
         "provenance.agent.prompt_sha256": str(agent.get("prompt_sha256") or ""),
         "provenance.agent.config_sha256": str(agent.get("config_sha256") or ""),
+        "provenance.agent.rendered_prompt_sha256": str(agent.get("rendered_prompt_sha256") or ""),
+        "provenance.agent.tool_catalog_sha256": str(agent.get("tool_catalog_sha256") or ""),
+        "provenance.agent.guardrails_prompts_sha256": str(agent.get("guardrails_prompts_sha256") or ""),
+        "provenance.agent.provider": str(agent.get("provider") or ""),
+        "provenance.agent.endpoint_sha256": str(agent.get("endpoint_sha256") or ""),
+        "provenance.agent.revision_sha256": str(agent.get("agent_revision_sha256") or ""),
         "provenance.agent.tool_count": str(len(agent.get("tools_exposed") or [])),
         "provenance.harness.git_commit": str(harness.get("git_commit", "unknown")),
         # "unknown" rather than "false" when no git tree was observable, so a tag
@@ -347,28 +388,61 @@ def mlflow_tags(record: dict[str, Any]) -> dict[str, str]:
         "provenance.consistent": str(record.get("consistent", False)).lower(),
     }
     for entry in record.get("prompts", []):
-        if "version" in entry:
-            tags[f"provenance.prompt.{entry['name']}"] = f"v{entry['version']}"
+        if entry.get("sha256"):
+            tags[f"provenance.prompt.{entry['name']}"] = str(entry["sha256"])[:12]
     return tags
 
 
-def _model_prefix() -> str:
-    """Name the deployed agent is grouped under in MLflow.
-
-    Overridable so a domain application built on this template appears under its
-    own name without editing the harness.
-    """
-
-    return os.getenv("EVALUATION_MODEL_PREFIX", "agent")
+def _known(value: Any) -> Any:
+    """``None`` for a value nobody reported, so absence stays visible."""
+    if value in (None, "", "unknown"):
+        return None
+    return value
 
 
-def active_model_name(record: dict[str, Any]) -> str:
-    """Version identifier for ``mlflow.set_active_model``.
+def comparison_conditions(
+    record: dict[str, Any], *, dataset_sha256: str, required_metric: str, fail_threshold: float
+) -> dict[str, Any]:
+    """What must match for two results to measure the same thing.
 
-    Built from what the agent reports, so every trace links to the deployed
-    build rather than to the host's working tree.
+    Equal ``sha256`` means the same cases, scorer code, gate and agent revision
+    — build, configuration, rendered prompt, tool catalogue, models, reasoning
+    settings and model endpoint. Unequal, diff ``fields`` to see which one moved.
+    ``agent_revision_sha256`` is the agent's own digest of its behavioural
+    identity; the individual fields are kept beside it so a difference can be
+    attributed. ``endpoint_sha256`` makes the same model name served by two
+    different endpoints two different conditions; ``provider`` is ``None``
+    unless ``LLM_PROVIDER`` names it. A field that was not observed is ``None``
+    rather than guessed, and two ``None`` values are not evidence of a match.
     """
     agent = record.get("agent", {})
-    commit = str(agent.get("build_commit") or "unknown")[:8]
-    prompt = str(agent.get("prompt_sha256") or "nopprompt")[:8]
-    return f"{_model_prefix()}-{commit}-p{prompt}"
+    harness = record.get("harness", {})
+    fields = {
+        "dataset_sha256": dataset_sha256,
+        "required_metric": required_metric,
+        "fail_threshold": fail_threshold,
+        "harness_git_commit": _known(harness.get("git_commit")),
+        "harness_dirty": harness.get("dirty"),
+        "agent_runtime": _known(agent_runtime(agent)),
+        "agent_build_commit": _known(agent.get("build_commit")),
+        "agent_revision_sha256": _known(agent.get("agent_revision_sha256")),
+        "provider": _known(agent.get("provider")),
+        "endpoint_sha256": _known(agent.get("endpoint_sha256")),
+        "guard_endpoint_sha256": _known(agent.get("guard_endpoint_sha256")),
+        "model": _known(agent.get("model")),
+        "guard_model": _known(agent.get("guard_model")),
+        "reasoning_effort": agent.get("reasoning_effort") if agent.get("available") else None,
+        "guard_reasoning_effort": agent.get("guard_reasoning_effort") if agent.get("available") else None,
+        "prompt_sha256": _known(agent.get("prompt_sha256")),
+        "rendered_prompt_sha256": _known(agent.get("rendered_prompt_sha256")),
+        "tool_catalog_sha256": _known(agent.get("tool_catalog_sha256")),
+        "guardrails_prompts_sha256": _known(agent.get("guardrails_prompts_sha256")),
+        "behaviour_settings_sha256": _known(agent.get("behaviour_settings_sha256")),
+        "config_sha256": _known(agent.get("config_sha256")),
+    }
+    unobserved = sorted(name for name, value in fields.items() if value is None)
+    return {
+        "sha256": _sha256(json.dumps(fields, sort_keys=True, separators=(",", ":"))),
+        "fields": fields,
+        "unobserved": unobserved,
+    }

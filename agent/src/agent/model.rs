@@ -37,6 +37,10 @@ pub fn additional_params(settings: &ModelSettings) -> Option<Value> {
 #[error("the guard model call failed: {0}")]
 pub struct GuardModelError(String);
 
+/// The classifier's sampling temperature. Reported in provenance and in the
+/// guardrail prompts mirrored to an observability backend.
+pub const GUARD_TEMPERATURE: f64 = 0.001;
+
 /// The input rail's classifier call: the rendered self-check prompt as a
 /// single user message, the prompt's token budget, and the lowest temperature
 /// NeMo Guardrails used (0.001). Returns the raw text; parsing is deterministic and
@@ -48,7 +52,7 @@ pub async fn classify(
     max_tokens: u64,
 ) -> Result<String, GuardModelError> {
     let request = CompletionRequest::new(prompt)
-        .temperature(Some(0.001))
+        .temperature(Some(GUARD_TEMPERATURE))
         .max_tokens(Some(max_tokens))
         .additional_params(additional_params(settings));
     let response = model.call(request).await.map_err(|error| GuardModelError(error.to_string()))?;

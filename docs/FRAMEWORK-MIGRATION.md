@@ -39,7 +39,7 @@ boundaries lived in the framework in the first place:
 | Whether a mutation is permitted | `apply_policy` in the MCP server, after an approval token is verified | no |
 | What the database accepts | PostgreSQL constraints and the append-only audit table | no |
 | The agent-service contract | routes, SSE vocabulary, errors, `/version` ([AGENT-SERVICE-CONTRACT.md](AGENT-SERVICE-CONTRACT.md)) | no |
-| Telemetry | OpenTelemetry over OTLP to the Collector, then MLflow | no |
+| Telemetry | OpenTelemetry over OTLP to the Collector, then Phoenix (MLflow optional) | no |
 | Evaluation | datasets, scorers and gates in [`evaluation/`](../evaluation/) | no |
 | The model | any OpenAI-compatible endpoint | no |
 

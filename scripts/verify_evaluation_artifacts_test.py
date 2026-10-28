@@ -170,6 +170,60 @@ def test_credential_check_is_skipped_without_configured_secrets() -> None:
     print("PASS: empty/absent secret values do not block an otherwise clean result")
 
 
+def _v2(**overrides) -> dict:
+    """A schema-version-2 result, as the backend-neutral evaluator writes it."""
+    base = _summary(
+        schema_version=2,
+        record_count=1,
+        gate={"metric": "block_rate", "value": 1.0, "threshold": 1.0, "passed": True},
+        metrics={"block_rate": 1.0},
+        errors={"count": 0, "case_ids": []},
+        latency={"count": 1, "p50_ms": 1.0, "p95_ms": 1.0},
+        dataset_revision={"sha256": "0" * 64},
+        conditions={"sha256": "1" * 64},
+        cases=[{"case_id": "c", "scores": []}],
+        reporting={"phoenix": {"status": "ok"}},
+    )
+    base.update(overrides)
+    return base
+
+
+def _outcome(payload: dict) -> str:
+    with tempfile.TemporaryDirectory() as tmp:
+        directory = Path(tmp)
+        _write(directory, "guardrails-latest.json", payload)
+        return validate(directory, started_after=NOW.isoformat()).outcome
+
+
+def test_a_consistent_v2_result_is_eligible() -> None:
+    assert _outcome(_v2()) == "eligible"
+    print("PASS: a self-consistent schema-version-2 result is eligible")
+
+
+def test_a_v2_verdict_that_contradicts_itself_is_malformed() -> None:
+    assert _outcome(_v2(passed=False)) == "malformed"  # disagrees with gate.passed
+    assert _outcome(_v2(errors={"count": 1, "case_ids": ["c"]})) == "malformed"  # pass with unevaluated cases
+    assert _outcome(_v2(cases=[])) == "malformed"  # cases do not cover the dataset
+    assert _outcome(_v2(schema_version=1)) == "malformed"
+    without_gate = _v2()
+    del without_gate["gate"]
+    assert _outcome(without_gate) == "malformed"
+    print("PASS: a v2 verdict that contradicts itself, or is incomplete, is malformed")
+
+
+def test_reporter_metadata_is_not_the_verdict() -> None:
+    # A reporter saying "ok" cannot make a failed gate publishable as a pass.
+    failed = _v2(passed=False, gate={"metric": "block_rate", "value": 0.5, "threshold": 1.0, "passed": False})
+    with tempfile.TemporaryDirectory() as tmp:
+        directory = Path(tmp)
+        _write(directory, "guardrails-latest.json", failed)
+        result = validate(directory, started_after=NOW.isoformat())
+        published = json.loads(Path(result.files[0]).read_text(encoding="utf-8"))
+    assert result.eligible is True  # a red metric is a published finding
+    assert published["passed"] is False and published["gate"]["passed"] is False
+    print("PASS: a failed gate stays a failed gate whatever reporters said")
+
+
 def main() -> None:
     test_clean_results_are_eligible()
     test_synthetic_credential_is_ineligible()
@@ -181,6 +235,9 @@ def main() -> None:
     test_stale_result_produces_a_clear_outcome()
     test_no_started_after_skips_the_staleness_check()
     test_credential_check_is_skipped_without_configured_secrets()
+    test_a_consistent_v2_result_is_eligible()
+    test_a_v2_verdict_that_contradicts_itself_is_malformed()
+    test_reporter_metadata_is_not_the_verdict()
 
 
 if __name__ == "__main__":

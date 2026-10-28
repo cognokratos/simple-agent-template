@@ -47,7 +47,9 @@ jobs:
       # is what lets the suite run identically here and inside the evaluator
       # image. Without it, discovery fails with "start directory is not
       # importable".
-      - name: Evaluator parser, scorer and provenance tests
+      # Includes the backend-neutrality tests: this job has no MLflow, no
+      # Phoenix package and no PyYAML, which is the point.
+      - name: Evaluator parser, scorer, provenance and backend-neutrality tests
         run: python3 -m unittest discover -s evaluation/tests -t . -p 'test_*.py' -v
 
       - name: Security-critical source wiring
@@ -66,6 +68,9 @@ jobs:
 
       - name: live-evaluation.yml upload condition semantics
         run: python3 scripts/verify_live_evaluation_upload_condition_test.py
+
+      - name: Deterministic gate reads the artifacts alone
+        run: python3 scripts/evaluation_gate_test.py
 
   rust:
     name: Rust (${{ matrix.crate }})
@@ -168,10 +173,29 @@ jobs:
       # database, MCP and the agent are not reachable from the edge. No containers
       # start. Every profile is rendered, because `docker compose config` omits
       # profile-gated services and would otherwise skip what it claims to check.
+      #
+      # Rendered twice: the default stack, then with the optional MLflow
+      # profile and its collector overlay, so enabling MLflow is held to the
+      # same topology rules.
       - name: Security topology of the resolved Compose configuration
         run: |
           docker compose --profile evaluation --profile dev config --format json \
             | python3 scripts/verify_security_config.py
+          OTEL_COLLECTOR_OVERLAY=otel-collector.mlflow.yml \
+            docker compose --profile evaluation --profile evaluation-mlflow --profile dev --profile mlflow config --format json \
+            | python3 scripts/verify_security_config.py
+
+      - name: Phoenix default, MLflow opt-in, private telemetry defaults
+        run: python3 scripts/verify_compose_profiles_test.py
+
+      - name: Collector configurations validate (default and MLflow overlay)
+        run: |
+          for overlay in otel-collector.default.yml otel-collector.mlflow.yml; do
+            docker run --rm -e PHOENIX_PROJECT_NAME=ci -v "$PWD/observability:/etc/otelcol-contrib:ro" \
+              otel/opentelemetry-collector-contrib:0.123.0 validate \
+              --config=file:/etc/otelcol-contrib/otel-collector.yml \
+              --config="file:/etc/otelcol-contrib/$overlay"
+          done
 
       - name: Read-only-default check behaves correctly (positive and negative cases)
         run: python3 scripts/verify_read_only_default_test.py

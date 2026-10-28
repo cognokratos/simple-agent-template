@@ -132,6 +132,10 @@ pub async fn workflow_full(
         "support-tickets-agent.invoke",
         otel.name = %services.settings.file.workflow.name,
         otel.kind = "server",
+        // OpenInference semantic convention: any OpenInference-aware trace
+        // backend presents this as the agent's span. A plain attribute: no
+        // SDK, no backend-specific code path.
+        openinference.span.kind = "AGENT",
         agent.runtime = "rig-rust",
         agent.event_type = "WORKFLOW_START",
         request.id = %request_id,
@@ -147,6 +151,7 @@ pub async fn workflow_full(
     if telemetry.export_user_id {
         root.record("enduser.pseudonym", scope.caller().pseudonym().as_str());
     }
+    crate::telemetry::record_identity(&root, &services.trace_identity);
     crate::telemetry::adopt_parent(&root, &headers);
 
     let task = tokio::spawn(execution::run(scope, conversation).instrument(root));

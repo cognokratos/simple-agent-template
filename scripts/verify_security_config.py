@@ -1,5 +1,11 @@
 #!/usr/bin/env python3
-"""Validate the resolved Compose security topology from JSON on stdin."""
+"""Validate the resolved Compose security topology from JSON on stdin.
+
+Run against every render that matters (`make security-config-test`): the
+default stack with the evaluation and dev profiles, and the same with the
+optional `mlflow` profile. A service that only exists under a profile is
+checked whenever that profile is rendered.
+"""
 
 from __future__ import annotations
 
@@ -34,10 +40,25 @@ def main() -> None:
         "keycloak-realm-init",
         "agent",
         "mcp-server",
+        "otel-collector",
+        "phoenix",
         "evaluator",
     ):
         if name not in services:
             fail(f"missing service {name!r}")
+
+    # The observability default is Phoenix; MLflow is opt-in. A render without
+    # the mlflow profile must not contain it, or "optional" means nothing.
+    profiles_of = {name: set(service.get("profiles") or []) for name, service in services.items()}
+    # The evaluators run on demand (`docker compose run`), never on `up`.
+    for name, profile in (("mlflow", "mlflow"), ("evaluator", "evaluation"), ("evaluator-mlflow", "evaluation-mlflow")):
+        if name in services and profiles_of[name] != {profile}:
+            fail(f"{name} must be gated by exactly the {profile!r} profile, found {sorted(profiles_of[name])}")
+    if profiles_of.get("phoenix"):
+        fail("phoenix must be part of the default stack, not behind a profile")
+    phoenix_image = str(services["phoenix"].get("image", ""))
+    if "@sha256:" not in phoenix_image or ":latest" in phoenix_image or ":version-" not in phoenix_image:
+        fail(f"phoenix image must be pinned by version and digest, found {phoenix_image!r}")
 
     # Reachability from the host. These four services carry the credentials, the
     # model access and the data, and none of them may be addressable from outside
@@ -61,9 +82,11 @@ def main() -> None:
         "ui": {"edge", "gateway_net"},
         "keycloak": {"edge", "auth_net"},
         "keycloak-realm-init": {"auth_net"},
-        "mlflow": {"edge", "telemetry_net"},
-        "otel-collector": {"edge", "telemetry_net"},
-        "evaluator": {"agent_net", "telemetry_net"},
+        "phoenix": {"edge", "observability_net"},
+        "mlflow": {"edge", "observability_net"},
+        "otel-collector": {"edge", "telemetry_net", "observability_net"},
+        "evaluator": {"agent_net", "observability_net"},
+        "evaluator-mlflow": {"agent_net", "observability_net"},
     }
     for name, expected in expected_networks.items():
         if name not in services:
@@ -85,6 +108,25 @@ def main() -> None:
     ):
         if shared in networks(consumer):
             fail(f"{consumer} can reach {target}; it must not share {shared}")
+
+    # Observability backends render UIs to the browser and, in both cases, can
+    # make outbound requests on a user's behalf (LLM playgrounds). They must
+    # share no network with a protected service, so neither can become a
+    # browser-driven path to the agent, MCP, the gateway or the database.
+    protected = ("agent", "mcp-server", "gateway", "postgres")
+    for backend in ("phoenix", "mlflow"):
+        if backend not in services:
+            continue
+        for target in protected:
+            shared_networks = networks(backend) & networks(target)
+            if shared_networks:
+                fail(f"{backend} shares {sorted(shared_networks)} with {target}; it must not reach it")
+
+    # The agent's telemetry network carries trace export to the collector and
+    # nothing else.
+    telemetry_members = {name for name in services if "telemetry_net" in networks(name)}
+    if telemetry_members != {"agent", "otel-collector"}:
+        fail(f"telemetry_net must hold only the agent and the collector, found {sorted(telemetry_members)}")
 
     # Only edge members may publish host ports.
     for name, service in services.items():
@@ -115,6 +157,22 @@ def main() -> None:
         fail("gateway and agent use different AGENT_API_KEY values")
     if evaluator_env["AGENT_API_KEY"] != agent_env["AGENT_API_KEY"]:
         fail("evaluator and agent use different AGENT_API_KEY values")
+    if "evaluator-mlflow" in services:
+        if environment(services["evaluator-mlflow"]).get("AGENT_API_KEY") != agent_env["AGENT_API_KEY"]:
+            fail("evaluator-mlflow and agent use different AGENT_API_KEY values")
+
+    # Credentials never travel to an observability backend's configuration:
+    # Phoenix and MLflow are display surfaces and receive no service key.
+    secret_values = {
+        value
+        for value in (agent_env.get("AGENT_API_KEY"), agent_env.get("MCP_API_KEY"), agent_env.get("HITL_APPROVAL_SECRET"))
+        if value
+    }
+    for backend in ("phoenix", "mlflow", "otel-collector"):
+        if backend in services:
+            leaked = [key for key, value in environment(services[backend]).items() if value in secret_values]
+            if leaked:
+                fail(f"{backend} receives a service credential in {leaked}")
     # The container receives only the current names; Compose resolves the
     # deprecated host-side aliases (docs/CONFIGURATION.md#renamed-variables).
     for deprecated in ("NAT_GATEWAY_API_KEY", "NAT_TRACE_CAPTURE_CONTENT", "NAT_TRACE_CONTENT_MAX_CHARS"):

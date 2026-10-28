@@ -1,0 +1,6 @@
+# The default collector overlay: intentionally adds nothing.
+#
+# docker-compose.yml always passes two --config files, the base and an
+# overlay, so that enabling MLflow is a matter of choosing a different overlay
+# (OTEL_COLLECTOR_OVERLAY=otel-collector.mlflow.yml) rather than editing the
+# base. With this one, traces go to Phoenix only.

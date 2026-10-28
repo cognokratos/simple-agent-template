@@ -1,16 +1,20 @@
-"""Create, synchronize, and retrieve persistent MLflow evaluation datasets."""
+"""Load the source-controlled evaluation datasets.
+
+The JSON files under ``evaluation/datasets/`` are the only definition of a case.
+They are read here, digested, and handed to the evaluator; no platform holds a
+copy that could drift from them. A reporter may *mirror* a revision for display
+(Phoenix does, under a name carrying the digest), but nothing reads it back.
+"""
 
 from __future__ import annotations
 
+import hashlib
 import json
 from pathlib import Path
 from typing import Any
 
-import mlflow
-from mlflow.genai.datasets import create_dataset
-from mlflow.genai.datasets import search_datasets
-
 from evaluation.config import SuiteConfig
+from evaluation.domain import EvaluationCase
 
 
 def load_records(path: Path) -> list[dict[str, Any]]:
@@ -25,52 +29,47 @@ def load_records(path: Path) -> list[dict[str, Any]]:
     return records
 
 
-def _escape_filter(value: str) -> str:
-    return value.replace("'", "''")
+def load_cases(path: Path) -> list[EvaluationCase]:
+    """Records as cases, with an identity every case can be found by.
 
-
-def ensure_experiment(name: str):
-    experiment = mlflow.get_experiment_by_name(name)
-    if experiment is None:
-        experiment_id = mlflow.create_experiment(name)
-        experiment = mlflow.get_experiment(experiment_id)
-    return experiment
-
-
-def find_dataset(config: SuiteConfig, experiment_id: str):
-    datasets = search_datasets(
-        experiment_ids=[experiment_id],
-        filter_string=f"name = '{_escape_filter(config.dataset_name)}'",
-        max_results=10,
-    )
-    if len(datasets) > 1:
-        raise RuntimeError(
-            f"Multiple datasets named {config.dataset_name!r} are attached to experiment {experiment_id}"
+    A record without ``inputs.case_id`` is given a positional one, so results
+    still line up, but the datasets shipped here all name their cases.
+    """
+    cases: list[EvaluationCase] = []
+    seen: set[str] = set()
+    for index, record in enumerate(load_records(path)):
+        inputs = dict(record["inputs"])
+        case_id = str(inputs.get("case_id") or f"{path.stem}-{index:03d}")
+        if case_id in seen:
+            raise ValueError(f"Duplicate case_id {case_id!r} in {path}")
+        seen.add(case_id)
+        cases.append(
+            EvaluationCase(
+                case_id=case_id,
+                inputs=inputs,
+                expectations=dict(record.get("expectations") or {}),
+                tags=dict(record.get("tags") or {}),
+            )
         )
-    return datasets[0] if datasets else None
+    return cases
 
 
-def sync_dataset(config: SuiteConfig, *, replace: bool = False):
-    experiment = ensure_experiment(config.experiment_name)
-    dataset = find_dataset(config, experiment.experiment_id)
-    if dataset is None:
-        dataset = create_dataset(
-            name=config.dataset_name,
-            experiment_id=[experiment.experiment_id],
-            tags={
-                "suite": config.key,
-                "managed_by": "evaluation.bootstrap",
-                "source_file": config.dataset_path.name,
-            },
-        )
+def dataset_sha256(path: Path) -> str:
+    """Digest of the dataset's *content*, independent of whitespace and key order.
 
-    if replace:
-        current = dataset.to_df()
-        if not current.empty and "dataset_record_id" in current.columns:
-            record_ids = [str(value) for value in current["dataset_record_id"].dropna().tolist()]
-            if record_ids:
-                dataset.delete_records(record_ids)
+    Two runs with the same digest scored the same cases against the same
+    expectations; that is the first thing to check before comparing them.
+    """
+    records = load_records(path)
+    canonical = json.dumps(records, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
-    records = load_records(config.dataset_path)
-    dataset.merge_records(records)
-    return experiment, dataset, len(records)
+
+def dataset_revision(config: SuiteConfig, cases: list[EvaluationCase]) -> dict[str, Any]:
+    return {
+        "name": config.dataset_name,
+        "source": f"evaluation/datasets/{config.dataset_path.name}",
+        "sha256": dataset_sha256(config.dataset_path),
+        "record_count": len(cases),
+        "case_ids": [case.case_id for case in cases],
+    }

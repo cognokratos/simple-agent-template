@@ -144,6 +144,24 @@ fn optional_param(env: &dyn Env, name: &str, default: Option<&str>) -> Option<St
     }
 }
 
+/// `LLM_PROVIDER`: optional, and constrained to a short identifier because it
+/// is exported on every trace. It names the provider; it is not a URL.
+fn provider_name(env: &dyn Env) -> Result<Option<String>, ConfigError> {
+    let Some(value) = optional_param(env, "LLM_PROVIDER", None) else { return Ok(None) };
+    let valid = value.len() <= 64
+        && value.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || matches!(c, '-' | '_' | '.'));
+    if !valid {
+        return Err(invalid("LLM_PROVIDER", "use a short lowercase identifier such as `ollama` or `openai`"));
+    }
+    Ok(Some(value))
+}
+
+/// `<crate version>+<12-character commit>`, or `+unknown` for a build without one.
+fn service_version(build_commit: &str) -> String {
+    let commit: String = build_commit.chars().take(12).collect();
+    format!("{}+{commit}", env!("CARGO_PKG_VERSION"))
+}
+
 fn required_secret(env: &dyn Env, name: &'static str) -> Result<String, ConfigError> {
     match env.get(name) {
         Some(value) if !value.trim().is_empty() => Ok(value.trim().to_string()),
@@ -181,6 +199,10 @@ pub struct ModelSettings {
     pub api_key: String,
     pub model: String,
     pub reasoning_effort: Option<String>,
+    /// An optional, operator-chosen name for the provider (`LLM_PROVIDER`).
+    /// Reported in provenance; the endpoint itself is reported only as a
+    /// fingerprint (`telemetry::provenance::endpoint_sha256`).
+    pub provider: Option<String>,
 }
 
 /// The approval feature, when — and only when — every switch agrees.
@@ -231,6 +253,8 @@ pub struct TelemetrySettings {
     /// default: model output on those spans is *pre-output-rail*, so it can
     /// carry exactly the credential the output rail exists to withhold.
     pub capture_model_content: bool,
+    /// OpenTelemetry `service.version`: the crate version plus the build commit.
+    pub service_version: String,
 }
 
 /// Everything the service needs, resolved once at startup.
@@ -276,11 +300,13 @@ impl Settings {
 
         let base_url = string_or(env, "LLM_BASE_URL", "http://host.docker.internal:11434/v1");
         let api_key = string_or(env, "LLM_API_KEY", "ollama");
+        let provider = provider_name(env)?;
         let agent = ModelSettings {
             base_url: base_url.clone(),
             api_key: api_key.clone(),
             model: string_or(env, "LLM_MODEL", "qwen3:8b"),
             reasoning_effort: optional_param(env, "LLM_REASONING_EFFORT", None),
+            provider: provider.clone(),
         };
         // Deliberately does not inherit LLM_MODEL: the fallback ends at the
         // literal qwen3:8b.
@@ -289,6 +315,7 @@ impl Settings {
             api_key,
             model: string_or(env, "LLM_GUARD_MODEL", "qwen3:8b"),
             reasoning_effort: optional_param(env, "LLM_GUARD_REASONING_EFFORT", None),
+            provider,
         };
 
         let approval = resolve_approval(env, &file)?;
@@ -336,6 +363,7 @@ impl Settings {
             content_max_chars: parse_usize(env, "AGENT_TRACE_CONTENT_MAX_CHARS", 65_536, 256)?,
             export_user_id: parse_bool(env, "OTEL_TRACE_USER_ID", false)?,
             capture_model_content: parse_bool(env, "AGENT_TRACE_CAPTURE_MODEL_CONTENT", false)?,
+            service_version: service_version(&string_or(env, "AGENT_BUILD_COMMIT", "unknown")),
         };
 
         Ok(Self {

@@ -108,6 +108,52 @@ async fn a_request_is_one_trace_covering_policy_model_tools_and_output() {
     // Correlation and readable content on the root.
     assert_eq!(attribute(root, "request.id").as_deref(), Some("12121212-1212-4121-8121-121212121212"));
     assert_eq!(attribute(root, "agent.runtime").as_deref(), Some("rig-rust"));
+    assert_eq!(attribute(root, "openinference.span.kind").as_deref(), Some("AGENT"));
+    // Only the safety rails are OpenInference GUARDRAIL spans. The tool policy
+    // is deterministic authorization, a different boundary, and keeps its own
+    // policy.* attributes without borrowing the guardrail kind.
+    for rail in ["guardrail.input.self_check", "guardrail.output.stream"] {
+        let span = in_trace.iter().find(|s| s.name == rail).expect("rail span");
+        assert_eq!(attribute(span, "openinference.span.kind").as_deref(), Some("GUARDRAIL"), "{rail}");
+    }
+    let policy = in_trace.iter().find(|s| s.name == "tool.policy").expect("tool.policy span");
+    assert_eq!(attribute(policy, "openinference.span.kind"), None);
+    assert_eq!(attribute(policy, "policy.kind").as_deref(), Some("deterministic"));
+    assert_eq!(attribute(policy, "policy.decision").as_deref(), Some("allow"));
+    assert_eq!(attribute(policy, "tool.name").as_deref(), Some("get_ticket"));
+
+    // Every trace names the exact deployed agent, without consulting /version.
+    let digest = |key: &str| {
+        let value = attribute(root, key).unwrap_or_else(|| panic!("{key} missing from the root span"));
+        assert!(value.len() == 64 && value.chars().all(|c| c.is_ascii_hexdigit()), "{key}={value:?}");
+    };
+    for key in [
+        "agent.revision.sha256",
+        "agent.config.sha256",
+        "agent.prompt.template_sha256",
+        "agent.prompt.rendered_sha256",
+        "agent.tool_catalog.sha256",
+        "agent.guardrail_prompts.sha256",
+        "agent.behaviour_settings.sha256",
+        "agent.llm.endpoint_sha256",
+    ] {
+        digest(key);
+    }
+    assert_eq!(attribute(root, "agent.name").as_deref(), Some("support-tickets-agent.invoke"));
+    assert_eq!(attribute(root, "agent.framework").as_deref(), Some("rig"));
+    assert!(attribute(root, "agent.framework.version").is_some_and(|v| !v.is_empty()));
+    assert!(attribute(root, "agent.build.commit").is_some_and(|v| !v.is_empty()));
+    assert!(attribute(root, "agent.model").is_some_and(|v| !v.is_empty()));
+    assert!(attribute(root, "agent.guard_model").is_some_and(|v| !v.is_empty()));
+    // The identity is names and digests only: no URL, no key, no path.
+    let identity: String = root
+        .attributes
+        .iter()
+        .filter(|kv| kv.key.as_str().starts_with("agent.") || kv.key.as_str() == "service.version")
+        .map(|kv| kv.value.to_string())
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(!identity.contains("://"), "an endpoint URL reached the trace identity: {identity}");
     assert_eq!(attribute(root, "input.value").as_deref(), Some("Show me ticket TKT-1001"));
     assert_eq!(attribute(root, "output.value").as_deref(), Some("TKT-1001 is medium."));
     assert_eq!(attribute(root, "agent.execution.state").as_deref(), Some("completed"));
@@ -170,7 +216,10 @@ async fn no_credential_identity_or_approval_secret_reaches_a_span() {
 
     let all = everything(&capture.spans());
     let token = agent.mcp.state.execute_bodies.lock().unwrap()[0]["approval_token"].as_str().unwrap().to_string();
+    // The model endpoint is exported only as a fingerprint, never as a URL.
+    let endpoint = agent.llm.url.trim_end_matches('/').to_string();
     for forbidden in [
+        endpoint.as_str(),
         GATEWAY_KEY,
         MCP_KEY,
         APPROVAL_SECRET,

@@ -1,0 +1,28 @@
+# Optional overlay: also export traces to MLflow (the `mlflow` profile).
+#
+# Merged over otel-collector.yml. It adds a second pipeline rather than a
+# second exporter on the first, so the Phoenix project attribute is not stamped
+# onto MLflow's copy, and the two backends fail independently: an MLflow that
+# is down retries and drops its copy without delaying Phoenix's.
+#
+# Selected by `make dev-mlflow` (OTEL_COLLECTOR_OVERLAY=otel-collector.mlflow.yml).
+
+exporters:
+  otlphttp/mlflow:
+    traces_endpoint: http://mlflow:5000/v1/traces
+    headers:
+      x-mlflow-experiment-id: "0"
+    encoding: proto
+    timeout: 10s
+    retry_on_failure:
+      enabled: true
+      initial_interval: 1s
+      max_interval: 10s
+      max_elapsed_time: 60s
+
+service:
+  pipelines:
+    traces/mlflow:
+      receivers: [otlp]
+      processors: [memory_limiter, attributes/scrub, batch]
+      exporters: [otlphttp/mlflow]

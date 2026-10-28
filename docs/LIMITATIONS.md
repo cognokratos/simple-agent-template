@@ -12,7 +12,7 @@ than one that is absent, because it is believed.
 | End-to-end approval through the browser | Needs a cluster, a model that calls the function, and a human | Enable the feature and follow [APPROVALS.md](APPROVALS.md) |
 | Keycloak login through a real browser | Needs the cluster | `make dev`, then sign in |
 | The evaluation suites' actual scores | Non-deterministic and model-dependent | `make eval-all` with a model available |
-| Trace export reaching MLflow | Needs the cluster and a model | `make trace-test` |
+| Trace export reaching Phoenix | Needs the cluster and a model | `make trace-test` (`make trace-test-mlflow` for the optional MLflow) |
 
 The `make` targets above exist and are documented; they are simply not part of
 any automated gate.
@@ -93,9 +93,10 @@ prints how).
 
 ## Resource requirements
 
-The full stack runs eight services at once: assistant-ui, the gateway,
-Keycloak, PostgreSQL, the MCP server, the agent, the OpenTelemetry Collector and
-MLflow. Plan for a Docker VM of about 8 GB. The agent itself is small: a
+The full stack runs eight long-lived services at once: assistant-ui, the
+gateway, Keycloak, PostgreSQL, the MCP server, the agent, the OpenTelemetry
+Collector and Phoenix (about 430 MiB resident when idle; a 1.4 GB image). The
+optional MLflow profile adds one more. Plan for a Docker VM of about 8 GB. The agent itself is small: a
 distroless image with one binary and its configuration, and no NER model or
 other in-process ML dependency.
 
@@ -133,7 +134,13 @@ This is a local demonstration. Add:
 * secrets management instead of the demo credentials in `docker-compose.yml`;
 * database migrations rather than a one-time init script;
 * pagination and response-size limits for history-heavy records;
-* access controls, retention and redaction for OpenTelemetry and MLflow data;
+* access controls, retention and redaction for OpenTelemetry data in Phoenix
+  (no login and no trace expiry by default; see
+  [CONFIGURATION.md](CONFIGURATION.md#phoenix)) and in MLflow when enabled;
+* Phoenix's SQLite store is for one developer; a shared deployment would use
+  its PostgreSQL backend, which this template does not configure;
+* Phoenix prompt management is not used: prompt provenance is a digest, and
+  only the optional MLflow reporter registers prompt texts;
 * a dedicated low-latency guard model rather than sharing the application LLM;
 * explicit image digest pinning and vulnerability scanning;
 * a session store that survives a restart and supports more than one instance.

@@ -43,7 +43,18 @@ export GIT_DIRTY
 export GIT_SOURCE
 
 COMPOSE ?= docker compose
+# The evaluator writes evaluation/results/ through a bind mount, so it runs as
+# the invoking host user rather than the image's own.
+EVAL_USER := $(shell id -u):$(shell id -g)
 EVAL_COMPOSE := $(COMPOSE) --profile evaluation
+# Optional MLflow reference integration: its services, plus the collector
+# overlay that adds a second trace pipeline to it. A profile alone cannot
+# reconfigure the collector, hence the variable; see observability/.
+MLFLOW_OVERLAY := otel-collector.mlflow.yml
+MLFLOW_COMPOSE := OTEL_COLLECTOR_OVERLAY=$(MLFLOW_OVERLAY) $(COMPOSE) --profile mlflow
+# Every profile, so `down` removes optional services too and switching from
+# `make dev-mlflow` back to `make dev` really does leave MLflow off.
+ALL_PROFILES_COMPOSE := $(COMPOSE) --profile evaluation --profile dev --profile mlflow --profile evaluation-mlflow
 DEBUG_COMPOSE := $(COMPOSE) -f docker-compose.yml -f docker-compose.debug.yml
 OPEN ?= open
 
@@ -53,8 +64,12 @@ LLM_GUARD_MODEL ?= $(LLM_MODEL)
 LLM_BASE_URL ?= http://host.docker.internal:11434/v1
 POSTGRES_USER ?= tickets
 POSTGRES_DB ?= tickets
-# Host-side MLflow port. Overridable because 5000 collides with macOS AirPlay
-# Receiver and with any other MLflow on the machine; the container port is fixed.
+# Host-side Phoenix port (UI and REST API). The container port is fixed.
+PHOENIX_PORT ?= 6006
+PHOENIX_PROJECT_NAME ?= tickets-agent
+# Host-side MLflow port, for the optional profile. Overridable because 5000
+# collides with macOS AirPlay Receiver and with any other MLflow on the
+# machine; the container port is fixed.
 MLFLOW_PORT ?= 5000
 UI_PORT ?= 3000
 KEYCLOAK_PORT ?= 8082
@@ -71,10 +86,13 @@ SUITE ?= all
 RUN_NAME ?=
 FAIL_THRESHOLD ?= 1.0
 ALLOW_FAILURES ?= 0
-REPLACE_DATASET ?= 0
+# Empty means the service default: phoenix for `eval`, phoenix,mlflow for
+# `eval-mlflow`. `none` writes the JSON result and reports nowhere.
+EVAL_REPORTERS ?=
 
 -include .env
 
+comma := ,
 EVAL_RUN_ARGS := --suite $(SUITE) --fail-threshold $(FAIL_THRESHOLD)
 ifneq ($(strip $(RUN_NAME)),)
 EVAL_RUN_ARGS += --run-name "$(RUN_NAME)"
@@ -82,14 +100,16 @@ endif
 ifeq ($(ALLOW_FAILURES),1)
 EVAL_RUN_ARGS += --allow-failures
 endif
-ifeq ($(REPLACE_DATASET),1)
-EVAL_RUN_ARGS += --replace-dataset
+ifneq ($(strip $(EVAL_REPORTERS)),)
+EVAL_RUN_ARGS += --reporter $(subst $(comma), --reporter ,$(EVAL_REPORTERS))
 endif
 
 .PHONY: \
 	help env pull-models config config-debug dev up up-build down stop restart recreate \
 	debug-up debug-down ps status wait health logs logs-app logs-agent logs-ui logs-mcp \
-	logs-db logs-gateway logs-keycloak logs-mlflow logs-otel logs-observability build \
+	logs-db logs-gateway logs-keycloak logs-phoenix logs-mlflow logs-otel logs-observability build \
+	dev-mlflow up-mlflow wait-mlflow open-phoenix traces-mlflow trace-test-mlflow reset-phoenix \
+	eval-mlflow eval-report eval-compare sync-phoenix-prompts compose-profile-test \
 	rebuild-agent rebuild-ui rebuild-mcp rebuild-gateway verify-mcp fixtures \
 	print-provenance version static-check license-check package-license-check logs-inspector network-test eval-test-host \
 	verify-approvals verify-approvals-rust verify-llm-config agent-test agent-check \
@@ -98,8 +118,7 @@ endif
 	inspector open-inspector inspector-tools network-test \
 	shell-agent shell-db open-ui open-gateway open-keycloak open-agent \
 	open-mlflow open-all login-info security-config-test auth-test security-test reset-auth reset-data \
-	eval-list eval-bootstrap eval-bootstrap-replace eval-bootstrap-guardrails \
-	eval-bootstrap-tools eval-bootstrap-grounding eval-bootstrap-injection \
+	eval-list \
 	eval eval-guardrails eval-tools eval-grounding eval-injection eval-all \
 	eval-all-allow-failures eval-test test
 
@@ -108,7 +127,8 @@ help: ## Show all available targets
 	@awk 'BEGIN {FS = ":.*## "} /^[a-zA-Z0-9_.-]+:.*## / {printf "  %-28s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
 	@printf "\nEvaluation variables:\n"
 	@printf "  SUITE=all|guardrails|tools|grounding|injection   RUN_NAME=<name>   FAIL_THRESHOLD=1.0\n"
-	@printf "  ALLOW_FAILURES=0|1           REPLACE_DATASET=0|1\n"
+	@printf "  ALLOW_FAILURES=0|1           EVAL_REPORTERS=phoenix|mlflow|phoenix,mlflow|none\n"
+	@printf "\nObservability: Phoenix is the default (make open-phoenix); MLflow is optional (make dev-mlflow).\n"
 
 env: ## Create .env from .env.example when it does not exist
 	@if [[ -f .env ]]; then \
@@ -144,12 +164,24 @@ config: ## Render and validate the normal Docker Compose configuration
 config-debug: ## Render and validate the opt-in debug port override
 	$(DEBUG_COMPOSE) config
 
-dev: env ## Rebuild and restart the complete secured development cluster
-	$(COMPOSE) down --remove-orphans
+dev: env ## Rebuild and restart the complete secured development cluster (with Phoenix)
+	$(ALL_PROFILES_COMPOSE) down --remove-orphans
 	$(COMPOSE) up -d --build --remove-orphans
 	@$(MAKE) --no-print-directory wait
 	@$(MAKE) --no-print-directory ps
 	@$(MAKE) --no-print-directory login-info
+
+dev-mlflow: env ## Like dev, plus the optional MLflow reference integration (traces to Phoenix and MLflow)
+	$(ALL_PROFILES_COMPOSE) down --remove-orphans
+	$(MLFLOW_COMPOSE) up -d --build --remove-orphans
+	@$(MAKE) --no-print-directory wait
+	@$(MAKE) --no-print-directory wait-mlflow
+	@$(MAKE) --no-print-directory ps
+	@$(MAKE) --no-print-directory login-info
+
+up-mlflow: env ## Add MLflow to a running cluster (recreates the collector with the MLflow overlay)
+	$(MLFLOW_COMPOSE) up -d --remove-orphans mlflow otel-collector
+	@$(MAKE) --no-print-directory wait-mlflow
 
 up: env ## Start the secured cluster without rebuilding images
 	$(COMPOSE) up -d --remove-orphans
@@ -160,8 +192,8 @@ up-build: env ## Build changed images and start the secured cluster
 build: ## Build all locally built service images
 	$(COMPOSE) build
 
-down: ## Stop and remove the cluster, preserving volumes
-	$(COMPOSE) down --remove-orphans
+down: ## Stop and remove the cluster (optional services too), preserving volumes
+	$(ALL_PROFILES_COMPOSE) down --remove-orphans
 
 stop: ## Stop services without removing containers
 	$(COMPOSE) stop
@@ -184,14 +216,14 @@ ps: ## Show cluster service status
 
 status: ps ## Alias for make ps
 
-wait: ## Wait for UI, gateway, Keycloak, MLflow, and Collector readiness
+wait: ## Wait for UI, gateway, Keycloak, Phoenix, and Collector readiness
 	@deadline=$$((SECONDS + $(WAIT_TIMEOUT))); \
 	printf "Waiting up to $(WAIT_TIMEOUT)s for the secured cluster"; \
 	until \
 		curl -fsS http://localhost:$(UI_PORT)/ >/dev/null 2>&1 && \
 		$(COMPOSE) exec -T gateway curl -fsS http://127.0.0.1:8081/ready >/dev/null 2>&1 && \
 		curl -fsS http://localhost:$(KEYCLOAK_PORT)/realms/$${KEYCLOAK_REALM:-tickets}/.well-known/openid-configuration >/dev/null 2>&1 && \
-		curl -fsS http://localhost:$(MLFLOW_PORT)/health >/dev/null 2>&1 && \
+		curl -fsS http://localhost:$(PHOENIX_PORT)/healthz >/dev/null 2>&1 && \
 		curl -fsS http://localhost:13133/ >/dev/null 2>&1; \
 	do \
 		if (( SECONDS >= deadline )); then \
@@ -205,12 +237,29 @@ wait: ## Wait for UI, gateway, Keycloak, MLflow, and Collector readiness
 	echo; \
 	echo "Secured cluster is ready."
 
+wait-mlflow: ## Wait for the optional MLflow service (only meaningful after dev-mlflow/up-mlflow)
+	@deadline=$$((SECONDS + $(WAIT_TIMEOUT))); \
+	printf "Waiting up to $(WAIT_TIMEOUT)s for MLflow"; \
+	until curl -fsS http://localhost:$(MLFLOW_PORT)/health >/dev/null 2>&1; do \
+		if (( SECONDS >= deadline )); then echo; echo "Timed out. Run 'make logs-mlflow'."; exit 1; fi; \
+		printf "."; sleep 3; \
+	done; \
+	echo; \
+	echo "MLflow is ready."
+
 health: ## Check all public endpoints and internal service health
 	@curl -fsS http://localhost:$(UI_PORT)/ >/dev/null && echo "OK  assistant-ui   http://localhost:$(UI_PORT)"
 	@$(COMPOSE) exec -T gateway curl -fsS http://127.0.0.1:8081/ready >/dev/null && echo "OK  Rust gateway   internal only"
 	@curl -fsS http://localhost:$(KEYCLOAK_PORT)/realms/$${KEYCLOAK_REALM:-tickets}/.well-known/openid-configuration >/dev/null && echo "OK  Keycloak       http://localhost:$(KEYCLOAK_PORT)"
-	@curl -fsS http://localhost:$(MLFLOW_PORT)/health >/dev/null && echo "OK  MLflow         http://localhost:$(MLFLOW_PORT)"
+	@curl -fsS http://localhost:$(PHOENIX_PORT)/healthz >/dev/null && echo "OK  Phoenix        http://localhost:$(PHOENIX_PORT)"
 	@curl -fsS http://localhost:13133/ >/dev/null && echo "OK  OTel Collector http://localhost:13133"
+	@if [[ -n "$$($(COMPOSE) --profile mlflow ps --status running -q mlflow 2>/dev/null)" ]]; then \
+		curl -fsS http://localhost:$(MLFLOW_PORT)/health >/dev/null && echo "OK  MLflow         http://localhost:$(MLFLOW_PORT)  (optional)"; \
+		docker inspect --format '{{join .Args " "}}' $$($(COMPOSE) ps -q otel-collector) 2>/dev/null | grep -q "$(MLFLOW_OVERLAY)" \
+			|| echo "!!  MLflow is running but the collector was not started with its overlay; agent traces are not reaching it (use make dev-mlflow or make up-mlflow)"; \
+	else \
+		echo "--  MLflow         optional, not enabled (make dev-mlflow)"; \
+	fi
 	@$(COMPOSE) exec -T agent /usr/local/bin/tickets-agent probe http http://127.0.0.1:8000/health/ready >/dev/null && echo "OK  Rust agent     internal only"
 	@$(COMPOSE) exec -T mcp-server curl -fsS http://127.0.0.1:8080/health >/dev/null && echo "OK  MCP server     internal only"
 
@@ -220,8 +269,8 @@ logs: ## Follow logs from every normal cluster service
 logs-app: ## Follow PostgreSQL, MCP, agent, gateway, Keycloak, and UI logs
 	$(COMPOSE) logs -f --tail=$(LOG_TAIL) postgres mcp-server agent gateway keycloak ui
 
-logs-observability: ## Follow agent, OpenTelemetry Collector, and MLflow logs
-	$(COMPOSE) logs -f --tail=$(LOG_TAIL) agent otel-collector mlflow
+logs-observability: ## Follow agent, OpenTelemetry Collector, and Phoenix logs
+	$(COMPOSE) logs -f --tail=$(LOG_TAIL) agent otel-collector phoenix
 
 logs-agent: ## Follow Rust agent logs
 	$(COMPOSE) logs -f --tail=$(LOG_TAIL) agent
@@ -241,8 +290,11 @@ logs-keycloak: ## Follow Keycloak and realm-init logs
 logs-db: ## Follow PostgreSQL logs
 	$(COMPOSE) logs -f --tail=$(LOG_TAIL) postgres
 
-logs-mlflow: ## Follow MLflow logs
-	$(COMPOSE) logs -f --tail=$(LOG_TAIL) mlflow
+logs-phoenix: ## Follow Phoenix logs
+	$(COMPOSE) logs -f --tail=$(LOG_TAIL) phoenix
+
+logs-mlflow: ## Follow the optional MLflow service's logs
+	$(COMPOSE) --profile mlflow logs -f --tail=$(LOG_TAIL) mlflow
 
 logs-otel: ## Follow OpenTelemetry Collector logs
 	$(COMPOSE) logs -f --tail=$(LOG_TAIL) otel-collector
@@ -312,10 +364,16 @@ verify-approvals-rust: ## Run the MCP approval verifier and mutation-policy test
 verify-trace-pipeline: ## Run the observability tests: one trace per request, traceparent, redaction
 	$(CARGO_AGENT) --test observability
 
-trace-test: verify-trace-pipeline ## Verify observability end to end against MLflow (needs the cluster and a model)
-	python3 scripts/verify_traces_e2e.py
+trace-test: verify-trace-pipeline ## Verify observability end to end against Phoenix (needs the cluster and a model)
+	python3 scripts/verify_traces_e2e.py --backend phoenix --phoenix-url http://localhost:$(PHOENIX_PORT) --phoenix-project $(PHOENIX_PROJECT_NAME)
 
-traces: ## Print the span tree of the most recent MLflow traces
+trace-test-mlflow: ## The same end-to-end trace checks against the optional MLflow (after make dev-mlflow)
+	python3 scripts/verify_traces_e2e.py --backend mlflow
+
+traces: ## Print the span tree of the most recent Phoenix traces
+	python3 scripts/inspect_phoenix_traces.py --limit $${LIMIT:-3} --url http://localhost:$(PHOENIX_PORT) --project $(PHOENIX_PROJECT_NAME)
+
+traces-mlflow: ## Print the span tree of the most recent traces in the optional MLflow
 	python3 scripts/inspect_mlflow_traces.py --limit $${LIMIT:-3}
 
 static-check: verify-stream-adapter eval-test-host security-config-test docs-check license-check ## Offline checks needing no Docker, cluster or model (python3 + node only)
@@ -365,26 +423,35 @@ open-keycloak: ## Open the Keycloak admin console
 open-agent: ## Open the agent readiness endpoint; requires `make debug-up`
 	$(OPEN) http://localhost:8000/health/ready
 
-open-mlflow: ## Open MLflow in the default browser
+open-phoenix: ## Open Phoenix (traces, datasets, experiments) in the default browser
+	$(OPEN) http://localhost:$(PHOENIX_PORT)
+
+open-mlflow: ## Open the optional MLflow UI (after make dev-mlflow)
 	$(OPEN) http://localhost:$(MLFLOW_PORT)
 
-open-all: ## Open assistant-ui, Keycloak admin, and MLflow
+open-all: ## Open assistant-ui, Keycloak admin, and Phoenix
 	@$(MAKE) --no-print-directory open-ui
 	@$(MAKE) --no-print-directory open-keycloak
-	@$(MAKE) --no-print-directory open-mlflow
+	@$(MAKE) --no-print-directory open-phoenix
 
 login-info: ## Print the development login URLs and credentials
 	@printf "UI:             http://localhost:$(UI_PORT)\n"
 	@printf "Keycloak admin: http://localhost:$(KEYCLOAK_PORT)/admin/  (%s / %s)\n" "$${KEYCLOAK_ADMIN_USERNAME:-admin}" "$${KEYCLOAK_ADMIN_PASSWORD:-admin}"
 	@printf "Demo agent:     %s / %s\n" "$${KEYCLOAK_AGENT_USERNAME:-agent}" "$${KEYCLOAK_AGENT_PASSWORD:-agent}"
+	@printf "Phoenix:        http://localhost:$(PHOENIX_PORT)  (traces, evaluation experiments)\n"
 
-# Every profile is enabled for the render. `docker compose config` omits
-# profile-gated services by default, so without this the check silently skipped
-# the evaluator and failed on "missing service 'evaluator'" — which is exactly
-# what it did on every invocation before this was fixed.
-security-config-test: ## Validate the resolved Compose topology and security-critical source wiring
+# Rendered twice: with the evaluation and dev profiles (the default stack plus
+# its tooling), and again with the optional mlflow profile. `docker compose
+# config` omits profile-gated services, so a render without a profile would
+# silently skip the services that exist only under it.
+security-config-test: ## Validate the resolved Compose topology (default and mlflow) and security-critical source wiring
 	$(COMPOSE) --profile evaluation --profile dev config --format json | python3 scripts/verify_security_config.py
+	$(MLFLOW_COMPOSE) --profile evaluation --profile evaluation-mlflow --profile dev config --format json | python3 scripts/verify_security_config.py
 	python3 scripts/verify_security_sources.py
+	python3 scripts/verify_compose_profiles_test.py
+
+compose-profile-test: ## Phoenix default, MLflow opt-in, protected reachability unchanged, private defaults (renders only)
+	python3 scripts/verify_compose_profiles_test.py
 
 # The MCP key boundary is probed from the *agent*, not the gateway: the gateway
 # deliberately does not share mcp_net, so from there the host does not even
@@ -481,66 +548,80 @@ reset-auth: ## Delete Keycloak data/import volumes and rebuild authentication se
 	$(COMPOSE) up -d --build --remove-orphans
 	@$(MAKE) --no-print-directory wait
 
-reset-data: ## Delete all persistent volumes, rebuild, and restart everything (destructive)
-	@read -r -p "Delete PostgreSQL, MLflow, and Keycloak data volumes? [y/N] " answer; \
+reset-phoenix: ## Delete Phoenix's volume (traces, mirrored datasets, experiments) and restart it
+	@read -r -p "Delete all Phoenix traces, datasets and experiments? [y/N] " answer; \
 	if [[ ! "$$answer" =~ ^[Yy]$$ ]]; then echo "Cancelled."; exit 1; fi
-	$(COMPOSE) down -v --remove-orphans
+	@project="$$( $(COMPOSE) config --format json | python3 -c 'import json,sys; print(json.load(sys.stdin)["name"])' )"; \
+	$(COMPOSE) rm -s -f phoenix otel-collector; \
+	volumes="$$(docker volume ls -q \
+		--filter "label=com.docker.compose.project=$$project" \
+		--filter "label=com.docker.compose.volume=phoenix-data")"; \
+	if [[ -n "$$volumes" ]]; then docker volume rm $$volumes; fi
+	$(COMPOSE) up -d phoenix otel-collector
+
+reset-data: ## Delete all persistent volumes (PostgreSQL, Keycloak, Phoenix, MLflow), rebuild, and restart (destructive)
+	@read -r -p "Delete PostgreSQL, Keycloak, Phoenix and MLflow data volumes? [y/N] " answer; \
+	if [[ ! "$$answer" =~ ^[Yy]$$ ]]; then echo "Cancelled."; exit 1; fi
+	$(ALL_PROFILES_COMPOSE) down -v --remove-orphans
 	$(COMPOSE) up -d --build --remove-orphans
 	@$(MAKE) --no-print-directory wait
 
 # -----------------------------------------------------------------------------
-# MLflow live evaluation
+# Live evaluation: repository datasets and deterministic scorers decide; the
+# JSON in evaluation/results/ is the result; Phoenix (and optionally MLflow)
+# display a copy of it.
 # -----------------------------------------------------------------------------
 
-eval-list: ## Show configured evaluation suites, experiments, and datasets
-	$(EVAL_COMPOSE) run --rm evaluator python -m evaluation list
+EVAL_RUN := run --rm --user "$(EVAL_USER)"
 
-eval-bootstrap: ## Create or merge MLflow datasets; choose with SUITE=all|guardrails|tools|grounding|injection
-	$(EVAL_COMPOSE) run --rm evaluator python -m evaluation bootstrap --suite $(SUITE)
+eval-list: ## Show configured evaluation suites and their gates
+	$(EVAL_COMPOSE) $(EVAL_RUN) --no-deps evaluator python -m evaluation list
 
-eval-bootstrap-replace: ## Replace MLflow datasets from JSON
-	$(EVAL_COMPOSE) run --rm evaluator python -m evaluation bootstrap --suite $(SUITE) --replace
+eval: ## Run a live evaluation; writes evaluation/results/*.json, reports to Phoenix (SUITE, RUN_NAME, EVAL_REPORTERS, ...)
+	@mkdir -p evaluation/results
+	$(EVAL_COMPOSE) $(EVAL_RUN) evaluator python -m evaluation run $(EVAL_RUN_ARGS)
 
-eval-bootstrap-guardrails: ## Create or merge only the Guardrails dataset
-	@$(MAKE) --no-print-directory eval-bootstrap SUITE=guardrails
+eval-mlflow: ## Run a live evaluation once and report the same result to Phoenix and MLflow (after make dev-mlflow)
+	@mkdir -p evaluation/results
+	$(MLFLOW_COMPOSE) $(EVAL_RUN) evaluator-mlflow python -m evaluation run $(EVAL_RUN_ARGS)
 
-eval-bootstrap-tools: ## Create or merge only the tool-calling dataset
-	@$(MAKE) --no-print-directory eval-bootstrap SUITE=tools
+eval-report: ## Publish existing result files to reporters without calling the agent (RESULTS=..., EVAL_REPORTERS=...)
+	$(if $(strip $(EVAL_REPORTERS)),,$(error set EVAL_REPORTERS, e.g. EVAL_REPORTERS=mlflow))
+	$(if $(filter mlflow,$(subst $(comma), ,$(EVAL_REPORTERS))),$(MLFLOW_COMPOSE) $(EVAL_RUN) --no-deps evaluator-mlflow,$(EVAL_COMPOSE) $(EVAL_RUN) --no-deps evaluator) \
+		python -m evaluation report $(addprefix --reporter ,$(subst $(comma), ,$(EVAL_REPORTERS))) $(or $(RESULTS),$(wildcard evaluation/results/*-latest.json))
 
-eval: ## Run a live evaluation; configure with SUITE, RUN_NAME, and other variables
-	$(EVAL_COMPOSE) run --rm evaluator python -m evaluation run $(EVAL_RUN_ARGS)
+sync-phoenix-prompts: ## Source-only: mirror agent/config.yml's system and guardrail prompts into Phoenix (idempotent; claims no evaluation)
+	$(EVAL_COMPOSE) $(EVAL_RUN) evaluator python -m evaluation sync-prompts
+
+eval-compare: ## Compare two result files: conditions, metrics, latency, moved cases (BASELINE=... CANDIDATE=...)
+	python3 -m evaluation compare "$(BASELINE)" "$(CANDIDATE)"
 
 eval-guardrails: ## Run only the Guardrails live evaluation suite
 	@$(MAKE) --no-print-directory eval SUITE=guardrails
 
-eval-grounding: ## Run only the grounded-answer live evaluation suite
-	$(EVAL_COMPOSE) run --rm evaluator python -m evaluation run --suite grounding --fail-threshold $(FAIL_THRESHOLD)
-
-eval-injection: ## Run only the data-plane prompt-injection suite (reads seeded TKT-INJ-* fixtures; mutates nothing)
-	$(EVAL_COMPOSE) run --rm evaluator python -m evaluation run --suite injection --fail-threshold $(FAIL_THRESHOLD)
-
-eval-bootstrap-grounding: ## Create or merge only the grounding dataset
-	$(EVAL_COMPOSE) run --rm evaluator python -m evaluation bootstrap --suite grounding
-
-eval-bootstrap-injection: ## Create or merge only the injection dataset
-	$(EVAL_COMPOSE) run --rm evaluator python -m evaluation bootstrap --suite injection
-
 eval-tools: ## Run only the tool-calling live evaluation suite
 	@$(MAKE) --no-print-directory eval SUITE=tools
+
+eval-grounding: ## Run only the grounded-answer live evaluation suite
+	@$(MAKE) --no-print-directory eval SUITE=grounding
+
+eval-injection: ## Run only the data-plane prompt-injection suite (reads seeded TKT-INJ-* fixtures; mutates nothing)
+	@$(MAKE) --no-print-directory eval SUITE=injection
 
 eval-all: ## Run all live evaluation suites with regression gates enabled
 	@$(MAKE) --no-print-directory eval SUITE=all
 
-eval-all-allow-failures: ## Run all suites without a nonzero regression-gate exit
+eval-all-allow-failures: ## Run all suites without a nonzero regression-gate exit (unevaluated cases still fail)
 	@$(MAKE) --no-print-directory eval SUITE=all ALLOW_FAILURES=1
 
-# --no-deps: these tests stub MLflow and talk to a local HTTP fixture, so they
-# need the image's Python but not the cluster. Without it, `docker compose run`
-# starts PostgreSQL, MCP, MLflow and the agent just to run unit tests.
-eval-test: ## Run evaluator parser and scorer unit tests in the evaluator image
-	$(EVAL_COMPOSE) run --rm --no-deps evaluator python -m unittest discover -s evaluation/tests -t . -p 'test_*.py' -v
+# --no-deps: these tests use fakes for the agent, Phoenix and MLflow, so they
+# need the image's Python but not the cluster.
+eval-test: ## Run the evaluator unit tests in the evaluator image (no MLflow installed there)
+	$(EVAL_COMPOSE) $(EVAL_RUN) --no-deps evaluator python -m unittest discover -s evaluation/tests -t . -p 'test_*.py' -v
 
-eval-test-host: ## Run the same evaluator unit tests on the host (no Docker)
+eval-test-host: ## Run the same evaluator unit tests on the host (no Docker, no MLflow, no PyYAML needed)
 	python3 -m unittest discover -s evaluation/tests -t . -p 'test_*.py' -v
+	python3 scripts/verify_evaluation_artifacts_test.py
+	python3 scripts/evaluation_gate_test.py
 
-test: eval-test agent-test verify-approvals-rust security-test ## Run evaluator, agent (Rust), MCP approval, and security tests
+test: eval-test agent-test verify-approvals-rust security-test ## Run evaluator, agent (Rust), MCP approval, and security tests (no MLflow)

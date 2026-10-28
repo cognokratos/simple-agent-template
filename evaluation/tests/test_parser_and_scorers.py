@@ -4,48 +4,13 @@ import json
 import os
 import sys
 import threading
-import types
 import unittest
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from dataclasses import dataclass
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
 
-
-@dataclass
-class FakeFeedback:
-    name: str | None = None
-    value: object = None
-    rationale: str | None = None
-    metadata: dict | None = None
-
-
-def fake_trace(*decorator_args, **decorator_kwargs):
-    def decorate(function):
-        return function
-
-    if decorator_args and callable(decorator_args[0]) and len(decorator_args) == 1:
-        return decorator_args[0]
-    return decorate
-
-
-def fake_scorer(function):
-    return function
-
-
-mlflow = types.ModuleType("mlflow")
-mlflow.trace = fake_trace
-entities = types.ModuleType("mlflow.entities")
-entities.Feedback = FakeFeedback
-genai = types.ModuleType("mlflow.genai")
-genai.scorer = fake_scorer
-mlflow.entities = entities
-mlflow.genai = genai
-sys.modules.setdefault("mlflow", mlflow)
-sys.modules.setdefault("mlflow.entities", entities)
-sys.modules.setdefault("mlflow.genai", genai)
 
 from evaluation.client import (
     ParsedInvocation,

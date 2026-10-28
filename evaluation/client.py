@@ -20,8 +20,6 @@ import urllib.request
 from dataclasses import dataclass, field
 from typing import Any, Iterable
 
-import mlflow
-
 from evaluation.config import agent_workflow_url
 
 
@@ -551,29 +549,3 @@ def invoke_live_agent(question: str, case_id: str | None = None) -> dict[str, An
             time.sleep(min(2 ** (attempt - 1), 8))
 
     raise RuntimeError(f"Could not call live agent after {_max_attempts()} attempts: {last_error}")
-
-
-# Per-case latencies for the run in progress. MLflow aggregates feedback to a
-# mean, and a mean is the least useful latency statistic: it hides the tail,
-# which is the part a user actually experiences. The runner drains this to
-# report a distribution instead.
-_LATENCIES_MS: list[float] = []
-
-
-def reset_latencies() -> None:
-    _LATENCIES_MS.clear()
-
-
-def collected_latencies_ms() -> list[float]:
-    return list(_LATENCIES_MS)
-
-
-@mlflow.trace(name="live_agent_prediction", span_type="AGENT")
-def live_predict_fn(question: str, case_id: str | None = None) -> dict[str, Any]:
-    """MLflow predict function: query the running agent for each dataset row."""
-
-    result = invoke_live_agent(question=question, case_id=case_id)
-    duration = result.get("duration_ms")
-    if isinstance(duration, (int, float)):
-        _LATENCIES_MS.append(float(duration))
-    return result

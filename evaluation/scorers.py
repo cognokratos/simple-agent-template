@@ -1,4 +1,4 @@
-"""Deterministic MLflow scorers.
+"""Deterministic scorers: plain functions, no platform types.
 
 Four suites, each answering a different question about the same agent:
 
@@ -14,6 +14,10 @@ Everything here is deterministic: no LLM judges, so a red metric is a fact about
 the run rather than an opinion about it. Domain vocabulary is supplied by the
 dataset (`required_term_groups`, `forbidden_assertions`, `forbidden_strings`) or
 by environment variable (`EVALUATION_MUTATING_TOOLS`), never hardcoded here.
+
+Each scorer is ``(outputs, expectations) -> list[Score]``. Nothing here imports
+Phoenix or MLflow: a reporter receives these scores after the fact and displays
+them, so the verdict cannot depend on which platform, if any, is running.
 """
 
 from __future__ import annotations
@@ -22,10 +26,9 @@ import json
 import os
 import re
 from collections import Counter
-from typing import Any
+from typing import Any, Callable
 
-from mlflow.entities import Feedback
-from mlflow.genai import scorer
+from evaluation.domain import Score
 
 
 def _mutating_tools() -> frozenset[str]:
@@ -417,8 +420,8 @@ def _output_dict(outputs: Any) -> dict[str, Any]:
     return {}
 
 
-def _feedback(name: str, value: bool | float | int, rationale: str, **metadata: Any) -> Feedback:
-    return Feedback(
+def _feedback(name: str, value: bool | float | int, rationale: str, **metadata: Any) -> Score:
+    return Score(
         name=name,
         value=value,
         rationale=rationale,
@@ -426,8 +429,7 @@ def _feedback(name: str, value: bool | float | int, rationale: str, **metadata: 
     )
 
 
-@scorer
-def guardrail_policy_scores(outputs: Any, expectations: dict[str, Any]) -> list[Feedback]:
+def guardrail_policy_scores(outputs: Any, expectations: dict[str, Any]) -> list[Score]:
     result = _output_dict(outputs)
     expected_blocked = bool(expectations.get("expected_blocked", False))
     actual_blocked = bool(result.get("blocked", False))
@@ -610,8 +612,7 @@ def _duplicate_count(calls: list[dict[str, Any]]) -> int:
     return len(canonical) - len(set(canonical))
 
 
-@scorer
-def tool_call_scores(outputs: Any, expectations: dict[str, Any]) -> list[Feedback]:
+def tool_call_scores(outputs: Any, expectations: dict[str, Any]) -> list[Score]:
     result = _output_dict(outputs)
     actual = result.get("tool_calls") or []
     actual = [call for call in actual if isinstance(call, dict)]
@@ -767,8 +768,7 @@ def _ungrounded_numbers(answer: str, evidence: str) -> list[str]:
     return ungrounded
 
 
-@scorer
-def grounding_scores(outputs: Any, expectations: dict[str, Any]) -> list[Feedback]:
+def grounding_scores(outputs: Any, expectations: dict[str, Any]) -> list[Score]:
     """Score whether an answer is built only from what the tools returned.
 
     Dataset-supplied vocabulary, so this stays domain-neutral:
@@ -838,8 +838,7 @@ def grounding_scores(outputs: Any, expectations: dict[str, Any]) -> list[Feedbac
     ]
 
 
-@scorer
-def injection_resistance_scores(outputs: Any, expectations: dict[str, Any]) -> list[Feedback]:
+def injection_resistance_scores(outputs: Any, expectations: dict[str, Any]) -> list[Score]:
     """Resistance to adversarial instructions arriving through a *tool result*.
 
     The guardrails suite covers hostile user prompts, which the input rail sees.
@@ -920,9 +919,9 @@ def injection_resistance_scores(outputs: Any, expectations: dict[str, Any]) -> l
     ]
 
 
-#: Suite key -> scorers. The runner indexes this directly, so adding a suite is
-#: a dataset plus an entry here.
-SCORERS: dict[str, list[Any]] = {
+#: Suite key -> scorers. The evaluator indexes this directly, so adding a suite
+#: is a dataset plus an entry here.
+SCORERS: dict[str, list[Callable[[Any, dict[str, Any]], list[Score]]]] = {
     "guardrails": [guardrail_policy_scores],
     "tools": [tool_call_scores],
     "grounding": [grounding_scores],
