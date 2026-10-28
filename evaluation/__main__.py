@@ -5,7 +5,8 @@
     report   publish an existing result file to reporters, without calling the agent
     compare  diff two result files: conditions, metrics, latency and moved cases
     sync-prompts
-             mirror agent/config.yml's prompts into Phoenix Prompt Management
+             source-only: mirror agent/config.yml's prompts into Phoenix Prompt
+             Management, without claiming that any evaluation used them
     list     show the configured suites
 
 Exit status of ``run``: 0 when every gate passed (or ``--allow-failures``), 1
@@ -71,7 +72,7 @@ def build_parser() -> argparse.ArgumentParser:
     compare.add_argument("baseline", type=Path)
     compare.add_argument("candidate", type=Path)
 
-    subparsers.add_parser("sync-prompts", help="Mirror the repository's prompts into Phoenix (no evaluation)")
+    subparsers.add_parser("sync-prompts", help="Source-only: mirror the repository's prompts into Phoenix; claims no evaluation used them")
     subparsers.add_parser("list", help="Show configured suites and their gates")
     return parser
 
@@ -96,9 +97,10 @@ def main(argv: list[str] | None = None) -> int:
         if not reporter.available():
             print(f"Phoenix is not reachable at {reporter.base_url}.")
             return 2
-        # The mounted file is both the source and the reference here: there is
-        # no evaluated digest to compare against, only the repository's own.
-        outcome = reporter.sync_prompts({"provenance": provenance.collect()})
+        # Source mode: the repository's text, mirrored without claiming that an
+        # evaluation used it. The agent's /version is read only for the model
+        # names a version records; its consistency checks are not consulted.
+        outcome = reporter.sync_prompts({"provenance": provenance.collect()}, mode="source")
         for name, entry in outcome.items():
             print(f"{name}: {entry.get('status', 'error')} {entry.get('version_id') or entry.get('reason') or entry.get('error') or ''}")
         return 0 if outcome and all(entry.get("status") in {"created", "reused"} for entry in outcome.values()) else 1

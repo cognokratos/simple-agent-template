@@ -84,29 +84,36 @@ def summary_metrics(result: dict[str, Any]) -> dict[str, float]:
     return metrics
 
 
-def _register_prompts(mlflow: Any, result: dict[str, Any]) -> list[dict[str, Any]]:
-    """Register and link prompt texts whose digest matches what was evaluated."""
+def _register_prompts(
+    mlflow: Any, result: dict[str, Any], config: dict[str, Any] | None = None
+) -> list[dict[str, Any]]:
+    """Register and link the prompt texts the evaluated agent was shown to use.
+
+    The same rule as the Phoenix reporter (``provenance.registration_refusal``):
+    the mounted text must still match the recorded digest *and* the running
+    agent's consistency check must be true.
+    """
     expected = {entry["name"]: entry.get("sha256") for entry in (result.get("provenance") or {}).get("prompts", [])}
     if not expected:
         return []
-    config = provenance._config_prompts()  # noqa: SLF001 - same module family, same digests
-    texts: dict[str, tuple[str, str | None]] = {}
-    if config.get("available"):
-        texts[provenance.PROMPT_NAME] = (config["system_prompt"], config.get("prompt_sha256"))
-        if config.get("rail_prompts"):
-            import yaml
-
-            texts[provenance.RAIL_PROMPT_NAME] = (
-                yaml.safe_dump(config["rail_prompts"], sort_keys=True, default_flow_style=False),
-                config.get("guardrails_prompts_sha256"),
-            )
-
+    if config is None:
+        config = provenance._config_prompts()  # noqa: SLF001 - same module family, same digests
     linked: list[dict[str, Any]] = []
     for name, digest in expected.items():
-        if name not in texts or texts[name][1] != digest:
-            linked.append({"name": name, "skipped": "the mounted config no longer matches the evaluated digest"})
+        refusal = (
+            provenance.registration_refusal(result, name, config)
+            if name in provenance.REGISTRATION_EVIDENCE
+            else "not a prompt this reporter registers"
+        )
+        if refusal:
+            linked.append({"name": name, "skipped": refusal})
             continue
-        template = texts[name][0]
+        if name == provenance.PROMPT_NAME:
+            template = config["system_prompt"]
+        else:
+            import yaml
+
+            template = yaml.safe_dump(config.get("rail_prompts") or [], sort_keys=True, default_flow_style=False)
         entry: dict[str, Any] = {"name": name, "sha256": digest}
         try:
             try:

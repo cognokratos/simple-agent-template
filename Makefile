@@ -590,7 +590,7 @@ eval-report: ## Publish existing result files to reporters without calling the a
 	$(if $(filter mlflow,$(subst $(comma), ,$(EVAL_REPORTERS))),$(MLFLOW_COMPOSE) $(EVAL_RUN) --no-deps evaluator-mlflow,$(EVAL_COMPOSE) $(EVAL_RUN) --no-deps evaluator) \
 		python -m evaluation report $(addprefix --reporter ,$(subst $(comma), ,$(EVAL_REPORTERS))) $(or $(RESULTS),$(wildcard evaluation/results/*-latest.json))
 
-sync-phoenix-prompts: ## Mirror agent/config.yml's system and guardrail prompts into Phoenix (idempotent; no evaluation)
+sync-phoenix-prompts: ## Source-only: mirror agent/config.yml's system and guardrail prompts into Phoenix (idempotent; claims no evaluation)
 	$(EVAL_COMPOSE) $(EVAL_RUN) evaluator python -m evaluation sync-prompts
 
 eval-compare: ## Compare two result files: conditions, metrics, latency, moved cases (BASELINE=... CANDIDATE=...)

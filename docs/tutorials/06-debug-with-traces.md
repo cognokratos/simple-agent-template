@@ -46,7 +46,7 @@ installed on the host. In the Phoenix UI, open a trace to see the span tree;
 the root is tagged `AGENT` and the input/output safety rails `GUARDRAIL`
 because the agent sets `openinference.span.kind` on them (the tool policy is
 authorization, not a safety rail, and carries no kind); the root also names the
-exact agent revision (`agent.revision.sha256`, build, config, prompt and
+agent revision (`agent.revision.sha256`, build, config, prompt and
 tool-catalogue digests, models); Rig's model calls
 show as `LLM` and `execute_tool` as `TOOL`, which Phoenix derives from their
 `gen_ai.*` attributes. The root shows the question and released

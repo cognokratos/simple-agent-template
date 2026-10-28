@@ -139,17 +139,36 @@ provider *name* is recorded only when `LLM_PROVIDER` sets it, and is `null`
 otherwise rather than guessed. Absence is always explicit: an unobserved field
 is `null` and listed under `conditions.unobserved`.
 
-`conditions` carries the agent's `agent_revision_sha256` — its digest of its
-own complete behavioural identity — beside the individual fields it covers
+`conditions` carries the agent's `agent_revision_sha256` — one digest over a
+fixed list of its identifying fields (commit, config, rendered prompt, tool
+catalogue, models, endpoint fingerprint, …) — beside the individual fields it covers
 (`rendered_prompt_sha256`, `tool_catalog_sha256`, `endpoint_sha256`, models,
 reasoning settings, …) so a difference can be attributed. Dataset and gate
 settings are in `conditions` but deliberately not in the agent revision; see
 [OBSERVABILITY.md](OBSERVABILITY.md#agent-revision). The guardrail-prompt
-entry under `provenance.prompts` also lists one digest per rail `task`.
+entry under `provenance.prompts` also lists one digest per rail `task`. The
+revision identifies a clean, stamped build reproducibly; a build from a dirty
+tree (`provenance.harness.dirty: true`) is not reproducible from its commit
+alone, because uncommitted Rust changes are not hashed (see
+[OBSERVABILITY.md](OBSERVABILITY.md#agent-revision)).
+
+**When a reporter registers a prompt.** `provenance.prompts` is computed from
+the *mounted* `agent/config.yml`, so the file matching it proves only that the
+file did not change during the run. What proves the agent under evaluation
+loaded the same text is the agent's own digest, compared in
+`provenance.checks.prompt_matches_config` (system prompt) and
+`provenance.checks.guardrail_prompts_match_config` (guardrail prompts). After an
+evaluation, both the Phoenix and the MLflow reporter register a prompt only when
+its check is `true` **and** the mounted file still matches the recorded digest;
+a missing or `false` check skips that prompt with the reason in
+`reporting.<reporter>.prompts`. `make sync-phoenix-prompts` is different: a
+*source-only* mirror of what the repository defines, which reads no check and
+records no claim that an evaluation used the text (each entry reports
+`mode: "source"`).
 
 The optional MLflow reporter additionally registers the prompt texts in
-MLflow's prompt registry and links the version to its run — only when the
-mounted config still digests to what was evaluated. That version is reporting
+MLflow's prompt registry and links the version to its run, under the rule
+above. That version is reporting
 metadata, recorded under `reporting.mlflow.prompts`, never provenance.
 
 Each run is also tagged `provenance.agent.runtime`, from the `agent_runtime`
@@ -293,18 +312,26 @@ bug, and the repository's figure stands.
 (`agent-system-prompt`, an F-string template with `{tools}`/`{tool_names}`) and
 each guardrail prompt as its own prompt named after its task
 (`agent-guardrail-self_check_input`, a Mustache template with
-`{{ user_input }}`). Each version records the model (guard model for rails),
-temperature, `max_tokens` and reasoning effort as invocation parameters, and in
-its metadata the repository SHA-256, source path and key, task, provider and
-endpoint fingerprint. Only prompt *definitions* from `agent/config.yml` are
-sent — no conversation, user input or model response — and only when the
-mounted file still digests to what the result's provenance recorded, the rule
-the MLflow reporter follows. A version is reused when its `version_key`
-(content SHA-256 plus model and invocation settings) already exists, so
-re-running an evaluation creates no duplicates and a changed prompt creates
-exactly one new version. Phoenix prompt and version ids are recorded under
+`{{ user_input }}`). Each version is registered with provider `OPENAI` and
+OpenAI invocation parameters (temperature, `max_tokens`, reasoning effort) and
+the model (guard model for rails), because that is the protocol the agent uses:
+the runtime protocol is always OpenAI-compatible Chat Completions, whatever
+serves `LLM_BASE_URL`. `LLM_PROVIDER`, when set, is recorded only as
+`metadata.upstream_provider`; it never selects a native Anthropic, Ollama or
+other schema the agent did not use. The version's metadata is the prompt's
+durable identity — repository SHA-256, source path and key, kind, task,
+template variables, upstream label — and nothing that can change while the
+prompt does not: the agent revision, endpoint fingerprint, rendered-prompt and
+tool-catalogue digests are on the AGENT trace, in the result's provenance and
+on the Phoenix experiment, where they describe the run that produced them.
+Only prompt *definitions* from `agent/config.yml` are sent — no conversation,
+user input or model response — and only under the registration rule above. A
+version is reused when its `version_key` (a digest of everything the version
+carries) already exists, so re-running an evaluation, or rebuilding the agent
+with the prompt unchanged, creates no version, and a changed prompt creates
+exactly one. Phoenix prompt and version ids are recorded under
 `reporting.phoenix.prompts` only; the repository SHA-256 stays the portable
-identifier. `make sync-phoenix-prompts` mirrors them without an evaluation.
+identifier. `make sync-phoenix-prompts` mirrors them in source-only mode, without an evaluation.
 
 ## Running it
 

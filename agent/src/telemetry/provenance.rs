@@ -15,10 +15,11 @@
 //!   after MCP discovery. Together with `tool_catalog_sha256` it identifies the
 //!   model-visible capability surface exactly.
 //!
-//! `agent_revision_sha256` is one digest over the agent's complete behavioural
-//! identity: the fields named in [`REVISION_FIELDS`] and nothing else. It does
-//! not include dataset or gate settings; those are the evaluation's, and live
-//! in the evaluator's `conditions.sha256`.
+//! `agent_revision_sha256` is one digest over the fields named in
+//! [`REVISION_FIELDS`] and nothing else. It does not include dataset or gate
+//! settings; those are the evaluation's, and live in the evaluator's
+//! `conditions.sha256`. The Rust source is identified by `build_commit`, not
+//! hashed, so a build of a dirty tree is not reproducible from its revision.
 
 use serde_json::{Map, Value, json};
 use sha2::{Digest, Sha256};

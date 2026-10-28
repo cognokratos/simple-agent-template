@@ -252,10 +252,14 @@ class PhoenixReporter:
             "prompts": prompts,
         }
 
-    def sync_prompts(self, result: dict[str, Any]) -> dict[str, Any]:
-        """Mirror the result's prompts; a failure is recorded, never raised."""
+    def sync_prompts(self, result: dict[str, Any], *, mode: str = "evaluation") -> dict[str, Any]:
+        """Mirror the prompts; a failure is recorded, never raised.
+
+        ``mode="evaluation"`` registers only what the run proved the agent
+        loaded; ``mode="source"`` mirrors the repository text and claims no run.
+        """
         try:
-            return phoenix_prompts.sync(self._request, result)
+            return phoenix_prompts.sync(self._request, result, mode=mode)
         except PhoenixError as error:
             return {"error": str(error)}
 

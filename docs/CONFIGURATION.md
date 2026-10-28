@@ -20,7 +20,7 @@ Any OpenAI-compatible endpoint. The defaults target a local Ollama running
 | `LLM_API_KEY` | `ollama` | |
 | `LLM_MODEL` | `qwen3:8b` | |
 | `LLM_GUARD_MODEL` | `qwen3:8b` | Does **not** inherit `LLM_MODEL` |
-| `LLM_PROVIDER` | unset | Optional short provider name (`ollama`, `openai`, …), reported in `/version` and on traces. The endpoint URL itself is never exported, only `endpoint_sha256` ([OBSERVABILITY.md](OBSERVABILITY.md#agent-revision)) |
+| `LLM_PROVIDER` | unset | Optional label for the upstream service behind `LLM_BASE_URL` (`ollama`, `openai`, …), reported in `/version` and on traces. Descriptive only: the agent always uses the OpenAI-compatible protocol. The endpoint URL itself is never exported, only `endpoint_sha256` ([OBSERVABILITY.md](OBSERVABILITY.md#agent-revision)) |
 | `LLM_REASONING_EFFORT` | `none` | Empty ⇒ omitted entirely |
 | `LLM_GUARD_REASONING_EFFORT` | `none` | Empty ⇒ omitted entirely |
 

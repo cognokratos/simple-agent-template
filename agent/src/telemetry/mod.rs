@@ -79,7 +79,7 @@ pub fn init(settings: &TelemetrySettings) -> TelemetryGuard {
         .with_attributes([
             KeyValue::new("service.namespace", "rig-rust-agent"),
             // The deployed build. The service name (and so a trace backend's
-            // project) stays stable; the exact revision travels on each trace.
+            // project) stays stable; the revision travels on each trace.
             KeyValue::new("service.version", settings.service_version.clone()),
             KeyValue::new("deployment.environment", settings.deployment_environment.clone()),
             KeyValue::new("agent.runtime", provenance::AGENT_RUNTIME),

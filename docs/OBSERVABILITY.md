@@ -224,7 +224,7 @@ Three layers, each answering a different question:
 | Layer | Answers | Where |
 | --- | --- | --- |
 | Phoenix **project** | *which application?* | `openinference.project.name` = `PHOENIX_PROJECT_NAME` (`tickets-agent`). Stable across builds and versions; never one project per build |
-| **Trace provenance** | *which exact agent revision produced this trace?* | resource `service.name` (stable) and `service.version` (`<crate version>+<commit>`), and on every root `AGENT` span the sanitized identity below |
+| **Trace provenance** | *which agent revision produced this trace?* | resource `service.name` (stable) and `service.version` (`<crate version>+<commit>`), and on every root `AGENT` span the sanitized identity below |
 | **Experiment metadata** | *what did this evaluation measure, under which conditions?* | the evaluator's flattened provenance, gate, and `conditions.sha256` on each Phoenix experiment ([EVALUATION.md](EVALUATION.md#result-artifact)) |
 
 Root-span identity, set from the agent's own provenance at startup
@@ -243,8 +243,7 @@ tests assert.
 ### Agent revision
 
 `agent_revision_sha256` (`/version`, and `agent.revision.sha256` on traces) is
-one SHA-256 over the agent's complete behavioural identity, as canonical JSON
-of exactly these fields: `agent_runtime`, `agent_framework`,
+one SHA-256, as canonical JSON, over exactly these fields: `agent_runtime`, `agent_framework`,
 `agent_framework_version`, `mcp_sdk_version`, `agent_version`, `build_commit`,
 `config_sha256`, `rendered_prompt_sha256`, `tool_catalog_sha256`,
 `guardrails_prompts_sha256`, `behaviour_settings_sha256`, `model`,
@@ -265,6 +264,23 @@ in `conditions.sha256`); trace-capture and logging switches, which change what i
 recorded rather than what the agent does; the request's own content; and any
 credential. The same model name served by a different endpoint is a different
 revision.
+
+What it does and does not prove. The Rust source is identified by
+`build_commit`, not hashed: the digest does not content-address the compiled
+code. A clean build stamped with its commit is reproducible from that commit
+plus the recorded configuration and models. A development build of a dirty
+tree is not — two builds with different uncommitted Rust changes can carry the
+same commit and therefore the same revision digest. The evaluation records
+whether the harness tree was dirty (`provenance.harness.dirty`, and
+`agent_built_from_harness_commit`); treat a revision from a dirty run as a label
+for that run, not as a reproducible identity. There is no source-tree
+attestation.
+
+`provider` is a label, not the protocol. The agent always speaks the
+OpenAI-compatible Chat Completions protocol (through Rig) to `LLM_BASE_URL`;
+`LLM_PROVIDER` optionally names the upstream service behind that endpoint
+(Ollama, a gateway in front of Anthropic, …). It is descriptive, which is why
+`endpoint_sha256` is recorded beside it.
 
 Retention is Phoenix's default (no expiry) unless set per project in its UI or
 with `PHOENIX_DEFAULT_RETENTION_POLICY_DAYS`, which this template does not set.

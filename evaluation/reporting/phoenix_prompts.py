@@ -18,15 +18,35 @@ No conversation, no model response, no rendered user input ever goes here:
 these are prompt *definitions*. ``AGENT_TRACE_CAPTURE_MODEL_CONTENT`` is not
 involved.
 
-Safety rule, the same as the MLflow reporter's: a prompt is mirrored only when
-the mounted ``agent/config.yml`` still digests to what the result's provenance
-recorded, so Phoenix never shows a text that differs from what was evaluated.
+When a prompt is registered — the same rule as the MLflow reporter's
+(``provenance.registration_refusal``):
 
-Idempotency: each version carries ``metadata.version_key``, a digest of the
-content SHA-256 together with the model and invocation settings Phoenix
-stores on the version. An existing version with that key is reused; a changed
-text — or a changed model or setting, since a Phoenix version records those
-too — creates exactly one new version. Repeated evaluation runs create none.
+* ``mode="evaluation"`` (the Phoenix reporter, after a run): only when the
+  mounted ``agent/config.yml`` still digests to what the run recorded *and* the
+  running agent's own check agreed — ``provenance.checks.prompt_matches_config``
+  for the system prompt, ``guardrail_prompts_match_config`` for the guardrail
+  prompts. A missing or false check skips the prompt, with the reason.
+* ``mode="source"`` (``make sync-phoenix-prompts``): the repository text,
+  mirrored with no claim that any evaluation used it.
+
+Provider: always ``OPENAI``. The agent speaks the OpenAI-compatible Chat
+Completions protocol (through Rig) to whatever serves ``LLM_BASE_URL``, so that
+is the invocation schema this prompt was actually used with. ``LLM_PROVIDER``
+names the upstream service behind that endpoint (Ollama, a proxy to Anthropic,
+…); it is recorded as ``metadata.upstream_provider`` and never selects a native
+provider schema the agent did not use.
+
+A version describes the prompt definition and its invocation settings, nothing
+that can change without them. The deployed agent's revision, endpoint
+fingerprint, rendered-prompt and tool-catalogue digests belong to the AGENT
+trace, the evaluation provenance and the Phoenix experiment metadata — a reused
+version would otherwise keep the first agent's values forever.
+
+Idempotency: ``metadata.version_key`` digests everything the version carries
+(content SHA-256, role, format, model, invocation parameters, the durable
+metadata). An existing version with that key is reused; any change creates
+exactly one new version. Repeated runs, and new builds of an unchanged prompt,
+create none.
 """
 
 from __future__ import annotations
@@ -42,28 +62,12 @@ from evaluation import provenance
 SOURCE = "agent/config.yml"
 RAIL_PROMPT_PREFIX = "agent-guardrail-"
 
-#: LLM_PROVIDER names Phoenix has a provider for. Anything else (or none) is
-#: recorded as OPENAI, because the agent speaks the OpenAI-compatible protocol
-#: whatever serves it; the real name stays in the version's metadata.
-PHOENIX_PROVIDERS = {
-    "openai": "OPENAI",
-    "azure_openai": "AZURE_OPENAI",
-    "anthropic": "ANTHROPIC",
-    "google": "GOOGLE",
-    "deepseek": "DEEPSEEK",
-    "xai": "XAI",
-    "ollama": "OLLAMA",
-    "aws": "AWS",
-    "cerebras": "CEREBRAS",
-    "fireworks": "FIREWORKS",
-    "groq": "GROQ",
-    "moonshot": "MOONSHOT",
-    "minimax": "MINIMAX",
-    "perplexity": "PERPLEXITY",
-    "together": "TOGETHER",
-    "zai": "ZAI",
-    "meta": "META",
-}
+#: The protocol the agent uses for every model call, whatever serves it.
+MODEL_PROVIDER = "OPENAI"
+#: Bump when the shape of a version's metadata changes, so versions carrying
+#: an older shape are not reused as if they were this one.
+METADATA_SCHEMA = 2
+MUSTACHE_VARIABLE = re.compile(r"{{\s*([A-Za-z_][A-Za-z0-9_]*)\s*}}")
 REASONING_EFFORTS = {"none", "minimal", "low", "medium", "high", "xhigh"}
 
 Request = Callable[..., Any]
@@ -90,60 +94,66 @@ def _invocation(temperature: Any, max_tokens: Any, reasoning_effort: Any) -> dic
     return {"type": "openai", "openai": openai}
 
 
-def specs(result: dict[str, Any], config: dict[str, Any]) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+def specs(
+    result: dict[str, Any], config: dict[str, Any], *, mode: str = "evaluation"
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     """(prompts to mirror, prompts skipped with the reason), for one result."""
     record = result.get("provenance") or {}
     agent = record.get("agent") or {}
-    expected = {entry.get("name"): entry for entry in record.get("prompts") or []}
-    provider = agent.get("provider")
-    model_provider = PHOENIX_PROVIDERS.get(str(provider or "").lower(), "OPENAI")
-    common = {
+    names = [entry.get("name") for entry in record.get("prompts") or []]
+    if mode == "source":
+        # Mirror what the repository defines, not what some run recorded.
+        names = [entry["name"] for entry in provenance.prompt_digests(config)]
+    durable = {
         "source": SOURCE,
         "managed_by": "evaluation (repository mirror)",
-        "provider": provider,
-        "endpoint_sha256": agent.get("endpoint_sha256"),
-        "agent_revision_sha256": agent.get("agent_revision_sha256"),
+        "metadata_schema": METADATA_SCHEMA,
+        "runtime_protocol": "openai-chat-completions",
+        # Descriptive only: the upstream service behind the OpenAI-compatible
+        # endpoint. Part of version_key, so it is never stale on a version.
+        "upstream_provider": agent.get("provider"),
     }
     chosen: list[dict[str, Any]] = []
     skipped: list[dict[str, Any]] = []
 
-    system = expected.get(provenance.PROMPT_NAME)
-    if system:
-        if not config.get("available") or system.get("sha256") != config.get("prompt_sha256"):
-            skipped.append({"name": provenance.PROMPT_NAME, "reason": "the mounted config no longer matches the evaluated digest"})
+    if provenance.PROMPT_NAME in names:
+        refusal = provenance.registration_refusal(result, provenance.PROMPT_NAME, config, mode=mode)
+        if refusal:
+            skipped.append({"name": provenance.PROMPT_NAME, "reason": refusal})
         else:
             chosen.append(
                 {
                     "name": identifier(provenance.PROMPT_NAME),
                     "description": f"Agent system prompt (workflow.system_prompt in {SOURCE}). The repository is canonical.",
-                    "sha256": system["sha256"],
+                    "sha256": config["prompt_sha256"],
                     "role": "system",
                     "template_format": "F_STRING",
                     "content": config["system_prompt"],
-                    "model_provider": model_provider,
                     "model_name": str(agent.get("model") or "unknown"),
                     "invocation_parameters": _invocation(
                         config.get("temperature"), config.get("max_tokens"), agent.get("reasoning_effort")
                     ),
-                    "metadata": common
+                    "metadata": durable
                     | {
-                        "sha256": system["sha256"],
+                        "sha256": config["prompt_sha256"],
                         "source_key": "workflow.system_prompt",
                         "kind": "agent_system_prompt",
-                        "model": agent.get("model"),
-                        "rendered_prompt_sha256": agent.get("rendered_prompt_sha256"),
-                        "tool_catalog_sha256": agent.get("tool_catalog_sha256"),
+                        # Filled at agent startup from the MCP catalogue; the
+                        # rendered result is the trace's, not the version's.
                         "variables": ["tools", "tool_names"],
                     },
                 }
             )
 
-    rails = expected.get(provenance.RAIL_PROMPT_NAME)
-    if rails:
-        if not config.get("available") or rails.get("sha256") != config.get("guardrails_prompts_sha256"):
-            skipped.append({"name": provenance.RAIL_PROMPT_NAME, "reason": "the mounted config no longer matches the evaluated digest"})
+    if provenance.RAIL_PROMPT_NAME in names:
+        refusal = provenance.registration_refusal(result, provenance.RAIL_PROMPT_NAME, config, mode=mode)
+        if refusal:
+            skipped.append({"name": provenance.RAIL_PROMPT_NAME, "reason": refusal})
         else:
-            evaluated_tasks = {item["task"]: item["sha256"] for item in rails.get("tasks") or []}
+            # Per-task digests the run recorded; none to compare in source mode.
+            recorded = {entry.get("name"): entry for entry in record.get("prompts") or []}
+            rails = recorded.get(provenance.RAIL_PROMPT_NAME) if mode == "evaluation" else None
+            evaluated_tasks = {item["task"]: item["sha256"] for item in (rails or {}).get("tasks") or []}
             for entry in config.get("rail_prompts") or []:
                 task = str(entry.get("task") or "")
                 digest = (config.get("rail_prompt_sha256") or {}).get(task)
@@ -160,23 +170,22 @@ def specs(result: dict[str, Any], config: dict[str, Any]) -> tuple[list[dict[str
                         "role": "user",
                         "template_format": "MUSTACHE",
                         "content": str(entry.get("content") or ""),
-                        "model_provider": model_provider,
                         "model_name": str(agent.get("guard_model") or "unknown"),
                         "invocation_parameters": _invocation(
                             agent.get("guard_temperature"), entry.get("max_tokens"), agent.get("guard_reasoning_effort")
                         ),
-                        "metadata": common
+                        "metadata": durable
                         | {
                             "sha256": digest,
                             "source_key": f"guardrails.prompts[task={task}]",
                             "kind": "guardrail_prompt",
                             "task": task,
-                            "guard_model": agent.get("guard_model"),
-                            "guardrails_prompts_sha256": rails.get("sha256"),
+                            "variables": sorted(set(MUSTACHE_VARIABLE.findall(str(entry.get("content") or "")))),
                         },
                     }
                 )
     for spec in chosen:
+        spec["model_provider"] = MODEL_PROVIDER
         spec["metadata"]["version_key"] = _sha256(
             {
                 "sha256": spec["sha256"],
@@ -185,6 +194,7 @@ def specs(result: dict[str, Any], config: dict[str, Any]) -> tuple[list[dict[str
                 "model_provider": spec["model_provider"],
                 "model_name": spec["model_name"],
                 "invocation_parameters": spec["invocation_parameters"],
+                "metadata": spec["metadata"],
             }
         )
     return chosen, skipped
@@ -218,9 +228,12 @@ def _prompt_ids(request: Request) -> dict[str, str]:
             return ids
 
 
-def sync(request: Request, result: dict[str, Any], config: dict[str, Any] | None = None) -> dict[str, Any]:
+def sync(
+    request: Request, result: dict[str, Any], config: dict[str, Any] | None = None, *, mode: str = "evaluation"
+) -> dict[str, Any]:
     """Mirror the result's prompts; return ``{name: {status, version_id, ...}}``."""
-    chosen, skipped = specs(result, config if config is not None else provenance._config_prompts())  # noqa: SLF001
+    config = config if config is not None else provenance._config_prompts()  # noqa: SLF001
+    chosen, skipped = specs(result, config, mode=mode)
     synced: dict[str, Any] = {}
     for spec in chosen:
         key = spec["metadata"]["version_key"]
@@ -260,4 +273,6 @@ def sync(request: Request, result: dict[str, Any], config: dict[str, Any] | None
             entry["prompt_id"] = ids.get(name)
     for item in skipped:
         synced[identifier(item["name"])] = {"status": "skipped", "reason": item["reason"]}
+    for entry in synced.values():
+        entry["mode"] = mode
     return synced

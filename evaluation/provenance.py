@@ -281,6 +281,54 @@ def consistency_checks(
     return checks
 
 
+#: For each registrable prompt: the mounted-config digest it is identified by,
+#: and the consistency check proving the *running agent* loaded that text.
+REGISTRATION_EVIDENCE = {
+    PROMPT_NAME: ("prompt_sha256", "prompt_matches_config"),
+    RAIL_PROMPT_NAME: ("guardrails_prompts_sha256", "guardrail_prompts_match_config"),
+}
+
+#: ``evaluation``: register a prompt because an evaluation used it. ``source``:
+#: mirror the repository text without claiming any evaluation used it.
+REGISTRATION_MODES = ("evaluation", "source")
+
+
+def registration_refusal(
+    result: dict[str, Any], name: str, config: dict[str, Any], *, mode: str = "evaluation"
+) -> str | None:
+    """Why prompt ``name`` must not be registered from ``result``; None if it may.
+
+    The one rule both prompt-registry reporters (Phoenix, MLflow) apply.
+
+    ``provenance.prompts`` is derived from the mounted ``agent/config.yml``, so
+    it matching that file proves only that the file has not changed since the
+    run. What proves the agent under evaluation actually loaded the same text
+    is the agent-side check (``prompt_matches_config`` /
+    ``guardrail_prompts_match_config``, from ``GET /version``). Evaluation mode
+    requires both; a missing or false check refuses, it never defaults to yes.
+
+    Source mode (``make sync-phoenix-prompts``) asks only that the file is
+    readable: it mirrors what the repository says, and records no evaluation
+    claim, so it must not borrow one.
+    """
+    if mode not in REGISTRATION_MODES:
+        raise ValueError(f"unknown registration mode {mode!r}")
+    if not config.get("available"):
+        return "the mounted agent/config.yml is not readable"
+    if mode == "source":
+        return None
+    record = result.get("provenance") or {}
+    digest_key, check = REGISTRATION_EVIDENCE[name]
+    evaluated = {entry.get("name"): entry.get("sha256") for entry in record.get("prompts") or []}
+    if evaluated.get(name) != config.get(digest_key):
+        return "the mounted config no longer matches the evaluated digest"
+    verdict = (record.get("checks") or {}).get(check)
+    if verdict is not True:
+        state = "missing" if verdict is None else repr(verdict)
+        return f"provenance.checks.{check} is {state}: the evaluated agent was not shown to have loaded this prompt"
+    return None
+
+
 def collect(config_path: Path | None = None) -> dict[str, Any]:
     """Assemble the provenance record for one evaluation run."""
     agent = agent_identity()

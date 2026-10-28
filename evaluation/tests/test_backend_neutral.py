@@ -441,7 +441,12 @@ def prompt_result(config: dict) -> dict:
                 "guard_temperature": 0.001,
                 "provider": "ollama",
                 "endpoint_sha256": "e" * 64,
+                "agent_revision_sha256": "1" * 64,
+                "tool_catalog_sha256": "2" * 64,
+                "rendered_prompt_sha256": "3" * 64,
             },
+            # What GET /version reported: the running agent loaded these texts.
+            "checks": {"prompt_matches_config": True, "guardrail_prompts_match_config": True},
             "prompts": [
                 {"name": "agent-system-prompt", "sha256": config["prompt_sha256"]},
                 {
@@ -459,6 +464,7 @@ class PhoenixPromptTests(unittest.TestCase):
         from evaluation.reporting import phoenix_prompts
 
         self.sync = phoenix_prompts.sync
+        self.specs = phoenix_prompts.specs
 
     def test_prompts_are_mirrored_individually_then_reused_not_duplicated(self) -> None:
         with fake_phoenix(set()) as (url, phoenix):
@@ -478,15 +484,20 @@ class PhoenixPromptTests(unittest.TestCase):
         system = prompts["agent-system-prompt"][0]
         self.assertEqual(system["template"]["messages"], [{"role": "system", "content": PROMPT_CONFIG["system_prompt"]}])
         self.assertEqual(system["template_format"], "F_STRING")
-        self.assertEqual(system["model_provider"], "OLLAMA")
+        # The agent speaks the OpenAI-compatible protocol to Ollama, so that is
+        # the schema; "ollama" is only the upstream label.
+        self.assertEqual(system["model_provider"], "OPENAI")
+        self.assertEqual(system["invocation_parameters"]["type"], "openai")
         self.assertEqual(system["invocation_parameters"]["openai"], {"temperature": 0.0, "max_tokens": 4096, "reasoning_effort": "none"})
+        self.assertEqual(system["metadata"]["upstream_provider"], "ollama")
         self.assertEqual(system["metadata"]["sha256"], "a" * 64)
         self.assertEqual(system["metadata"]["source"], "agent/config.yml")
         rail = prompts["agent-guardrail-self_check_input"][0]
         self.assertEqual(rail["template"]["messages"], [{"role": "user", "content": "Classify: {{ user_input }}"}])
         self.assertEqual(rail["template_format"], "MUSTACHE")
         self.assertEqual(rail["metadata"]["task"], "self_check_input")
-        self.assertEqual(rail["metadata"]["guard_model"], "qwen3:8b")
+        self.assertEqual(rail["model_name"], "qwen3:8b")
+        self.assertEqual(rail["metadata"]["variables"], ["user_input"])
         self.assertEqual(rail["invocation_parameters"]["openai"]["max_tokens"], 4)
         self.assertEqual(rail["invocation_parameters"]["openai"]["temperature"], 0.001)
 
@@ -509,6 +520,78 @@ class PhoenixPromptTests(unittest.TestCase):
             self.assertEqual(phoenix["prompts"], {})
         self.assertEqual({entry["status"] for entry in outcome.values()}, {"skipped"})
 
+    def test_a_false_or_missing_agent_check_registers_nothing(self) -> None:
+        """The mounted digest agreeing with itself is not evidence; the agent's check is."""
+        for checks in ({"prompt_matches_config": False, "guardrail_prompts_match_config": False}, {}):
+            result = prompt_result(PROMPT_CONFIG)
+            result["provenance"]["checks"] = checks
+            with fake_phoenix(set()) as (url, phoenix):
+                outcome = self.sync(PhoenixReporter(url)._request, result, PROMPT_CONFIG)
+                self.assertEqual(phoenix["prompts"], {}, checks)
+            self.assertEqual({entry["status"] for entry in outcome.values()}, {"skipped"})
+            reason = outcome["agent-system-prompt"]["reason"]
+            self.assertIn("prompt_matches_config", reason)
+            self.assertIn("missing" if not checks else "False", reason)
+            self.assertIn("guardrail_prompts_match_config", outcome["agent-guardrail-input-rail"]["reason"])
+
+    def test_one_false_check_skips_only_its_own_prompts(self) -> None:
+        result = prompt_result(PROMPT_CONFIG)
+        result["provenance"]["checks"]["guardrail_prompts_match_config"] = False
+        with fake_phoenix(set()) as (url, phoenix):
+            outcome = self.sync(PhoenixReporter(url)._request, result, PROMPT_CONFIG)
+            self.assertEqual(set(phoenix["prompts"]), {"agent-system-prompt"})
+        self.assertEqual(outcome["agent-guardrail-input-rail"]["status"], "skipped")
+
+    def test_source_mode_mirrors_the_repository_without_an_evaluation_claim(self) -> None:
+        result = {"provenance": {"agent": prompt_result(PROMPT_CONFIG)["provenance"]["agent"]}}
+        with fake_phoenix(set()) as (url, phoenix):
+            refused = self.sync(PhoenixReporter(url)._request, result, PROMPT_CONFIG)
+            self.assertEqual(phoenix["prompts"], {}, "evaluation mode registered without evidence")
+            outcome = self.sync(PhoenixReporter(url)._request, result, PROMPT_CONFIG, mode="source")
+            self.assertEqual(len(phoenix["prompts"]), 3)
+        self.assertEqual(refused, {})
+        self.assertEqual({entry["mode"] for entry in outcome.values()}, {"source"})
+        self.assertNotIn("checks", result["provenance"], "source mode manufactured a consistency check")
+        unreadable = self.sync(lambda *a, **k: self.fail("contacted Phoenix"), result, {"available": False}, mode="source")
+        self.assertEqual(unreadable, {})
+
+    def test_a_new_agent_revision_reuses_the_version_and_leaves_no_stale_run_identity(self) -> None:
+        revision_a = prompt_result(PROMPT_CONFIG)
+        revision_b = prompt_result(PROMPT_CONFIG)
+        revision_b["provenance"]["agent"].update(
+            agent_revision_sha256="9" * 64,
+            tool_catalog_sha256="8" * 64,
+            rendered_prompt_sha256="7" * 64,
+            endpoint_sha256="6" * 64,
+        )
+        runtime = {"agent_revision_sha256", "tool_catalog_sha256", "rendered_prompt_sha256", "endpoint_sha256",
+                   "guard_endpoint_sha256", "guardrails_prompts_sha256", "build_commit", "config_sha256"}
+        with fake_phoenix(set()) as (url, phoenix):
+            request = PhoenixReporter(url)._request
+            first = self.sync(request, revision_a, PROMPT_CONFIG)
+            second = self.sync(request, revision_b, PROMPT_CONFIG)
+            prompts = phoenix["prompts"]
+        self.assertEqual(second["agent-system-prompt"]["status"], "reused")
+        self.assertEqual(first["agent-system-prompt"]["version_id"], second["agent-system-prompt"]["version_id"])
+        self.assertTrue(all(len(versions) == 1 for versions in prompts.values()))
+        for versions in prompts.values():
+            metadata = versions[0]["metadata"]
+            self.assertFalse(runtime & set(metadata), sorted(runtime & set(metadata)))
+            blob = json.dumps(metadata)
+            for digit in "1236789":
+                self.assertNotIn(digit * 64, blob, "a run identity is recorded on the prompt version")
+
+    def test_the_upstream_label_never_selects_a_native_provider_schema(self) -> None:
+        for label in ("anthropic", "google", "ollama", None):
+            result = prompt_result(PROMPT_CONFIG)
+            result["provenance"]["agent"]["provider"] = label
+            chosen, _ = self.specs(result, PROMPT_CONFIG)
+            for spec in chosen:
+                self.assertEqual(spec["model_provider"], "OPENAI", label)
+                self.assertEqual(set(spec["invocation_parameters"]), {"type", "openai"}, label)
+                self.assertEqual(spec["invocation_parameters"]["type"], "openai", label)
+                self.assertEqual(spec["metadata"]["upstream_provider"], label)
+
     def test_only_prompt_definitions_are_sent(self) -> None:
         """No conversation, answer or user input reaches Prompt Management."""
         result = prompt_result(PROMPT_CONFIG) | {"cases": [{"observation": {"answer": "SECRET-ANSWER"}, "inputs": {"question": "SECRET-QUESTION"}}]}
@@ -517,6 +600,57 @@ class PhoenixPromptTests(unittest.TestCase):
             blob = json.dumps(phoenix["prompts"])
         self.assertNotIn("SECRET-ANSWER", blob)
         self.assertNotIn("SECRET-QUESTION", blob)
+
+
+class MlflowPromptRegistrationTests(unittest.TestCase):
+    """The MLflow adapter applies the Phoenix adapter's registration rule."""
+
+    @staticmethod
+    def fake_registry() -> tuple[types.SimpleNamespace, list[str]]:
+        registered: list[str] = []
+
+        def load_prompt(uri: str):
+            raise LookupError(uri)
+
+        def register_prompt(name: str, template: str, commit_message: str):
+            registered.append(name)
+            return types.SimpleNamespace(version=len(registered))
+
+        genai = types.SimpleNamespace(load_prompt=load_prompt, register_prompt=register_prompt)
+        return types.SimpleNamespace(genai=genai), registered
+
+    def test_a_false_agent_check_registers_nothing_although_the_mounted_digest_agrees(self) -> None:
+        from evaluation.reporting.mlflow import _register_prompts
+
+        result = prompt_result(PROMPT_CONFIG)
+        result["provenance"]["prompts"] = result["provenance"]["prompts"][:1]
+        for checks in ({"prompt_matches_config": False}, {}):
+            result["provenance"]["checks"] = checks
+            mlflow, registered = self.fake_registry()
+            linked = _register_prompts(mlflow, result, PROMPT_CONFIG)
+            self.assertEqual(registered, [], checks)
+            self.assertIn("prompt_matches_config", linked[0]["skipped"])
+        # And the same result with the agent's check true does register.
+        result["provenance"]["checks"] = {"prompt_matches_config": True}
+        mlflow, registered = self.fake_registry()
+        _register_prompts(mlflow, result, PROMPT_CONFIG)
+        self.assertEqual(registered, ["agent-system-prompt"])
+
+    def test_phoenix_and_mlflow_refuse_the_same_result(self) -> None:
+        from evaluation.reporting.mlflow import _register_prompts
+
+        result = prompt_result(PROMPT_CONFIG)
+        result["provenance"]["prompts"] = result["provenance"]["prompts"][:1]
+        result["provenance"]["checks"] = {"prompt_matches_config": False}
+        mlflow, registered = self.fake_registry()
+        mlflow_reason = _register_prompts(mlflow, result, PROMPT_CONFIG)[0]["skipped"]
+        with fake_phoenix(set()) as (url, phoenix):
+            from evaluation.reporting import phoenix_prompts
+
+            outcome = phoenix_prompts.sync(PhoenixReporter(url)._request, result, PROMPT_CONFIG)
+            self.assertEqual(phoenix["prompts"], {})
+        self.assertEqual(registered, [])
+        self.assertEqual(outcome["agent-system-prompt"]["reason"], mlflow_reason)
 
 
 class ReportingTests(unittest.TestCase):
